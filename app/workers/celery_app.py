@@ -49,6 +49,14 @@ else:
                     minute=settings.ranking_schedule_minute_kst,
                 ),
                 "args": (),
-            }
+            },
+            "daily-history-cleanup": {
+                "task": "app.workers.tasks.cleanup_history",
+                "schedule": crontab(
+                    hour=settings.cleanup_schedule_hour_kst,
+                    minute=settings.cleanup_schedule_minute_kst,
+                ),
+                "args": (),
+            },
         },
     )
