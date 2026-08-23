@@ -1,2 +1,2 @@
 Trigger bootstrap workflow through pull_request event.
-Retry after exact chunk reconstruction update.
+Retry after deferring CI workflow creation.
