@@ -46,6 +46,7 @@ jobs:
           rm -rf .bootstrap
           rm -f .github/workflows/bootstrap-project.yml
           rm -f .github/workflows/bootstrap.yml
+          rm -f .github/workflows/ci.yml
 
       - name: Commit project
         shell: bash
