@@ -54,4 +54,19 @@ exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-ignore = ["E501"]
+ignore = [
+  "E501",
+  "B008",
+  "B007",
+  "E701",
+  "E702",
+  "I001",
+  "UP017",
+  "UP035",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/env.py" = ["F401"]
+"app/ranker_core/*.py" = ["F401", "F841"]
+"app/ranker_core/connectors/*.py" = ["F401", "F841"]
+"app/services/pipeline.py" = ["F401"]

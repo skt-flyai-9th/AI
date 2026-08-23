@@ -7,12 +7,10 @@ from sqlalchemy.orm import Session
 
 from app.models.pipeline_run import PipelineRun
 from app.models.ranking_snapshot import RankingSnapshot
-from app.services.pipeline import (
-    create_run,
-    execute_pipeline,
-    export_latest_json,
-    validate_runtime_keys,
-)
+from app.services.pipeline import create_run as create_run
+from app.services.pipeline import execute_pipeline as execute_pipeline
+from app.services.pipeline import export_latest_json as export_latest_json
+from app.services.pipeline import validate_runtime_keys as validate_runtime_keys
 
 
 def get_run_result_payload(
