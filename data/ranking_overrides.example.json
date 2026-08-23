@@ -1,0 +1,9 @@
+[
+  {
+    "challenge_id": "bad-challenge",
+    "rank": 1,
+    "name": "BAD 챌린지",
+    "representative_youtube_url": "https://www.youtube.com/watch?v=EXAMPLE1",
+    "guide_youtube_url": "https://www.youtube.com/watch?v=EXAMPLE2"
+  }
+]

@@ -1,0 +1,48 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from uuid import uuid4
+
+from app.db.session import SessionLocal
+from app.models.pipeline_run import PipelineRun
+from app.services.pipeline import create_run, execute_pipeline
+from app.workers.celery_app import celery_app
+
+
+@dataclass
+class _ImmediateResult:
+    id: str
+
+
+@celery_app.task(name="app.workers.tasks.run_ranking_pipeline", bind=True)
+def run_ranking_pipeline(self, run_id: str | None = None) -> dict:
+    with SessionLocal() as db:
+        if run_id is None:
+            run = create_run(db)
+            run_id = run.id
+        run = db.get(PipelineRun, run_id)
+        if run is not None:
+            request = getattr(self, "request", None)
+            task_id = getattr(request, "id", None)
+            if task_id:
+                run.celery_task_id = task_id
+                db.commit()
+        completed = execute_pipeline(db, run_id)
+        return {"run_id": completed.id, "status": completed.status}
+
+
+def enqueue_ranking_pipeline(run_id: str):
+    delay = getattr(run_ranking_pipeline, "delay", None)
+    if callable(delay):
+        return delay(run_id)
+
+    task_id = str(uuid4())
+
+    class _Request:
+        id = task_id
+
+    class _TaskSelf:
+        request = _Request()
+
+    run_ranking_pipeline(_TaskSelf(), run_id)
+    return _ImmediateResult(id=task_id)
