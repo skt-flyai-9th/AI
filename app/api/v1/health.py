@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.agents.registry import list_agent_definitions
 from app.core.config import get_settings
 from app.db.session import get_db
 
@@ -18,4 +19,10 @@ def live() -> dict:
 @router.get("/health/ready")
 def ready(db: Session = Depends(get_db)) -> dict:
     db.execute(text("SELECT 1"))
-    return {"status": "ready", "api_keys": get_settings().required_api_key_status}
+    settings = get_settings()
+    return {
+        "status": "ready",
+        "agents": [item["id"] for item in list_agent_definitions()],
+        "api_keys": settings.required_api_key_status,
+        "internal_auth_configured": bool(settings.effective_internal_api_key),
+    }

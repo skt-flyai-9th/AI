@@ -15,11 +15,15 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    app_name: str = "Challenge Ranker API"
+    app_name: str = "FLY AI Service"
     app_env: str = "local"
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
-    admin_api_token: str = "change-me-before-production"
+
+    # Canonical server-to-server credential.
+    internal_api_key: str = ""
+    # Backward-compatible setting. Prefer INTERNAL_API_KEY for new deployments.
+    admin_api_token: str = ""
 
     database_url: str = "sqlite:///./runtime-data/challenge-ranker.db"
     redis_url: str = "redis://localhost:6379/0"
@@ -39,6 +43,10 @@ class Settings(BaseSettings):
     youtube_api_key: str = ""
     naver_api_hub_client_id: str = ""
     naver_api_hub_client_secret: str = ""
+
+    @property
+    def effective_internal_api_key(self) -> str:
+        return (self.internal_api_key or self.admin_api_token).strip()
 
     @property
     def required_api_key_status(self) -> dict[str, bool]:

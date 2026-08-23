@@ -25,9 +25,9 @@ def seed_challenge():
         db.commit()
 
 
-def test_list_and_patch_override(client):
+def test_list_and_patch_override(client, auth_headers):
     seed_challenge()
-    response = client.get("/api/v1/challenges?limit=100")
+    response = client.get("/api/v1/challenges?limit=100", headers=auth_headers)
     assert response.status_code == 200
     item = response.json()["results"][0]
     assert item["rank"] == 1
@@ -35,7 +35,7 @@ def test_list_and_patch_override(client):
 
     patched = client.patch(
         "/api/v1/challenges/bad-challenge",
-        headers={"X-Admin-Token": "test-token"},
+        headers=auth_headers,
         json={
             "rank": 3,
             "representative_youtube_url": "https://www.youtube.com/watch?v=NEW",
@@ -47,18 +47,24 @@ def test_list_and_patch_override(client):
     assert data["representative_video_overridden"] is True
 
 
-def test_clear_override_with_null(client):
+def test_clear_override_with_null(client, auth_headers):
     seed_challenge()
     client.patch(
         "/api/v1/challenges/bad-challenge",
-        headers={"X-Admin-Token": "test-token"},
+        headers=auth_headers,
         json={"rank": 5},
     )
     response = client.patch(
         "/api/v1/challenges/bad-challenge",
-        headers={"X-Admin-Token": "test-token"},
+        headers=auth_headers,
         json={"rank": None},
     )
     assert response.status_code == 200
     assert response.json()["rank"] == 1
     assert response.json()["rank_overridden"] is False
+
+
+def test_internal_api_key_is_required(client):
+    seed_challenge()
+    response = client.get("/api/v1/challenges?limit=100")
+    assert response.status_code == 401

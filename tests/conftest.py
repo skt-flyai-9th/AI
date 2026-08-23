@@ -6,7 +6,8 @@ from pathlib import Path
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("DATABASE_URL", "sqlite:///./runtime-data/test.db")
 os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "true")
-os.environ.setdefault("ADMIN_API_TOKEN", "test-token")
+os.environ.setdefault("INTERNAL_API_KEY", "test-token")
+os.environ.setdefault("ADMIN_API_TOKEN", "")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -22,6 +23,11 @@ def clean_db():
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture
+def auth_headers() -> dict[str, str]:
+    return {"X-Internal-API-Key": "test-token"}
 
 
 @pytest.fixture
