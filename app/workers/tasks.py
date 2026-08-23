@@ -6,6 +6,7 @@ from uuid import uuid4
 from app.agents.challenge_ranking.service import create_run, execute_pipeline
 from app.db.session import SessionLocal
 from app.models.pipeline_run import PipelineRun
+from app.services.retention import cleanup_history
 from app.workers.celery_app import celery_app
 
 
@@ -29,6 +30,12 @@ def run_ranking_pipeline(self, run_id: str | None = None) -> dict:
                 db.commit()
         completed = execute_pipeline(db, run_id)
         return {"run_id": completed.id, "status": completed.status}
+
+
+@celery_app.task(name="app.workers.tasks.cleanup_history")
+def cleanup_history_task() -> dict:
+    with SessionLocal() as db:
+        return cleanup_history(db)
 
 
 def enqueue_ranking_pipeline(run_id: str):
