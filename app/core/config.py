@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     ranking_schedule_hour_kst: int = Field(default=6, ge=0, le=23)
     ranking_schedule_minute_kst: int = Field(default=0, ge=0, le=59)
 
+    # History retention. Latest JSON exports are overwritten and do not accumulate.
+    history_cleanup_enabled: bool = True
+    run_retention_days: int = Field(default=90, ge=1, le=3650)
+    failed_run_retention_days: int = Field(default=14, ge=1, le=3650)
+    min_successful_runs_to_keep: int = Field(default=10, ge=1, le=1000)
+    cleanup_schedule_hour_kst: int = Field(default=4, ge=0, le=23)
+    cleanup_schedule_minute_kst: int = Field(default=30, ge=0, le=59)
+
     apify_api_token: str = ""
     gemini_api_key: str = ""
     youtube_api_key: str = ""
