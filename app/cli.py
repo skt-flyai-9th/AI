@@ -10,6 +10,7 @@ from app.db.session import SessionLocal
 from app.schemas.challenge import OverrideImportItem
 from app.services.challenges import import_override_items
 from app.services.pipeline import create_run, execute_pipeline, export_latest_json
+from app.services.retention import cleanup_history
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -28,6 +29,14 @@ def run_ranking() -> None:
         typer.echo(f"run_id={run.id}")
         completed = execute_pipeline(db, run.id)
         typer.echo(f"status={completed.status}")
+
+
+@app.command("cleanup-history")
+def cleanup_history_command() -> None:
+    init_db()
+    with SessionLocal() as db:
+        result = cleanup_history(db)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
 
 @app.command("import-overrides")
