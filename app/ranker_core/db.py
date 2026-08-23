@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -129,6 +130,75 @@ def save_run(
             )
     finally:
         connection.close()
+
+
+def prune_run_history(
+    path: str | Path,
+    *,
+    retention_days: int = 90,
+    min_runs_to_keep: int = 10,
+    now: datetime | None = None,
+) -> dict[str, int | bool]:
+    """Bound the legacy SQLite rank-history file without breaking rank deltas.
+
+    The file is still used by the standalone ranker to compute rank_change and
+    score_change. The FastAPI service keeps the latest successful runs here, while
+    PostgreSQL remains the API source of truth.
+    """
+
+    db_path = Path(path)
+    if not db_path.exists():
+        return {"enabled": True, "deleted_runs": 0, "remaining_runs": 0, "vacuumed": False}
+
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    cutoff = reference - timedelta(days=max(1, retention_days))
+    minimum = max(1, min_runs_to_keep)
+
+    connection = initialize_database(db_path)
+    deleted_ids: list[str] = []
+    try:
+        rows = connection.execute(
+            "SELECT run_id, run_at FROM runs ORDER BY run_at DESC"
+        ).fetchall()
+        keep_ids = {str(row[0]) for row in rows[:minimum]}
+        for run_id, raw_run_at in rows:
+            parsed = _parse_run_at(str(raw_run_at))
+            if str(run_id) not in keep_ids and parsed < cutoff:
+                deleted_ids.append(str(run_id))
+
+        if deleted_ids:
+            placeholders = ",".join("?" for _ in deleted_ids)
+            with connection:
+                for table in ("rankings", "features", "source_metrics"):
+                    connection.execute(
+                        f"DELETE FROM {table} WHERE run_id IN ({placeholders})",
+                        deleted_ids,
+                    )
+                connection.execute(
+                    f"DELETE FROM runs WHERE run_id IN ({placeholders})",
+                    deleted_ids,
+                )
+            connection.execute("VACUUM")
+
+        remaining = int(connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0])
+        return {
+            "enabled": True,
+            "deleted_runs": len(deleted_ids),
+            "remaining_runs": remaining,
+            "vacuumed": bool(deleted_ids),
+        }
+    finally:
+        connection.close()
+
+
+def _parse_run_at(value: str) -> datetime:
+    normalized = value.strip().replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _redact_config(config: dict[str, Any]) -> dict[str, Any]:
