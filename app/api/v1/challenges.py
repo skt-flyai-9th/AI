@@ -3,14 +3,18 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.security import require_admin_token
+from app.core.security import require_internal_api_key
 from app.db.session import get_db
 from app.models.challenge import Challenge
 from app.schemas.challenge import ChallengeListResponse, ChallengeRead, ChallengeUpdate
-from app.services.challenges import get_latest_generated_at, list_challenges, to_read, apply_update
+from app.services.challenges import apply_update, get_latest_generated_at, list_challenges, to_read
 from app.services.pipeline import export_latest_json
 
-router = APIRouter(prefix="/challenges", tags=["challenges"])
+router = APIRouter(
+    prefix="/challenges",
+    tags=["challenges"],
+    dependencies=[Depends(require_internal_api_key)],
+)
 
 
 @router.get("", response_model=ChallengeListResponse)
@@ -36,11 +40,7 @@ def get_challenge(challenge_id: str, db: Session = Depends(get_db)) -> Challenge
     return to_read(row)
 
 
-@router.patch(
-    "/{challenge_id}",
-    response_model=ChallengeRead,
-    dependencies=[Depends(require_admin_token)],
-)
+@router.patch("/{challenge_id}", response_model=ChallengeRead)
 def update_challenge(
     challenge_id: str,
     payload: ChallengeUpdate,

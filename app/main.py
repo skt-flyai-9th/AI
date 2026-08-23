@@ -20,7 +20,11 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.0.0",
+    version="1.1.0",
+    description=(
+        "Independent AI server called by the main backend. "
+        "The currently available agent provides Korean challenge ranking."
+    ),
     default_response_class=ORJSONResponse,
     lifespan=lifespan,
 )
@@ -38,6 +42,9 @@ app.include_router(api_router, prefix=settings.api_v1_prefix)
 def root() -> dict:
     return {
         "service": settings.app_name,
+        "role": "independent-ai-server",
         "docs": "/docs",
-        "ranking": f"{settings.api_v1_prefix}/challenges?limit=100",
+        "agents": f"{settings.api_v1_prefix}/agents",
+        "health": f"{settings.api_v1_prefix}/health/ready",
+        "current_challenge_ranking": f"{settings.api_v1_prefix}/challenges?limit=100",
     }

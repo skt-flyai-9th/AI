@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import uuid4
 
+from app.agents.challenge_ranking.service import create_run, execute_pipeline
 from app.db.session import SessionLocal
 from app.models.pipeline_run import PipelineRun
-from app.services.pipeline import create_run, execute_pipeline
 from app.workers.celery_app import celery_app
 
 
