@@ -1,1 +1,2 @@
 Trigger bootstrap workflow through pull_request event.
+Retry after BOM-tolerant decoder update.
