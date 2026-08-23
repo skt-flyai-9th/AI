@@ -5,6 +5,10 @@ on:
     paths:
       - ".bootstrap/**"
       - ".github/workflows/bootstrap-project.yml"
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - ".bootstrap/**"
   workflow_dispatch:
 
 permissions:
@@ -16,9 +20,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
       - name: Expand project archive
