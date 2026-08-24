@@ -23,7 +23,7 @@ from .features import build_features
 from .io import load_candidates, load_observations, write_csv_atomic, write_json_atomic
 from .representative import select_representative_youtube
 from .scoring import score_challenges
-from .utils import parse_now
+from .utils import parse_now, redact_sensitive_data
 
 
 @dataclass
@@ -181,6 +181,7 @@ def run_pipeline(config: dict[str, Any]) -> RunResult:
     ranking = ranking.drop(columns=["previous_rank", "previous_score"], errors="ignore")
 
     run_id = f"{now.strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+    statuses = redact_sensitive_data(statuses)
     output_paths = _write_outputs(config, run_id, now, ranking, features, source_metrics, statuses)
     save_run(
         config["paths"]["database"],
