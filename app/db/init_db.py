@@ -9,6 +9,7 @@ from app.models import (  # noqa: F401
     template_update_candidate,
     template_video_analysis,
     template_knowledge_run,
+    template_source,
     trade_area_analysis,
     trade_area_template,
 )

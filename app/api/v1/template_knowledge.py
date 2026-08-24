@@ -18,13 +18,20 @@ from app.schemas.template_knowledge import (
     TemplateKnowledgeRunRead,
     TemplateKnowledgeRunResult,
     TemplateKnowledgeRunStatus,
+    TemplateSourceBundleRead,
+    TemplateSourceRecordRead,
     TemplateType,
     TemplateVersionRead,
     TemplateVersionStatus,
     TradeAreaAnalyzeRequest,
     TradeAreaCandidateCreate,
+    TradeAreaSourceContextRead,
 )
 from app.template_knowledge.seeds import seed_template_library
+from app.template_knowledge.source_library import (
+    TemplateSourceImportError,
+    TemplateSourceService,
+)
 from app.template_knowledge.service import (
     TemplateKnowledgeDomainError,
     TemplateKnowledgeService,
@@ -39,6 +46,58 @@ router = APIRouter(
 )
 
 Service = Annotated[TemplateKnowledgeService, Depends(get_template_knowledge_service)]
+source_service = TemplateSourceService()
+
+
+@router.get("/sources", response_model=list[TemplateSourceBundleRead])
+def list_template_sources(
+    template_type: TemplateType | None = None,
+    db: Session = Depends(get_db),
+) -> list[TemplateSourceBundleRead]:
+    return source_service.list_bundles(db, template_type=template_type)
+
+
+@router.get(
+    "/sources/{bundle_id}/records",
+    response_model=list[TemplateSourceRecordRead],
+)
+def list_template_source_records(
+    bundle_id: str,
+    dataset_name: str | None = None,
+    record_status: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> list[TemplateSourceRecordRead]:
+    return source_service.list_records(
+        db,
+        bundle_id,
+        dataset_name=dataset_name,
+        status=record_status,
+        limit=limit,
+    )
+
+
+@router.get("/trade-area/source-context", response_model=TradeAreaSourceContextRead)
+def get_trade_area_source_context(
+    region_id: str | None = None,
+    category_id: str | None = None,
+    official_trade_area_code: str | None = None,
+    include_draft: bool = False,
+    db: Session = Depends(get_db),
+) -> TradeAreaSourceContextRead:
+    try:
+        return source_service.resolve_trade_area_context(
+            db,
+            region_id=region_id,
+            category_id=category_id,
+            official_trade_area_code=official_trade_area_code,
+            include_draft=include_draft,
+        )
+    except TemplateSourceImportError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "TEMPLATE_SOURCE_UNAVAILABLE", "message": str(exc)},
+        ) from exc
 
 
 @router.get("/candidates", response_model=list[TemplateCandidateRead])

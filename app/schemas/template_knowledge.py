@@ -18,6 +18,12 @@ class TemplateVersionStatus(StrEnum):
     ARCHIVED = "ARCHIVED"
 
 
+class TemplateSourceStatus(StrEnum):
+    DRAFT = "DRAFT"
+    ACTIVE = "ACTIVE"
+    ARCHIVED = "ARCHIVED"
+
+
 class TemplateCandidateStatus(StrEnum):
     GENERATED = "GENERATED"
     VALIDATED = "VALIDATED"
@@ -322,6 +328,43 @@ class TemplateVersionRead(BaseModel):
     evidence_summary: dict[str, Any]
     source_candidate_id: str | None
     activated_at: datetime | None
+
+
+class TemplateSourceBundleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    template_type: TemplateType
+    schema_version: str
+    source_filename: str
+    source_sha256: str
+    status: TemplateSourceStatus
+    dataset_manifest: dict[str, Any]
+    imported_at: datetime
+
+
+class TemplateSourceRecordRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    bundle_id: str
+    dataset_name: str
+    record_key: str
+    source_row_number: int
+    status: str
+    payload: dict[str, Any]
+
+
+class TradeAreaSourceContextRead(BaseModel):
+    bundle_id: str
+    region: dict[str, Any] | None
+    category: dict[str, Any] | None
+    region_category_fit: dict[str, Any] | None
+    official_trade_area: dict[str, Any] | None
+    official_profile: dict[str, Any] | None
+    mapping: dict[str, Any] | None
+    source_ids: list[str]
+    draft_data_included: bool
 
 
 class TemplateKnowledgeRunCreateResponse(BaseModel):

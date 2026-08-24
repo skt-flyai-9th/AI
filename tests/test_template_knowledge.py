@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
-
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
@@ -11,6 +9,7 @@ from app.models.editing_template import EditingTemplate
 from app.models.template_update_candidate import TemplateUpdateCandidate
 from app.models.template_video_analysis import TemplateVideoAnalysis
 from app.models.template_knowledge_run import TemplateKnowledgeRun
+from app.models.template_source import TemplateSourceBundle, TemplateSourceRecord
 from app.models.trade_area_template import TradeAreaTemplate
 from app.schemas.template_knowledge import (
     CandidateDecision,
@@ -25,16 +24,14 @@ from app.schemas.template_knowledge import (
     TradeAreaEvidence,
     TradeAreaTemplateContent,
 )
-from app.template_knowledge.seeds import (
-    EDITING_TEMPLATE_SEEDS,
-    TRADE_AREA_SEEDS,
-    seed_template_library,
-)
+from app.template_knowledge.seeds import seed_template_library
 from app.template_knowledge.service import (
     TemplateKnowledgeService,
     get_template_knowledge_service,
 )
 from app.template_knowledge.llm import _make_strict_schema
+from app.template_knowledge.source_library import TemplateSourceService
+from tests.template_payloads import editing_template_payload, trade_area_payload
 
 
 def _evidence() -> TradeAreaEvidence:
@@ -66,12 +63,12 @@ class FakeGenerator:
     model_name = "fake-template-model"
 
     def generate_trade_area(self, **kwargs) -> TradeAreaTemplateContent:
-        payload = deepcopy(TRADE_AREA_SEEDS["trade_area_office"])
+        payload = trade_area_payload()
         payload["description"] = "새 집계 근거를 반영한 오피스 상권 분석 템플릿입니다."
         return TradeAreaTemplateContent.model_validate(payload)
 
     def generate_editing(self, **kwargs) -> EditingTemplateContent:
-        payload = deepcopy(EDITING_TEMPLATE_SEEDS["edit_menu_reveal"])
+        payload = editing_template_payload()
         payload["recommendation_concept"] = "검증된 트렌드 훅을 반영한 메뉴 결과 중심 구성입니다."
         payload["trend_ids"] = [item.trend_id for item in kwargs["insights"]]
         return EditingTemplateContent.model_validate(payload)
@@ -119,13 +116,17 @@ def _service() -> tuple[TemplateKnowledgeService, FakeVideoAnalyzer]:
     return TemplateKnowledgeService(generator=FakeGenerator(), video_analyzer=video), video
 
 
-def test_bootstrap_seeds_validated_active_template_library():
+def test_bootstrap_imports_provided_sources_and_only_activates_approved_editing_templates():
     service, _ = _service()
     with SessionLocal() as db:
         result = seed_template_library(db, service=service)
-        assert len(result["created"]) == len(TRADE_AREA_SEEDS) + len(EDITING_TEMPLATE_SEEDS)
-        assert db.scalar(select(TradeAreaTemplate).where(TradeAreaTemplate.status == "ACTIVE"))
-        assert db.scalar(select(EditingTemplate).where(EditingTemplate.status == "ACTIVE"))
+        assert len(result["created"]) == 5
+        assert db.scalar(select(TradeAreaTemplate).where(TradeAreaTemplate.status == "ACTIVE")) is None
+        assert len(list(db.scalars(select(EditingTemplate)))) == 3
+        assert len(list(db.scalars(select(TemplateSourceBundle)))) == 2
+        assert db.scalar(select(TemplateSourceRecord)) is not None
+        assert result["trade_area"]["status"] == "DRAFT"
+        assert result["trade_area"]["service_eligible"] is False
         assert not db.scalar(
             select(TemplateUpdateCandidate).where(
                 TemplateUpdateCandidate.status == TemplateCandidateStatus.INVALID.value
@@ -134,7 +135,7 @@ def test_bootstrap_seeds_validated_active_template_library():
 
         second = seed_template_library(db, service=service)
         assert second["created"] == []
-        assert len(second["skipped"]) == len(result["created"])
+        assert len(second["skipped"]) == 5
 
 
 def test_candidate_lifecycle_creates_new_version_and_archives_base():
@@ -144,7 +145,7 @@ def test_candidate_lifecycle_creates_new_version_and_archives_base():
             db,
             template_type=TemplateType.TRADE_AREA,
             template_id="trade_area_office",
-            payload=deepcopy(TRADE_AREA_SEEDS["trade_area_office"]),
+            payload=trade_area_payload(),
             source_evidence={"bootstrap": True},
             generation_model="seed",
             requires_human_approval=False,
@@ -178,7 +179,7 @@ def test_candidate_lifecycle_creates_new_version_and_archives_base():
 
 def test_editing_candidate_rejects_tts_before_activation():
     service, _ = _service()
-    invalid = deepcopy(EDITING_TEMPLATE_SEEDS["edit_menu_reveal"])
+    invalid = editing_template_payload()
     invalid["recommendation_metadata"]["requires_tts"] = True
     with SessionLocal() as db:
         candidate = service.create_candidate_from_payload(
@@ -241,6 +242,15 @@ def test_trade_area_analysis_uses_active_template_and_persists_result():
     service, _ = _service()
     with SessionLocal() as db:
         seed_template_library(db, service=service)
+        service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.TRADE_AREA,
+            template_id="trade_area_office",
+            payload=trade_area_payload(),
+            source_evidence={"test": True},
+            generation_model="test",
+            requires_human_approval=False,
+        )
         analysis = service.analyze_trade_area(
             db,
             TradeAreaAnalyzeRequest(evidence=_evidence()),
@@ -268,7 +278,21 @@ def test_template_knowledge_api_bootstrap_and_async_analysis(client, auth_header
             headers=auth_headers,
         )
         assert versions.status_code == 200
-        assert len(versions.json()) == len(TRADE_AREA_SEEDS) + len(EDITING_TEMPLATE_SEEDS)
+        assert len(versions.json()) == 3
+        sources = client.get("/api/v1/template-knowledge/sources", headers=auth_headers)
+        assert sources.status_code == 200
+        assert len(sources.json()) == 2
+
+        with SessionLocal() as db:
+            service.create_candidate_from_payload(
+                db,
+                template_type=TemplateType.TRADE_AREA,
+                template_id="trade_area_office",
+                payload=trade_area_payload(),
+                source_evidence={"test": True},
+                generation_model="test",
+                requires_human_approval=False,
+            )
 
         analyzed = client.post(
             "/api/v1/template-knowledge/trade-area/analyze",
@@ -289,6 +313,32 @@ def test_template_knowledge_api_bootstrap_and_async_analysis(client, auth_header
         assert result.json()["result"]["analysis"]["template_id"] == "trade_area_office"
     finally:
         app.dependency_overrides.pop(get_template_knowledge_service, None)
+
+
+def test_trade_area_source_context_respects_workbook_draft_status():
+    service, _ = _service()
+    with SessionLocal() as db:
+        seed_template_library(db, service=service)
+        source = TemplateSourceService()
+        safe = source.resolve_trade_area_context(
+            db,
+            region_id="REG-SEOCHON",
+            category_id="CAT-CAF",
+        )
+        assert safe.region is None
+        assert safe.category is None
+        assert safe.draft_data_included is False
+
+        review = source.resolve_trade_area_context(
+            db,
+            region_id="REG-SEOCHON",
+            category_id="CAT-CAF",
+            include_draft=True,
+        )
+        assert review.region["name"] == "서촌"
+        assert review.category["name"] == "카페"
+        assert review.region_category_fit["fit_score(0~1)"] is not None
+        assert review.draft_data_included is True
 
 
 def test_template_knowledge_api_requires_internal_key(client):

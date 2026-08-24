@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flyai-ai-service"
-version = "1.4.0"
+version = "1.5.0"
 description = "Independent FastAPI AI service with trend, shortform, and editing agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -45,6 +45,9 @@ challenge-ranker-api = "app.cli:app"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
+
+[tool.setuptools.package-data]
+"app.template_knowledge.sources" = ["*.json", "*.xlsx"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

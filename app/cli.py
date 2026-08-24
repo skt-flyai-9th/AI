@@ -19,6 +19,7 @@ from app.schemas.template_knowledge import (
 )
 from app.template_knowledge.seeds import seed_template_library
 from app.template_knowledge.service import TemplateKnowledgeService
+from app.template_knowledge.source_library import TemplateSourceService
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -66,10 +67,42 @@ def export_ranking() -> None:
 
 @app.command("seed-template-library")
 def seed_templates() -> None:
+    """Compatibility alias for importing the bundled user-provided workbooks."""
+
+    _import_templates()
+
+
+@app.command("import-template-library")
+def import_templates() -> None:
+    """Import the user-provided video-editing and trade-area workbooks."""
+
+    _import_templates()
+
+
+def _import_templates() -> None:
     init_db()
     with SessionLocal() as db:
         result = seed_template_library(db)
     typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+
+
+@app.command("resolve-trade-area-context")
+def resolve_trade_area_context(
+    region_id: str | None = None,
+    category_id: str | None = None,
+    official_trade_area_code: str | None = None,
+    include_draft: bool = False,
+) -> None:
+    init_db()
+    with SessionLocal() as db:
+        result = TemplateSourceService().resolve_trade_area_context(
+            db,
+            region_id=region_id,
+            category_id=category_id,
+            official_trade_area_code=official_trade_area_code,
+            include_draft=include_draft,
+        )
+    typer.echo(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
 
 
 @app.command("generate-trade-area-template")

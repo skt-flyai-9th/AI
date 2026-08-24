@@ -59,19 +59,29 @@ Gemini 분석은 공개 `https` YouTube URL만 허용하며, 같은 trend/url/mo
 
 ## 초기 운영 라이브러리
 
-`python -m app.cli seed-template-library`는 검증된 초기 버전을 idempotent하게 생성한다.
+초기 라이브러리는 코드가 만든 합성 샘플이 아니라 사용자가 제공한 두 원본 파일을 사용한다.
 
-- 상권분석템플릿 6개: 오피스, 주거, 대학가, 역세권, 관광, 일반
-- 영상편집템플릿 6개: 메뉴 결과, 제조 과정, 공간 소개, 혜택 안내, 사장님 추천, 서비스 전후
+- `app/template_knowledge/sources/영상편집DB.xlsx` — 영상편집 DB v5.1
+- `app/template_knowledge/sources/상권분석DB.xlsx` — 상권분석 DB v1.2
+- 같은 디렉터리의 canonical JSON은 Excel 내용을 행 단위로 변환한 런타임 import 자산이다.
 
-초기 데이터만 `SYSTEM_AUTO` bootstrap 후보로 적용된다. 이후 업데이트는 일반 후보·검증·승인 수명주기를 거친다.
+`python -m app.cli import-template-library`는 파일 SHA-256을 검증하고 모든 시트와 원본 행을 `template_source_bundles`·`template_source_records`에 idempotent하게 적재한다. 기존 `seed-template-library`는 호환 alias이며 합성 seed를 만들지 않는다.
+
+영상편집 파일의 `03_GUIDE_TEMPLATES`에서 `validation_status=PASS`, `template_status=ACTIVE`인 세 가이드는 REALS 제약 검증 후 활성 버전으로 가져온다.
+
+- 주술회전 트랜지션 v2
+- 오츠카레 썸머 챌린지 v2
+- 카페 추천 리뷰 릴스 v1
+
+상권 파일은 `regions`, `categories`, 매핑·공식 상권 프로필을 모두 보존한다. 원본이 핵심 레코드를 `draft`로 표시하고 있으므로 자동으로 ACTIVE 처리하거나 서비스 추천에 노출하지 않는다. 검토 용도에서는 `include_draft=true`로 조회할 수 있다. 원본 Excel에서 `approved`로 바꾼 새 버전을 제공한 뒤 다시 import해야 서비스 기본 조회 대상이 된다.
 
 ## 독립 실행
 
 ```bash
 alembic upgrade head
-python -m app.cli seed-template-library
-python -m app.cli generate-editing-template edit_menu_reveal --trend-id <trend_id>
+python -m app.cli import-template-library
+python -m app.cli resolve-trade-area-context --region-id REG-SEOCHON --category-id CAT-CAF --include-draft
+python -m app.cli generate-editing-template <template_id> --trend-id <trend_id>
 python -m app.cli generate-trade-area-template trade_area_office evidence.json
 python -m app.cli approve-template-candidate <candidate_id> <reviewer>
 python -m app.cli analyze-trade-area evidence.json --template-id trade_area_office
@@ -81,7 +91,10 @@ AI 서버 내부 운영 API도 `/api/v1/template-knowledge` 아래에 준비되�
 
 | Method | Endpoint | 역할 |
 |---|---|---|
-| POST | `/bootstrap` | 초기 운영 템플릿 idempotent 생성 |
+| POST | `/bootstrap` | 제공된 Excel 기반 라이브러리 idempotent import |
+| GET | `/sources` | 원본 bundle·버전·SHA·dataset manifest 조회 |
+| GET | `/sources/{id}/records` | 원본 시트 레코드 조회 |
+| GET | `/trade-area/source-context` | 승인 상태를 적용한 상권 원본 context 조회 |
 | GET | `/templates` | 버전·상태 조회 |
 | GET | `/candidates` | 후보·diff·검증·근거 조회 |
 | POST | `/trade-area/candidates` | 상권 템플릿 후보 생성 |

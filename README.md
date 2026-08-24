@@ -446,11 +446,12 @@ python scripts/check_apis.py
 python -m app.cli run-ranking
 ```
 
-초기 템플릿 라이브러리와 독립 운영 명령:
+사용자 제공 템플릿 라이브러리와 독립 운영 명령:
 
 ```bash
-python -m app.cli seed-template-library
-python -m app.cli generate-editing-template edit_menu_reveal --trend-id <trend_id>
+python -m app.cli import-template-library
+python -m app.cli resolve-trade-area-context --region-id REG-SEOCHON --category-id CAT-CAF --include-draft
+python -m app.cli generate-editing-template <template_id> --trend-id <trend_id>
 python -m app.cli generate-trade-area-template trade_area_office evidence.json
 ```
 

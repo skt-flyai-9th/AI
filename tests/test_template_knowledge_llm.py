@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 
 from app.template_knowledge import llm
-from app.template_knowledge.seeds import TRADE_AREA_SEEDS
 from app.template_knowledge.llm import OpenAITemplateCandidateGenerator
 from app.schemas.template_knowledge import TradeAreaEvidence
+from tests.template_payloads import trade_area_payload
 
 
 def test_openai_template_generator_uses_strict_structured_output(monkeypatch):
@@ -23,7 +23,7 @@ def test_openai_template_generator_uses_strict_structured_output(monkeypatch):
                             {
                                 "type": "output_text",
                                 "text": json.dumps(
-                                    TRADE_AREA_SEEDS["trade_area_office"],
+                                    trade_area_payload(),
                                     ensure_ascii=False,
                                 ),
                             }
@@ -76,4 +76,4 @@ def test_openai_template_generator_uses_strict_structured_output(monkeypatch):
     assert request["store"] is False
     assert request["text"]["format"]["strict"] is True
     assert schema["additionalProperties"] is False
-    assert result.name == "오피스 상권 분석"
+    assert result.name == "오피스 상권 분석 테스트"

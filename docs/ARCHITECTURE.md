@@ -39,7 +39,9 @@ app/template_knowledge/
 ├─ validation.py
 ├─ service.py
 ├─ maintenance.py
-└─ seeds.py
+├─ source_library.py
+├─ sources/          # 사용자 제공 Excel + canonical JSON
+└─ seeds.py          # import 호환 alias, 합성 seed 없음
 ```
 
 `registry.py`는 현재 제공 가능한 Agent와 API 계약을 노출한다. 각 Agent는 외부 API 라우터가 내부 구현 세부사항에 직접 의존하지 않도록 서비스 경계를 제공한다.
@@ -93,6 +95,7 @@ AI 서버 DB는 다음을 저장한다.
 - shortform session and confirmed brief state
 - editing run, immutable revision lineage, recipe, render result
 - trade-area/editing template immutable versions and activation lineage
+- user-provided template source bundles, checksums, dataset manifests and row records
 - template update candidates, diffs, validation and approval audit
 - Gemini reference-video insights and trade-area analysis evidence snapshots
 
