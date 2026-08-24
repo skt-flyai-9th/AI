@@ -1,0 +1,105 @@
+{
+  "effect_registry_version": "1.0",
+  "effects": {
+    "NONE": {
+      "effect_id": "NONE",
+      "support_level": "BASIC",
+      "renderer_key": "noop",
+      "allowed_params": {},
+      "version": 1
+    },
+    "PUNCH_ZOOM": {
+      "effect_id": "PUNCH_ZOOM",
+      "support_level": "BASIC",
+      "renderer_key": "punch_crop_v1",
+      "allowed_params": {
+        "scale_end": {
+          "min": 1.0,
+          "max": 1.15
+        }
+      },
+      "version": 1
+    },
+    "SPEED": {
+      "effect_id": "SPEED",
+      "support_level": "BASIC",
+      "renderer_key": "setpts_v1",
+      "allowed_params": {
+        "multiplier": {
+          "min": 0.5,
+          "max": 2.0
+        }
+      },
+      "version": 1
+    },
+    "COLOR_TONE": {
+      "effect_id": "COLOR_TONE",
+      "support_level": "BASIC",
+      "renderer_key": "eq_v1",
+      "allowed_params": {
+        "tone": {
+          "enum": [
+            "NATURAL",
+            "WARM",
+            "COOL",
+            "VIVID"
+          ]
+        }
+      },
+      "version": 1
+    },
+    "SMOOTH_ZOOM": {
+      "effect_id": "SMOOTH_ZOOM",
+      "support_level": "CONDITIONAL",
+      "renderer_key": "zoompan_v2",
+      "required_capability": "RAM_10GB",
+      "fallback": "PUNCH_ZOOM",
+      "allowed_params": {
+        "scale_end": {
+          "min": 1.0,
+          "max": 1.2
+        }
+      },
+      "version": 1
+    }
+  },
+  "overlay_types": {
+    "CAPTION": {
+      "style_ids": [
+        "CAPTION",
+        "CAPTION_EMPHASIS",
+        "CTA_BOX",
+        "HOOK"
+      ],
+      "motion_ids": [
+        "NONE",
+        "POP",
+        "FADE"
+      ]
+    },
+    "TEXT_2D": {
+      "style_ids": [
+        "TEXT_2D"
+      ],
+      "motion_ids": [
+        "NONE",
+        "POP",
+        "FADE"
+      ]
+    },
+    "SFX": {
+      "intent_ids": [
+        "TEXT_POP",
+        "PRODUCT_REVEAL",
+        "CTA_APPEAR",
+        "FAST_TRANSITION",
+        "RESULT_REVEAL"
+      ]
+    }
+  },
+  "transitions": [
+    "NONE",
+    "HARD_CUT",
+    "FLASH_WHITE"
+  ]
+}

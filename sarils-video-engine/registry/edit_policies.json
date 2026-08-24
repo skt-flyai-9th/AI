@@ -1,0 +1,20 @@
+{
+  "edit_policy_version": "1.0",
+  "min_cut_duration_ms": 300,
+  "max_caption_chars": 40,
+  "max_captions_per_video": 8,
+  "max_overlay_concurrent": 2,
+  "caption_margin_px": 60,
+  "min_font_px": 44,
+  "max_caption_lines": 2,
+  "cut_assembly": {
+    "reorder_allowed": false,
+    "major_segment_deletion_allowed": false,
+    "edge_trim_allowed": true,
+    "max_edge_trim_ms": 1500,
+    "confidence_auto": 0.8,
+    "confidence_limited": 0.55,
+    "limited_max_trim_ms": 1000,
+    "low_confidence_fallback": "KEEP_FULL_CUT"
+  }
+}

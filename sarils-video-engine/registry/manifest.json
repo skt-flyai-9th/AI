@@ -1,0 +1,12 @@
+{
+  "template_bundle_id": "tb_local_dev_001",
+  "template_version": "4.1-runtime.dev",
+  "files": {
+    "font_registry": "sha256:99852ea18ec57cdbab93ed02b59e10f9032e4d931087d034b113ff952d32e10a",
+    "effect_registry": "sha256:d208ddd6fd64fac326718e99627b6b936d5601a141df19b68bb95a3a09b853e7",
+    "safe_area_profiles": "sha256:e67d8f91110647ea6f205cab2317b8fed1b443d7c843b8d2893057b3b64e25e5",
+    "render_profiles": "sha256:bd1ce47c72406ed762fd96faf44a19be7726d685f834552f04a6c0dce9d5f07f",
+    "audio_mix_policy": "sha256:2a683b3ff180c287527b0de50c603105c4eba72ae00ff899699ecb65c038046e",
+    "edit_policies": "sha256:69356b0f9971b2fcdd21b7f7ed0ae7805394c71ac8f265bf936ec91f399a3f3a"
+  }
+}
