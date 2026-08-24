@@ -9,23 +9,44 @@ from app.schemas.shortform import (
     FaceExposure,
     FilmingTime,
     PromotionObjective,
-    PromotionSubject,
     ShortformAction,
-    ShortformOption,
 )
+
+
+class FactItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    value: str
+
+
+class DecisionPromotionSubject(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: str | None
+    name: str | None
+    menu_id: str | None
+    details: list[FactItem]
+
+
+class DecisionOption(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    label: str
 
 
 class StateUpdates(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    promotion_category: str | None = None
-    promotion_subject: PromotionSubject | None = None
-    promotion_objective: PromotionObjective | None = None
-    filming_time: FilmingTime | None = None
-    face_exposure: FaceExposure | None = None
-    creative_preferences: list[str] = Field(default_factory=list)
-    secondary_information: list[str] = Field(default_factory=list)
-    facts_from_user: dict[str, str] = Field(default_factory=dict)
+    promotion_category: str | None
+    promotion_subject: DecisionPromotionSubject | None
+    promotion_objective: PromotionObjective | None
+    filming_time: FilmingTime | None
+    face_exposure: FaceExposure | None
+    creative_preferences: list[str]
+    secondary_information: list[str]
+    facts_from_user: list[FactItem]
 
 
 class ConflictItem(BaseModel):
@@ -42,11 +63,11 @@ class ShortformTurnDecision(BaseModel):
 
     action: ShortformAction
     assistant_message: str
-    state_updates: StateUpdates = Field(default_factory=StateUpdates)
-    options: list[ShortformOption] = Field(default_factory=list)
-    missing_required_fields: list[str] = Field(default_factory=list)
-    conflicts: list[ConflictItem] = Field(default_factory=list)
-    ready_for_confirmation: bool = False
+    state_updates: StateUpdates
+    options: list[DecisionOption]
+    missing_required_fields: list[str]
+    conflicts: list[ConflictItem]
+    ready_for_confirmation: bool
 
 
 class TemplateCandidate(BaseModel):
