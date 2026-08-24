@@ -97,10 +97,13 @@ def _raise_llm_error(exc: ShortformLLMError) -> None:
     http_status = exc.status_code or status.HTTP_503_SERVICE_UNAVAILABLE
     if http_status == status.HTTP_429_TOO_MANY_REQUESTS:
         code = "SHORTFORM_AGENT_RATE_LIMITED"
+        headers = {"Retry-After": "5"}
     elif http_status >= 500:
         code = "SHORTFORM_AGENT_UNAVAILABLE"
+        headers = None
     else:
         code = "SHORTFORM_AGENT_LLM_ERROR"
+        headers = None
     raise HTTPException(
         status_code=http_status,
         detail={
@@ -108,4 +111,5 @@ def _raise_llm_error(exc: ShortformLLMError) -> None:
             "message": str(exc),
             "retryable": exc.retryable,
         },
+        headers=headers,
     ) from exc
