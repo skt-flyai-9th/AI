@@ -46,7 +46,7 @@ class ShortformLLM(Protocol):
 class OpenAIShortformLLM:
     """Shortform-specific GPT application using the Responses API.
 
-    This application has its own prompt, schema and state boundary even if other
+    This application owns a separate domain prompt and schemas even when other
     GPT applications share the same underlying model family.
     """
 
@@ -76,10 +76,12 @@ class OpenAIShortformLLM:
             "current_user_input": user_input,
             "requirements": [
                 "Return exactly one allowed action.",
+                "Every field required by the structured schema must be returned; use null or empty lists when there is no update.",
                 "Do not ask for information already present in project_state or store_context.",
                 "Do not invent factual store/menu/event information.",
                 "When all four required fields are known, use CONFIRM rather than recommending immediately.",
                 "RECOMMEND is only valid after the brief has already been confirmed.",
+                "Option ids must be short semantic stable ids such as MENU, sales, within_10m, not_allowed, or a real menu_id.",
             ],
         }
         return ShortformTurnDecision.model_validate(
@@ -198,14 +200,25 @@ class OpenAIShortformLLM:
             raise ShortformLLMError("Shortform GPT request failed.", status_code=503) from exc
 
         if response.status_code >= 400:
-            retryable = response.status_code in {408, 409, 429} or response.status_code >= 500
+            if response.status_code == 429:
+                raise ShortformLLMError(
+                    "OpenAI Responses API rate limit was reached.",
+                    status_code=429,
+                    retryable=True,
+                )
+            retryable = response.status_code >= 500 or response.status_code in {408, 409}
+            # Upstream auth/config/schema failures are server dependency failures,
+            # not backend X-Internal-API-Key failures, so expose them as 503.
             raise ShortformLLMError(
                 f"OpenAI Responses API returned HTTP {response.status_code}.",
-                status_code=response.status_code,
+                status_code=503,
                 retryable=retryable,
             )
 
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ShortformLLMError("OpenAI response was not valid JSON.", status_code=503) from exc
         text = _extract_output_text(data)
         if not text:
             raise ShortformLLMError("OpenAI response contained no structured text output.")
