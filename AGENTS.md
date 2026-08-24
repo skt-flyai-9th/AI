@@ -10,6 +10,22 @@
 - Run the AI service with:
   - `uvicorn app.main:app --host 0.0.0.0 --port 8001`
 
+## ChatGPT `민륜기` project sync policy
+
+This file is the coding-facing mirror of the confirmed SARILS decisions made in the ChatGPT project named **`민륜기`**.
+
+- Treat confirmed product/architecture decisions from `민륜기` as input that should be mirrored into this `AGENTS.md` before or together with implementation work.
+- When a confirmed decision changes an existing rule, update this file so Codex does not continue from stale context.
+- Do not copy temporary brainstorming, discarded alternatives, or unresolved ideas into this file as binding rules.
+- Only decisions that are confirmed enough to affect implementation, API contracts, Agent behavior, data/schema rules, integrations, UX state behavior, or hard product constraints should become persistent Codex instructions.
+- If ChatGPT context and this file diverge, the newest explicit user decision in `민륜기` wins and this file should be updated to match it.
+- Codex should use this repository's code/tests and this file together; this file supplies product intent and cross-repository constraints, while code/tests supply the currently implemented contract.
+- This synchronization is repository-based, not automatic shared-memory synchronization between ChatGPT Projects and Codex. Keep the mirror current through committed updates to this file.
+
+Operationally, use this loop:
+
+`민륜기 decision -> update AGENTS.md -> Codex implementation -> tests/docs -> commit/PR`
+
 ## Repository topology
 
 The overall product is split across three repositories:
