@@ -14,6 +14,7 @@ COPY config /app/config
 COPY scripts /app/scripts
 RUN pip install --upgrade pip && pip install .
 COPY . /app
+RUN python reals-video-engine/tools/fetch_models.py --fonts-only
 RUN chmod +x /app/docker-entrypoint.sh
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

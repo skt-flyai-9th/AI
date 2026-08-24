@@ -208,7 +208,7 @@ def _seed_template(db) -> None:
     db.commit()
 
 
-def test_editing_pipeline_repairs_validates_renders_and_revises():
+def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
     llm = RepairingFakeLLM()
     renderer = FakeRenderer()
     service = EditingAgentService(
@@ -216,6 +216,14 @@ def test_editing_pipeline_repairs_validates_renders_and_revises():
         video_context_builder=FakeVideoContextBuilder(),
         renderer=renderer,
     )
+    stages: list[str] = []
+    persist_stage = service._set_stage
+
+    def record_stage(db, run, stage, progress):
+        stages.append(stage.value)
+        persist_stage(db, run, stage, progress)
+
+    monkeypatch.setattr(service, "_set_stage", record_stage)
     with SessionLocal() as db:
         _seed_template(db)
         run = service.create_run(db, _request())
@@ -228,15 +236,35 @@ def test_editing_pipeline_repairs_validates_renders_and_revises():
         assert completed.render_result["output_video_url"].endswith("final.mp4")
         assert completed.publishing_result["post_note"].startswith("음원은")
         assert llm.repair_count == 1
+        assert stages == [
+            "PREPARING_VIDEO_CONTEXT",
+            "PLANNING_RECIPE",
+            "VALIDATING_RECIPE",
+            "PLANNING_RECIPE",
+            "VALIDATING_RECIPE",
+            "RENDERING",
+        ]
         assert len(renderer.calls) == 1
         assert "image_url" not in completed.video_context[0]["keyframes"][0]
 
         original_recipe = completed.recipe
+        refreshed_videos = [
+            video.model_copy(
+                update={"footage_url": f"https://cdn.example/refreshed/{video.video_id}.mp4"}
+            )
+            for video in _request().videos
+        ]
         revision = service.create_revision(
             db,
             completed.id,
-            EditingRevisionRequest(revision_action="첫 장면을 더 짧게 하고 자막을 크게 해줘"),
+            EditingRevisionRequest(
+                revision_action="첫 장면을 더 짧게 하고 자막을 크게 해줘",
+                videos=refreshed_videos,
+            ),
         )
+        assert [
+            video["footage_url"] for video in revision.request_snapshot["videos"]
+        ] == [video.footage_url for video in refreshed_videos]
         revised = service.execute(db, revision.id)
         assert revised.status == EditingRunStatus.COMPLETED.value
         assert revised.parent_run_id == completed.id
@@ -266,6 +294,29 @@ def test_editing_pipeline_returns_source_gap_without_rendering():
         }
         assert payload.recipe is None
         assert renderer.calls == []
+
+        refreshed = [
+            video.model_copy(update={"footage_url": f"https://cdn.example/new/{video.video_id}"})
+            for video in _request().videos
+        ]
+        refreshed.append(
+            refreshed[-1].model_copy(
+                update={
+                    "video_id": "take_503",
+                    "footage_url": "https://cdn.example/new/take_503",
+                    "shooting_scene_order": 3,
+                }
+            )
+        )
+        revision = service.create_revision(
+            db,
+            result.id,
+            EditingRevisionRequest(
+                revision_action="추가 촬영한 영상도 사용해줘",
+                videos=refreshed,
+            ),
+        )
+        assert len(revision.request_snapshot["videos"]) == 3
 
 
 @dataclass
@@ -306,6 +357,37 @@ def test_editing_api_contract(client, auth_headers, monkeypatch):
         f"/api/v1/editing-runs/{created['run_id']}/result", headers=auth_headers
     )
     assert result_response.status_code == 409
+
+
+def test_editing_api_marks_run_failed_when_enqueue_fails(client, auth_headers, monkeypatch):
+    from app.api.v1 import editing_runs as editing_api
+
+    monkeypatch.setattr(
+        editing_api,
+        "validate_editing_runtime",
+        lambda: {"openai": True, "renderer": True, "ffprobe": True, "ffmpeg": True},
+    )
+
+    def fail_enqueue(_: str):
+        raise ConnectionError("broker unavailable")
+
+    monkeypatch.setattr(editing_api, "enqueue_editing_pipeline", fail_enqueue)
+    with SessionLocal() as db:
+        _seed_template(db)
+
+    response = client.post(
+        "/api/v1/editing-runs",
+        headers=auth_headers,
+        json=_request().model_dump(mode="json"),
+    )
+    assert response.status_code == 503
+    run_id = response.json()["detail"]["run_id"]
+    with SessionLocal() as db:
+        failed = db.get(EditingRun, run_id)
+        assert failed is not None
+        assert failed.status == "FAILED"
+        assert failed.stage == "FAILED"
+        assert failed.celery_task_id is None
 
 
 def test_editing_agent_is_registered(client, auth_headers):

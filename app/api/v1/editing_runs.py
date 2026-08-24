@@ -42,7 +42,7 @@ def create_editing_run(
         run = service.create_run(db, body)
     except EditingDomainError as exc:
         _raise_domain_error(exc)
-    task = enqueue_editing_pipeline(run.id)
+    task = _enqueue_or_fail(db, service, run)
     run.celery_task_id = task.id
     db.commit()
     return EditingRunCreateResponse(
@@ -102,7 +102,7 @@ def revise_editing_run(
         revision = service.create_revision(db, run_id, body)
     except EditingDomainError as exc:
         _raise_domain_error(exc)
-    task = enqueue_editing_pipeline(revision.id)
+    task = _enqueue_or_fail(db, service, revision)
     revision.celery_task_id = task.id
     db.commit()
     return revision_response(revision)
@@ -113,6 +113,25 @@ def _require_runtime() -> None:
     missing = [name for name, ready in runtime.items() if not ready]
     if missing:
         raise HTTPException(status_code=422, detail={"missing_editing_dependencies": missing})
+
+
+def _enqueue_or_fail(
+    db: Session,
+    service: EditingAgentService,
+    run: EditingRun,
+):
+    try:
+        return enqueue_editing_pipeline(run.id)
+    except Exception as exc:
+        service.mark_enqueue_failed(db, run)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "EDITING_TASK_ENQUEUE_FAILED",
+                "message": "The editing task could not be queued. Retry the request.",
+                "run_id": run.id,
+            },
+        ) from exc
 
 
 def _raise_domain_error(exc: EditingDomainError) -> None:

@@ -1,4 +1,5 @@
 """렌더 폰트와 MediaPipe 모델 다운로드 — Windows/WSL/Linux 공용."""
+import argparse
 import hashlib
 import pathlib
 import tempfile
@@ -18,15 +19,24 @@ MODEL_FILES = {
 }
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--fonts-only",
+    action="store_true",
+    help="Install only the deterministic renderer font bundle.",
+)
+args = parser.parse_args()
+
 model_dst = ROOT / "assets" / "models"
-model_dst.mkdir(parents=True, exist_ok=True)
-for name, url in MODEL_FILES.items():
-    out = model_dst / name
-    if out.exists() and out.stat().st_size > 10_000:
-        print(f"  skip  {name} (이미 있음)")
-        continue
-    print(f"  →     {name}")
-    urllib.request.urlretrieve(url, out)
+if not args.fonts_only:
+    model_dst.mkdir(parents=True, exist_ok=True)
+    for name, url in MODEL_FILES.items():
+        out = model_dst / name
+        if out.exists() and out.stat().st_size > 10_000:
+            print(f"  skip  {name} (이미 있음)")
+            continue
+        print(f"  →     {name}")
+        urllib.request.urlretrieve(url, out)
 
 font_dst = ROOT / "assets" / "fonts"
 font_dst.mkdir(parents=True, exist_ok=True)
@@ -61,4 +71,7 @@ else:
                 with bundle.open(f"public/static/{name}") as source:
                     (font_dst / name).write_bytes(source.read())
 
-print("완료. SAM 3.1 / YOLO11 / Qwen3-VL 가중치는 GPU 최초 실행 시 자동 다운로드됩니다.")
+if args.fonts_only:
+    print("완료. REALS renderer 폰트 bundle이 준비되었습니다.")
+else:
+    print("완료. SAM 3.1 / YOLO11 / Qwen3-VL 가중치는 GPU 최초 실행 시 자동 다운로드됩니다.")

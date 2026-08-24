@@ -7,6 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import httpx
 from sqlalchemy.orm import Session
 
 from app.agents.editing.graph import build_editing_graph
@@ -98,6 +99,28 @@ class EditingAgentService:
                 status_code=409,
             )
         snapshot = EditingRunCreateRequest.model_validate(parent.request_snapshot)
+        parent_identity = {
+            video.video_id: video.shooting_scene_order for video in snapshot.videos
+        }
+        refreshed_identity = {
+            video.video_id: video.shooting_scene_order for video in request.videos
+        }
+        existing_changed = any(
+            refreshed_identity.get(video_id) != order
+            for video_id, order in parent_identity.items()
+        )
+        completed_video_set_changed = (
+            parent.status == EditingRunStatus.COMPLETED.value
+            and set(refreshed_identity) != set(parent_identity)
+        )
+        if existing_changed or completed_video_set_changed:
+            raise EditingDomainError(
+                "EDITING_REVISION_VIDEO_MISMATCH",
+                "Revision videos must preserve existing video IDs and shooting order. "
+                "New videos are accepted only for a source-gap revision.",
+                status_code=409,
+            )
+        snapshot.videos = sorted(request.videos, key=lambda video: video.shooting_scene_order)
         snapshot.revision = request.revision_action
         self._get_active_template(db, snapshot.selected_shortform)
         run = EditingRun(
@@ -137,7 +160,14 @@ class EditingAgentService:
             self._set_stage(db, run, EditingRunStage.PREPARING_VIDEO_CONTEXT, 10)
             contexts = self.video_context_builder.build(request.videos)
             run.video_context = [persistable_video_context(context) for context in contexts]
-            self._set_stage(db, run, EditingRunStage.PLANNING_RECIPE, 35)
+
+            def update_graph_stage(stage: str, progress: int) -> None:
+                self._set_stage(
+                    db,
+                    run,
+                    EditingRunStage(stage),
+                    max(run.progress, progress),
+                )
 
             result = self.graph.invoke(
                 {
@@ -151,9 +181,9 @@ class EditingAgentService:
                     "revision_action": run.revision_action,
                     "max_repair_attempts": self.settings.editing_max_repair_attempts,
                     "repair_attempts": 0,
+                    "stage_callback": update_graph_stage,
                 }
             )
-            self._set_stage(db, run, EditingRunStage.VALIDATING_RECIPE, 65)
             if result.get("exhausted"):
                 errors = [_format_validation_issue(item) for item in result.get("validation_errors", [])]
                 raise EditingDomainError(
@@ -201,11 +231,20 @@ class EditingAgentService:
             failed = db.get(EditingRun, run_id)
             if failed is not None:
                 failed.status = EditingRunStatus.FAILED.value
+                failed.stage = EditingRunStage.FAILED.value
                 failed.progress = min(failed.progress, 99)
                 failed.error_message = _safe_error_message(exc)
                 failed.finished_at = datetime.now(timezone.utc)
                 db.commit()
             raise
+
+    @staticmethod
+    def mark_enqueue_failed(db: Session, run: EditingRun) -> None:
+        run.status = EditingRunStatus.FAILED.value
+        run.stage = EditingRunStage.FAILED.value
+        run.error_message = "TASK_ENQUEUE_FAILED: Could not publish the editing task."
+        run.finished_at = datetime.now(timezone.utc)
+        db.commit()
 
     def result(self, run: EditingRun) -> EditingRunResultResponse:
         return EditingRunResultResponse(
@@ -258,11 +297,29 @@ def validate_editing_runtime() -> dict[str, bool]:
     settings = get_settings()
     return {
         "openai": bool(settings.openai_api_key.strip() and settings.editing_openai_model.strip()),
-        "renderer": bool(settings.editing_renderer_url.strip()),
+        "renderer": _renderer_service_ready(),
         "reals_registry": _reals_registry_ready(),
         "ffprobe": _command_exists(settings.editing_ffprobe_path),
         "ffmpeg": _command_exists(settings.editing_ffmpeg_path),
     }
+
+
+def _renderer_service_ready() -> bool:
+    settings = get_settings()
+    url = settings.editing_renderer_url.rstrip("/")
+    if not url:
+        return False
+    try:
+        response = httpx.get(
+            f"{url}/health/ready",
+            timeout=settings.editing_renderer_health_timeout_seconds,
+        )
+        if response.status_code != 200:
+            return False
+        payload = response.json()
+        return isinstance(payload, dict) and payload.get("ready") is True
+    except (httpx.HTTPError, ValueError, TypeError):
+        return False
 
 
 def _command_exists(command: str) -> bool:

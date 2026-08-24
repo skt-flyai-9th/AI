@@ -14,6 +14,7 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
     """Compile plan -> deterministic validation -> bounded repair loop."""
 
     def plan_recipe(state: EditingGraphState) -> dict:
+        _emit_stage(state, "PLANNING_RECIPE", 35)
         decision = llm.plan_recipe(
             domain_context=state["domain_context"],
             project=state["project"],
@@ -26,6 +27,7 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
         return {"decision": decision.model_dump(mode="json"), "repair_attempts": 0}
 
     def validate_recipe(state: EditingGraphState) -> dict:
+        _emit_stage(state, "VALIDATING_RECIPE", 65)
         decision = EditingPlanDecision.model_validate(state["decision"])
         if decision.outcome == "SOURCE_GAP":
             return {"validation_errors": [], "validation_passed": True}
@@ -48,6 +50,7 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
         return "exhausted"
 
     def repair_recipe(state: EditingGraphState) -> dict:
+        _emit_stage(state, "PLANNING_RECIPE", 65)
         decision = llm.repair_recipe(
             domain_context=state["domain_context"],
             project=state["project"],
@@ -86,3 +89,9 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
 
 def _contexts(state: EditingGraphState) -> list[VideoContext]:
     return [VideoContext.model_validate(item) for item in state["video_contexts"]]
+
+
+def _emit_stage(state: EditingGraphState, stage: str, progress: int) -> None:
+    callback = state.get("stage_callback")
+    if callback is not None:
+        callback(stage, progress)
