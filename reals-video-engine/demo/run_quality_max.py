@@ -6,16 +6,16 @@ for _d in (".work", "output"):
     (ROOT / _d).mkdir(exist_ok=True)   # _ensure_dirs
 sys.path.insert(0, str(ROOT / "demo"))
 
-from sarils_edit_engine import VideoEditEngine
-from sarils_edit_engine.contracts import (ColorTone, EditRecipe, EffectApplication,
+from reals_edit_engine import VideoEditEngine
+from reals_edit_engine.contracts import (ColorTone, EditRecipe, EffectApplication,
                                           FinalAudioPolicy, FinalRenderRequest,
                                           FontWeight, MotionId, Overlay, OverlayType,
                                           RecipeSegment, SourceMode, SfxStrength,
                                           TransitionId)
-from sarils_edit_engine.media import FFMPEG, media_ref, run
-from sarils_edit_engine.model_adapters.avoid_map import VisionAvoidMapProvider
-from sarils_edit_engine.model_adapters.device import cuda_available, nvenc_available
-from sarils_edit_engine.sfx import MockSynthSfxResolver
+from reals_edit_engine.media import FFMPEG, media_ref, run
+from reals_edit_engine.model_adapters.avoid_map import VisionAvoidMapProvider
+from reals_edit_engine.model_adapters.device import cuda_available, nvenc_available
+from reals_edit_engine.sfx import MockSynthSfxResolver
 
 import argparse
 _ap = argparse.ArgumentParser()

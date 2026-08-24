@@ -14,7 +14,7 @@ Apify / Gemini / YouTube / NAVER API HUB
 
 이 저장소는 앞으로 여러 AI Agent를 담을 수 있는 서버 골격입니다. **현재 구현되어 사용할 수 있는 Agent는 `challenge-ranking` 하나**이며, 다른 Agent는 아직 구현되어 있지 않습니다. 현재 범위와 미래 범위를 명확히 구분합니다.
 
-Agent와 별도로, 검증된 GPU 기반 숏폼 렌더링 파이프라인은 [`sarils-video-engine/`](sarils-video-engine/)에 독립 모듈로 포함되어 있습니다.
+Agent와 별도로, 검증된 GPU 기반 숏폼 렌더링 파이프라인은 [`reals-video-engine/`](reals-video-engine/)에 독립 모듈로 포함되어 있습니다.
 
 ## 현재 구현 상태
 
@@ -33,12 +33,12 @@ X-Internal-API-Key: <INTERNAL_API_KEY>
 
 ## 숏폼 영상 편집 엔진
 
-`sarils-video-engine/`는 가이드 분석 결과와 촬영 영상을 받아 세로형 숏폼 MP4를 만드는 **독립 실행형 편집 엔진**입니다. 현재 FastAPI Agent 레지스트리에 등록된 Agent는 아니며, 오케스트레이터 또는 메인 백엔드가 구조화된 편집 요청을 전달하는 경계를 전제로 합니다.
+`reals-video-engine/`는 가이드 분석 결과와 촬영 영상을 받아 세로형 숏폼 MP4를 만드는 **독립 실행형 편집 엔진**입니다. 현재 FastAPI Agent 레지스트리에 등록된 Agent는 아니며, 오케스트레이터 또는 메인 백엔드가 구조화된 편집 요청을 전달하는 경계를 전제로 합니다.
 
 ```text
 Guide Analysis / Orchestrator
   ↓ EditRecipe + 촬영 클립
-SARILS Video Edit Engine
+REALS Video Edit Engine
   ├─ CUT_ASSEMBLY: 모션·품질 분석 → 순서 보존 트림·결합
   └─ FINAL_RENDER: Avoid Map → 자막·SFX → FFmpeg → Post-render QC
   ↓
@@ -66,7 +66,7 @@ MP4 + Cut/Render Manifest + QC 결과
 빠른 실행:
 
 ```bash
-cd sarils-video-engine
+cd reals-video-engine
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -74,7 +74,7 @@ python tools/fetch_models.py
 python demo/run_gpu_stack.py --video sample.mp4
 ```
 
-GPU 설치, Hugging Face 승인·로그인, 고정 의존성 및 운영 정책은 [엔진 README](sarils-video-engine/README.md)를 참고합니다. 모델 가중치, 사용자 영상, 실행 결과, 토큰은 저장소에 커밋하지 않습니다.
+GPU 설치, Hugging Face 승인·로그인, 고정 의존성 및 운영 정책은 [엔진 README](reals-video-engine/README.md)를 참고합니다. 모델 가중치, 사용자 영상, 실행 결과, 토큰은 저장소에 커밋하지 않습니다.
 
 ## 이 서버가 담당하는 범위
 
@@ -358,8 +358,8 @@ app/
 ├─ workers/
 └─ ranker_core/
 
-sarils-video-engine/
-├─ sarils_edit_engine/
+reals-video-engine/
+├─ reals_edit_engine/
 ├─ demo/
 ├─ registry/
 └─ tools/
@@ -478,4 +478,4 @@ python -m app.cli run-ranking
 - [아키텍처와 서비스 경계](docs/ARCHITECTURE.md)
 - [메인 백엔드 연동 계약](docs/BACKEND_INTEGRATION.md)
 - [새 Agent 추가 방법](docs/ADDING_AN_AGENT.md)
-- [SARILS 숏폼 영상 편집 엔진](sarils-video-engine/README.md)
+- [REALS 숏폼 영상 편집 엔진](reals-video-engine/README.md)

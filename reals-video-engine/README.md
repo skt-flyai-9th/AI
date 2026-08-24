@@ -1,4 +1,4 @@
-# SARILS Video Edit Engine v0.3
+# REALS Video Edit Engine v0.3
 
 가이드 영상 기반 숏폼 자동 편집 엔진. **LLM은 엔진 밖**에 있고, 엔진은 검증된
 구조화 JSON(EditRecipe)만 받아 MP4와 Manifest를 만든다.
@@ -20,7 +20,7 @@ wsl --install -d Ubuntu-24.04   # PowerShell(관리자), 재부팅 후 계정 �
 ```bash
 # Ubuntu 안에서
 sudo apt update && sudo apt install -y ffmpeg python3-venv unzip
-unzip sarils-video-engine-v0.3.1.zip && cd sarils-video-engine
+unzip reals-video-engine-v0.3.1.zip && cd reals-video-engine
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python tools/fetch_models.py                    # Pretendard + MediaPipe 모델
@@ -70,7 +70,7 @@ Pretendard 1.3.9와 MediaPipe 모델도 저장소에 넣지 않고
 | READ-1 의미 | OpenCV 모션·품질 (conf≤0.79 상한) | **Qwen3-VL 8B-AWQ/4B** ↔ Pegasus 폴백 |
 | 인코딩 | libx264 | **h264_nvenc** |
 
-`SARILS_FORCE_CPU=1`로 GPU를 강제로 끌 수 있다.
+`REALS_FORCE_CPU=1`로 GPU를 강제로 끌 수 있다.
 
 ## VRAM 예산 (16GB — RTX 4090 Laptop)
 
@@ -88,7 +88,7 @@ FINAL_RENDER : SAM 3.1 (~4GB) + YOLO (~2GB) + PP-OCR (~1GB) → close → NVENC
 ## 구조
 
 ```
-sarils_edit_engine/
+reals_edit_engine/
   contracts.py        Pydantic 계약 (EditRecipe / CutManifest / RenderManifest / QC)
   registries.py       Effect·Font·SafeArea·RenderProfile·AudioMix 로더 + 해시 검증
   validator.py        렌더 전 정책 검증 (순서·폰트 글리프·SFX·범위)

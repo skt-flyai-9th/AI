@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT))
 for _d in (".work", "output"):
     (ROOT / _d).mkdir(exist_ok=True)   # _ensure_dirs
 
-from sarils_edit_engine.model_adapters.device import (cuda_available, gpu_info,
+from reals_edit_engine.model_adapters.device import (cuda_available, gpu_info,
                                                       nvenc_available, onnx_providers)
 
 
@@ -48,11 +48,11 @@ def main():
         print(f"\n영상 없음: {video} — 비전 검사는 건너뜁니다.")
         return
 
-    from sarils_edit_engine.model_adapters.frames import sample_frames
+    from reals_edit_engine.model_adapters.frames import sample_frames
     frames = sample_frames(video, [(0, 4000)], per_window=2)
 
     print(f"\n=== 비전 어댑터 (프레임 {len(frames)}장) ===")
-    from sarils_edit_engine.model_adapters import vision
+    from reals_edit_engine.model_adapters import vision
 
     def run_adapter(factory):
         ad = factory()
@@ -68,14 +68,14 @@ def main():
     check("rapidocr/pp-ocr", lambda: run_adapter(vision.RapidOcrTextAdapter))
 
     if cuda_available():
-        from sarils_edit_engine.model_adapters import vision_gpu
+        from reals_edit_engine.model_adapters import vision_gpu
         check("sam3.1/concept", lambda: run_adapter(vision_gpu.Sam3Adapter))
         check("ultralytics/yolo", lambda: run_adapter(vision_gpu.YoloDetectorAdapter))
     else:
         print("  [SKIP] sam3.1 / yolo — CUDA 없음")
 
     print(f"\n=== READ-1 세그멘터 ===")
-    from sarils_edit_engine.model_adapters.quality import (analyze_motion,
+    from reals_edit_engine.model_adapters.quality import (analyze_motion,
                                                            dead_edges_ms,
                                                            quality_confidence)
     def motion():
@@ -85,7 +85,7 @@ def main():
     check("opencv/motion-quality", motion)
 
     if cuda_available():
-        from sarils_edit_engine.model_adapters.semantic import LocalVlmSegmenter
+        from reals_edit_engine.model_adapters.semantic import LocalVlmSegmenter
         def vlm():
             s = LocalVlmSegmenter()
             s._lazy()
@@ -95,8 +95,8 @@ def main():
         print("  [SKIP] qwen3-vl — CUDA 없음")
 
     print(f"\n=== 렌더 프로파일 ===")
-    from sarils_edit_engine.registries import Registries
-    from sarils_edit_engine.ffmpeg_graph import video_encode_args
+    from reals_edit_engine.registries import Registries
+    from reals_edit_engine.ffmpeg_graph import video_encode_args
     reg = Registries(ROOT)
     for pid in ("INSTAGRAM_REELS_V1", "INSTAGRAM_REELS_NVENC_V1"):
         print(f"  {pid:28} {' '.join(video_encode_args(reg.render_profile(pid)))}")

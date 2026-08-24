@@ -1,5 +1,5 @@
 """데모용 임의 EditRecipe — READ-2 구조화 출력이라고 가정."""
-from sarils_edit_engine.contracts import (EditRecipe, EffectApplication,
+from reals_edit_engine.contracts import (EditRecipe, EffectApplication,
                                           FinalAudioPolicy, FontWeight, MotionId,
                                           Overlay, OverlayType, RecipeSegment,
                                           SfxStrength)

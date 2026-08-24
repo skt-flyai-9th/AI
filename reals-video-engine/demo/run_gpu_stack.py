@@ -12,17 +12,17 @@ for _d in (".work", "output"):
     (ROOT / _d).mkdir(exist_ok=True)   # _ensure_dirs
 sys.path.insert(0, str(ROOT / "demo"))
 
-from sarils_edit_engine import VideoEditEngine
-from sarils_edit_engine.contracts import (CutAssemblyRequest, EditRecipe,
+from reals_edit_engine import VideoEditEngine
+from reals_edit_engine.contracts import (CutAssemblyRequest, EditRecipe,
                                           FinalAudioPolicy, FinalRenderRequest,
                                           GuideSegmentRef, MotionId, Overlay,
                                           OverlayType, RawCut, RecipeSegment,
                                           SourceMode)
-from sarils_edit_engine.media import FFMPEG, media_ref, normalize, run
-from sarils_edit_engine.model_adapters.avoid_map import VisionAvoidMapProvider
-from sarils_edit_engine.model_adapters.device import cuda_available, nvenc_available, gpu_info
-from sarils_edit_engine.model_adapters.semantic import HybridSemanticSegmenter
-from sarils_edit_engine.sfx import MockSynthSfxResolver
+from reals_edit_engine.media import FFMPEG, media_ref, normalize, run
+from reals_edit_engine.model_adapters.avoid_map import VisionAvoidMapProvider
+from reals_edit_engine.model_adapters.device import cuda_available, nvenc_available, gpu_info
+from reals_edit_engine.model_adapters.semantic import HybridSemanticSegmenter
+from reals_edit_engine.sfx import MockSynthSfxResolver
 from recipes import build_recipe_a
 
 parser = argparse.ArgumentParser()
