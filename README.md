@@ -12,7 +12,7 @@ FLY AI Service (this repository)
 Apify / Gemini / YouTube / NAVER API HUB
 ```
 
-이 저장소는 앞으로 여러 AI Agent를 담을 수 있는 서버 골격입니다. **현재 구현되어 사용할 수 있는 Agent는 `challenge-ranking` 하나**이며, 다른 Agent는 아직 구현되어 있지 않습니다. 현재 범위와 미래 범위를 명확히 구분합니다.
+이 저장소는 여러 AI Agent를 독립 경계로 제공하는 서버입니다. 현재 `challenge-ranking`, `shortform`, `editing` 세 Agent를 사용할 수 있습니다.
 
 Agent와 별도로, 검증된 GPU 기반 숏폼 렌더링 파이프라인은 [`reals-video-engine/`](reals-video-engine/)에 독립 모듈로 포함되어 있습니다.
 
@@ -21,6 +21,8 @@ Agent와 별도로, 검증된 GPU 기반 숏폼 렌더링 파이프라인은 [`r
 | Agent ID | 상태 | 역할 |
 |---|---|---|
 | `challenge-ranking` | `AVAILABLE` | 국내 유행 챌린지 Top 100 분석, 대표영상·가이드영상 선정 |
+| `shortform` | `AVAILABLE` | 대화로 프로젝트 brief를 확정하고 호환 편집 템플릿 1개 추천 |
+| `editing` | `AVAILABLE` | 촬영 영상 컨텍스트 분석, EditRecipe 검증·수정, Renderer 실행 |
 
 등록된 Agent는 다음 API에서 확인할 수 있습니다.
 
@@ -33,7 +35,7 @@ X-Internal-API-Key: <INTERNAL_API_KEY>
 
 ## 숏폼 영상 편집 엔진
 
-`reals-video-engine/`는 가이드 분석 결과와 촬영 영상을 받아 세로형 숏폼 MP4를 만드는 **독립 실행형 편집 엔진**입니다. 현재 FastAPI Agent 레지스트리에 등록된 Agent는 아니며, 오케스트레이터 또는 메인 백엔드가 구조화된 편집 요청을 전달하는 경계를 전제로 합니다.
+`reals-video-engine/`는 가이드 분석 결과와 촬영 영상을 받아 세로형 숏폼 MP4를 만드는 **독립 실행형 편집 엔진**입니다. `editing` Agent는 검증된 EditRecipe만 Renderer 서비스 경계로 전달하며, 엔진 내부에는 LLM을 두지 않습니다.
 
 ```text
 Guide Analysis / Orchestrator
@@ -342,12 +344,15 @@ Apify는 Meta 공식 Trend API가 아니며 keyword seed가 필요하고 데이�
 app/
 ├─ agents/
 │  ├─ registry.py
-│  └─ challenge_ranking/
-│     └─ service.py
+│  ├─ challenge_ranking/
+│  ├─ shortform/
+│  └─ editing/
 ├─ api/v1/
 │  ├─ agents.py
 │  ├─ challenges.py
 │  ├─ ranking_runs.py
+│  ├─ shortform_sessions.py
+│  ├─ editing_runs.py
 │  ├─ overrides.py
 │  └─ health.py
 ├─ core/
@@ -468,6 +473,12 @@ python -m app.cli run-ranking
 | POST | `/api/v1/ranking-runs` | 챌린지 랭킹 분석 시작 |
 | GET | `/api/v1/ranking-runs/{id}` | 분석 진행 상태 |
 | GET | `/api/v1/ranking-runs/{id}/result` | 해당 실행의 고정 결과 |
+| POST | `/api/v1/shortform-sessions` | 숏폼 brief 대화 세션 시작 |
+| POST | `/api/v1/shortform-sessions/{id}/turns` | 숏폼 대화 진행 |
+| POST | `/api/v1/editing-runs` | 비동기 영상 편집 실행 시작 |
+| GET | `/api/v1/editing-runs/{id}` | 편집 진행 상태 |
+| GET | `/api/v1/editing-runs/{id}/result` | EditRecipe·렌더·게시 문구 결과 |
+| POST | `/api/v1/editing-runs/{id}/revisions` | 기존 결과를 보존한 수정 run 생성 |
 | GET | `/api/v1/challenges?limit=100` | 최신 유효 Top 100 |
 | GET | `/api/v1/challenges/{id}` | 챌린지 상세 |
 | PATCH | `/api/v1/challenges/{id}` | 랭킹·이름·영상 수동 override |

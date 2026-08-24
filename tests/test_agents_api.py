@@ -3,7 +3,7 @@ def test_agent_registry_exposes_current_agents(client, auth_headers):
     assert response.status_code == 200
 
     payload = response.json()
-    assert payload["count"] == 2
+    assert payload["count"] == 3
     agents = {item["id"]: item for item in payload["results"]}
 
     ranking = agents["challenge-ranking"]
@@ -13,3 +13,7 @@ def test_agent_registry_exposes_current_agents(client, auth_headers):
     shortform = agents["shortform"]
     assert shortform["status"] == "AVAILABLE"
     assert shortform["trigger_endpoint"] == "/api/v1/shortform-sessions"
+
+    editing = agents["editing"]
+    assert editing["status"] == "AVAILABLE"
+    assert editing["trigger_endpoint"] == "/api/v1/editing-runs"

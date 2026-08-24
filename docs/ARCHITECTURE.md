@@ -15,22 +15,23 @@ Client
 
 ## 현재 범위
 
-현재 실제 구현된 Agent는 `challenge-ranking` 하나다.
+현재 실제 구현된 Agent는 세 개다.
 
 - 입력: API 키와 메인 백엔드의 실행 요청
 - 처리: Instagram 후보 발견, Gemini 분석, NAVER 국내성 검증, YouTube 영상 선정
 - 출력: 챌린지 Top 100과 대표영상·가이드영상 링크
 
-다른 Agent 이름이나 기능은 아직 확정·구현되지 않았으므로 저장소에서 사용 가능한 것처럼 문서화하지 않는다.
+- `shortform`: 대화형 brief 수집과 ACTIVE 편집 템플릿 추천
+- `editing`: 영상 컨텍스트 생성, EditRecipe 계획·검증·repair, Renderer 연동
 
 ## Agent 구조
 
 ```text
 app/agents/
 ├─ registry.py
-└─ challenge_ranking/
-   ├─ __init__.py
-   └─ service.py
+├─ challenge_ranking/
+├─ shortform/
+└─ editing/
 ```
 
 `registry.py`는 현재 제공 가능한 Agent와 API 계약을 노출한다. 각 Agent는 외부 API 라우터가 내부 구현 세부사항에 직접 의존하지 않도록 서비스 경계를 제공한다.
@@ -81,6 +82,8 @@ AI 서버 DB는 다음을 저장한다.
 - ranking snapshot
 - manual override
 - source status and warnings
+- shortform session and confirmed brief state
+- editing run, immutable revision lineage, recipe, render result
 
 메인 백엔드의 사용자·매장·프로젝트 데이터는 저장하지 않는다.
 

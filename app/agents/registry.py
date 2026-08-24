@@ -50,6 +50,20 @@ _AGENT_REGISTRY: dict[str, AgentDefinition] = {
         current_result_endpoint="",
         docs_path="docs/BACKEND_INTEGRATION.md",
     ),
+    "editing": AgentDefinition(
+        id="editing",
+        name="편집 Agent",
+        status="AVAILABLE",
+        description=(
+            "Builds timestamped video context, produces and validates an EditRecipe, "
+            "hands it to Renderer, and creates immutable natural-language revisions."
+        ),
+        trigger_endpoint="/api/v1/editing-runs",
+        status_endpoint_template="/api/v1/editing-runs/{run_id}",
+        result_endpoint_template="/api/v1/editing-runs/{run_id}/result",
+        current_result_endpoint="",
+        docs_path="docs/BACKEND_INTEGRATION.md",
+    ),
 }
 
 
