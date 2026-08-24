@@ -21,3 +21,13 @@ jobs:
           APP_ENV: test
           DATABASE_URL: sqlite:///./runtime-data/test.db
           CELERY_TASK_ALWAYS_EAGER: "true"
+      - name: Validate Docker Compose
+        run: cp .env.example .env && docker compose config --quiet
+      - name: Build service image
+        run: docker build --tag flyai-ai-service:test .
+      - name: Verify REALS renderer image readiness
+        run: >-
+          docker run --rm --entrypoint python flyai-ai-service:test -c
+          "from app.renderer.service import RealsRendererService;
+          status = RealsRendererService().ready();
+          assert status['ready'], status"
