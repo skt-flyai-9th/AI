@@ -116,7 +116,7 @@ def _service() -> tuple[TemplateKnowledgeService, FakeVideoAnalyzer]:
     return TemplateKnowledgeService(generator=FakeGenerator(), video_analyzer=video), video
 
 
-def test_bootstrap_imports_provided_sources_and_only_activates_video_editing_db():
+def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
     service, _ = _service()
     with SessionLocal() as db:
         result = seed_template_library(db, service=service)
@@ -130,8 +130,8 @@ def test_bootstrap_imports_provided_sources_and_only_activates_video_editing_db(
         assert len(list(db.scalars(select(VideoEditingDBRecord)))) == 3
         assert len(list(db.scalars(select(TemplateSourceBundle)))) == 2
         assert db.scalar(select(TemplateSourceRecord)) is not None
-        assert result["trade_area"]["status"] == "DRAFT"
-        assert result["trade_area"]["service_eligible"] is False
+        assert result["trade_area"]["status"] == "ACTIVE"
+        assert result["trade_area"]["service_eligible"] is True
         assert not db.scalar(
             select(TemplateUpdateCandidate).where(
                 TemplateUpdateCandidate.status == TemplateCandidateStatus.INVALID.value
@@ -320,7 +320,7 @@ def test_template_knowledge_api_bootstrap_and_async_analysis(client, auth_header
         app.dependency_overrides.pop(get_template_knowledge_service, None)
 
 
-def test_trade_area_source_context_respects_workbook_draft_status():
+def test_trade_area_source_context_uses_provisionally_approved_workbook():
     service, _ = _service()
     with SessionLocal() as db:
         seed_template_library(db, service=service)
@@ -330,8 +330,9 @@ def test_trade_area_source_context_respects_workbook_draft_status():
             region_id="REG-SEOCHON",
             category_id="CAT-CAF",
         )
-        assert safe.region is None
-        assert safe.category is None
+        assert safe.region["name"] == "서촌"
+        assert safe.category["name"] == "카페"
+        assert safe.region_category_fit["fit_score(0~1)"] is not None
         assert safe.draft_data_included is False
 
         review = source.resolve_trade_area_context(

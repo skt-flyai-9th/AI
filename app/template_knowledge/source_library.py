@@ -36,6 +36,15 @@ _SERVICE_ELIGIBLE_STATUSES = {
     "PASS",
     "UNSPECIFIED",
 }
+_TRADE_AREA_APPROVAL_DATASETS = {
+    "regions",
+    "categories",
+    "concepts",
+    "region_category_map",
+    "official_trade_area_profiles",
+    "content_region_trade_area_map",
+    "official_category_map",
+}
 
 _EDITING_SCOPE_ADAPTERS: dict[str, dict[str, Any]] = {
     "jujutsu_transition": {
@@ -194,6 +203,9 @@ def import_provided_template_library(
     )
     imported.extend(editing_result["created"])
     skipped.extend(editing_result["skipped"])
+    trade_area_eligible = _trade_area_service_eligible(
+        payloads[TemplateType.TRADE_AREA]
+    )
     return {
         "created": imported,
         "skipped": skipped,
@@ -203,8 +215,12 @@ def import_provided_template_library(
         "video_editing_db": editing_result,
         "trade_area": {
             "status": bundles[TemplateType.TRADE_AREA].status,
-            "service_eligible": False,
-            "reason": "The provided trade-area DB marks its knowledge rows as draft.",
+            "service_eligible": trade_area_eligible,
+            "reason": (
+                "The provided trade-area DB is provisionally approved pending the next research cycle."
+                if trade_area_eligible
+                else "The provided trade-area DB contains unapproved core knowledge rows."
+            ),
         },
     }
 
@@ -239,11 +255,12 @@ def _import_bundle(
         return existing, False
 
     template_type = TemplateType(payload["template_type"])
-    status = (
-        TemplateSourceStatus.ACTIVE
-        if template_type == TemplateType.VIDEO_EDITING
-        else TemplateSourceStatus.DRAFT
-    )
+    status = TemplateSourceStatus.ACTIVE
+    if (
+        template_type == TemplateType.TRADE_AREA
+        and not _trade_area_service_eligible(payload)
+    ):
+        status = TemplateSourceStatus.DRAFT
     if status == TemplateSourceStatus.ACTIVE:
         for current in db.scalars(
             select(TemplateSourceBundle).where(
@@ -460,6 +477,18 @@ def _record_key(payload: dict[str, Any], source_row: int) -> str:
         if value is not None and str(value).strip():
             return _bounded(str(value), 255)
     return f"row_{source_row}"
+
+
+def _trade_area_service_eligible(payload: dict[str, Any]) -> bool:
+    datasets = payload.get("datasets", {})
+    for dataset_name in _TRADE_AREA_APPROVAL_DATASETS:
+        records = datasets.get(dataset_name, {}).get("records", [])
+        if not records or any(
+            str(record.get("_record_status") or "").upper() != "APPROVED"
+            for record in records
+        ):
+            return False
+    return True
 
 
 def _find(

@@ -451,7 +451,7 @@ python -m app.cli run-ranking
 ```bash
 python -m app.cli import-database-library
 python -m app.cli sync-trendcluster-from-video-editing-db
-python -m app.cli resolve-trade-area-db-context --region-id REG-SEOCHON --category-id CAT-CAF --include-draft
+python -m app.cli resolve-trade-area-db-context --region-id REG-SEOCHON --category-id CAT-CAF
 python -m app.cli generate-video-editing-db <record_id> --trend-id <trend_id>
 python -m app.cli generate-trade-area-db trade_area_office evidence.json
 ```

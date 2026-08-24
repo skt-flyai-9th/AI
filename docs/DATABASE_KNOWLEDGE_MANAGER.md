@@ -65,7 +65,7 @@ Gemini 분석은 공개 `https` YouTube URL만 허용하며, 같은 trend/url/mo
 - `app/template_knowledge/sources/상권분석DB.xlsx` — 상권분석 DB v1.1(연령 세분화 컬럼 제외본)
 - 같은 디렉터리의 canonical JSON은 Excel 내용을 행 단위로 변환한 런타임 import 자산이다.
 
-제공본의 `categories!A1`은 깨진 헤더 `x\``로 저장되어 있어, 저장소 사본에서 런타임 조인키인 `category_id`로 복구했다. 그 외 데이터와 `draft` 승인 상태는 제공본을 유지한다.
+제공본의 `categories!A1`은 깨진 헤더 `x\``로 저장되어 있어, 저장소 사본에서 런타임 조인키인 `category_id`로 복구했다. 핵심 지식 행 2,846개는 사용자 지시에 따라 임시 `approved` 처리했으며, 다음 리서치 결과로 교체·재검증한다.
 
 `python -m app.cli import-database-library`는 파일 SHA-256을 검증하고 모든 시트와 원본 행을 `template_source_bundles`·`template_source_records`에 idempotent하게 적재한다. 합성 seed는 만들지 않는다.
 
@@ -75,7 +75,7 @@ Gemini 분석은 공개 `https` YouTube URL만 허용하며, 같은 trend/url/mo
 - 오츠카레 썸머 챌린지 v2
 - 카페 추천 리뷰 릴스 v1
 
-상권 파일은 `regions`, `categories`, 매핑·공식 상권 프로필을 모두 보존한다. 원본이 핵심 레코드를 `draft`로 표시하고 있으므로 자동으로 ACTIVE 처리하거나 서비스 추천에 노출하지 않는다. 검토 용도에서는 `include_draft=true`로 조회할 수 있다. 원본 Excel에서 `approved`로 바꾼 새 버전을 제공한 뒤 다시 import해야 서비스 기본 조회 대상이 된다.
+상권 파일은 `regions`, `categories`, 매핑·공식 상권 프로필을 모두 보존한다. 현재 임시 승인본은 핵심 데이터셋의 모든 행이 `approved`라 source bundle을 ACTIVE 처리하고 기본 서비스 조회에 노출한다. `manual_review_required`, 정량 데이터 미적재, 최신 좌표 재수집 경고는 그대로 유지하며 다음 리서치에서 새 source bundle로 교체한다.
 
 ## 독립 실행
 
@@ -83,7 +83,7 @@ Gemini 분석은 공개 `https` YouTube URL만 허용하며, 같은 trend/url/mo
 alembic upgrade head
 python -m app.cli import-database-library
 python -m app.cli sync-trendcluster-from-video-editing-db
-python -m app.cli resolve-trade-area-db-context --region-id REG-SEOCHON --category-id CAT-CAF --include-draft
+python -m app.cli resolve-trade-area-db-context --region-id REG-SEOCHON --category-id CAT-CAF
 python -m app.cli generate-video-editing-db <record_id> --trend-id <trend_id>
 python -m app.cli generate-trade-area-db trade_area_office evidence.json
 python -m app.cli approve-database-candidate <candidate_id> <reviewer>
