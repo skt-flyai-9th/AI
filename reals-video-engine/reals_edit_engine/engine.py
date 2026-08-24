@@ -7,7 +7,7 @@ import hashlib, json, os, pathlib, uuid
 
 
 def _log(msg: str):
-    if os.environ.get("SARILS_QUIET") != "1":
+    if os.environ.get("REALS_QUIET") != "1":
         print(f"  [engine] {msg}", flush=True)
 
 from .contracts import (CutAssemblyRequest, EngineResult, ExecutionMode,

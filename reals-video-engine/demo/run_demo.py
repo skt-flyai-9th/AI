@@ -12,17 +12,17 @@ import json, pathlib, sys, uuid
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from sarils_edit_engine import VideoEditEngine
-from sarils_edit_engine.contracts import (AvoidMap, AvoidRegion, CutAssemblyRequest,
+from reals_edit_engine import VideoEditEngine
+from reals_edit_engine.contracts import (AvoidMap, AvoidRegion, CutAssemblyRequest,
                                           EditRecipe, EffectApplication,
                                           FinalAudioPolicy, FinalRenderRequest,
                                           FontWeight, GuideSegmentRef, MotionId,
                                           Overlay, OverlayType, RawCut, RecipeSegment,
                                           SourceMode, SfxStrength)
-from sarils_edit_engine.cut_assembly import MockSegmenter
-from sarils_edit_engine.media import FFMPEG, media_ref, normalize, probe, run
-from sarils_edit_engine.sfx import FailingSfxResolver, MockSynthSfxResolver
-from sarils_edit_engine.subtitle_layout import StaticAvoidMapProvider
+from reals_edit_engine.cut_assembly import MockSegmenter
+from reals_edit_engine.media import FFMPEG, media_ref, normalize, probe, run
+from reals_edit_engine.sfx import FailingSfxResolver, MockSynthSfxResolver
+from reals_edit_engine.subtitle_layout import StaticAvoidMapProvider
 
 SRC = "/root/.claude/uploads/a3ed80de-7cc6-5480-8c81-f078f68e9b03/3c1f5a94-1787520774710_20260823213132.4569313.mp4"
 OUT = ROOT / "output"

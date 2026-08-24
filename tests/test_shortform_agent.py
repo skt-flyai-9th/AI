@@ -11,6 +11,7 @@ from app.agents.shortform.types import (
 from app.db.session import SessionLocal
 from app.main import app
 from app.models.editing_template import EditingTemplate
+from app.models.shortform_session import ShortformSession
 from app.schemas.shortform import ShortformAction
 
 
@@ -209,6 +210,52 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
 def test_shortform_session_requires_internal_api_key(client):
     response = client.post("/api/v1/shortform-sessions", json=_store_context())
     assert response.status_code == 401
+
+
+def test_next_recommendation_keeps_current_when_no_alternative(client, auth_headers):
+    _seed_template("only_template", title="유일한 호환 템플릿")
+
+    fake_service = ShortformAgentService(llm=FakeShortformLLM())
+    app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
+    try:
+        created = client.post(
+            "/api/v1/shortform-sessions",
+            headers=auth_headers,
+            json=_store_context(),
+        )
+        session_id = created.json()["session_id"]
+        client.post(
+            f"/api/v1/shortform-sessions/{session_id}/turns",
+            headers=auth_headers,
+            json={"input": {"type": "TEXT", "text": "메뉴를 10분 안에 얼굴 없이 홍보"}},
+        )
+        recommend = client.post(
+            f"/api/v1/shortform-sessions/{session_id}/turns",
+            headers=auth_headers,
+            json={"input": {"type": "CONFIRM", "value": True}},
+        )
+        assert recommend.status_code == 200
+        recommendation_id = recommend.json()["recommendation"]["recommendation_id"]
+
+        next_response = client.post(
+            f"/api/v1/shortform-sessions/{session_id}/recommendations/next",
+            headers=auth_headers,
+            json={},
+        )
+        assert next_response.status_code == 409
+        assert (
+            next_response.json()["detail"]["code"]
+            == "NO_COMPATIBLE_ACTIVE_EDITING_TEMPLATE"
+        )
+
+        with SessionLocal() as db:
+            session = db.get(ShortformSession, session_id)
+            assert session is not None
+            assert session.status == "WAITING_RECOMMENDATION_ACTION"
+            assert session.current_recommendation["recommendation_id"] == recommendation_id
+            assert session.shown_template_ids == ["only_template"]
+    finally:
+        app.dependency_overrides.pop(get_shortform_agent_service, None)
 
 
 def test_shortform_recommendation_fails_without_active_template(client, auth_headers):

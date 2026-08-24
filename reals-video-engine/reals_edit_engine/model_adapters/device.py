@@ -9,7 +9,7 @@ import functools, os, subprocess
 
 @functools.lru_cache(maxsize=1)
 def cuda_available() -> bool:
-    if os.environ.get("SARILS_FORCE_CPU") == "1":
+    if os.environ.get("REALS_FORCE_CPU") == "1":
         return False
     try:
         import torch

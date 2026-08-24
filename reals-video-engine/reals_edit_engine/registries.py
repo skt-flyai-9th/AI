@@ -2,7 +2,7 @@
 from __future__ import annotations
 import hashlib, json, pathlib
 
-ENGINE_VERSION = "sarils-edit-engine/0.3.4"
+ENGINE_VERSION = "reals-edit-engine/0.3.4"
 
 
 class RegistryError(Exception):

@@ -190,14 +190,11 @@ class ShortformAgentService:
                 status_code=409,
             )
 
-        conversation = list(session.conversation or [])
-        conversation.append({"role": "user", "content": "[UI_EVENT] 다시 추천 받기"})
-        session.conversation = conversation[-40:]
-        session.current_recommendation = None
-        session.status = ShortformSessionStatus.RECOMMENDING.value
-        db.commit()
-
-        response = self._recommend(db, session)
+        response = self._recommend(
+            db,
+            session,
+            user_event="[UI_EVENT] 다시 추천 받기",
+        )
         assert response.recommendation is not None
         return NextRecommendationResponse(
             session_id=session.id,
@@ -294,6 +291,8 @@ class ShortformAgentService:
         self,
         db: Session,
         session: ShortformSession,
+        *,
+        user_event: str | None = None,
     ) -> ShortformTurnResponse:
         candidates = self._template_candidates(db, session, strict=True)
         if not candidates:
@@ -345,6 +344,8 @@ class ShortformAgentService:
             shown.append(selected.editing_template_id)
         session.shown_template_ids = shown
         conversation = list(session.conversation or [])
+        if user_event:
+            conversation.append({"role": "user", "content": user_event})
         conversation.append(
             {
                 "role": "assistant",
