@@ -149,7 +149,7 @@ class ShortformTurnInput(BaseModel):
     value: bool | None = None
 
     @model_validator(mode="after")
-    def validate_payload(self) -> "ShortformTurnInput":
+    def validate_payload(self) -> ShortformTurnInput:
         if self.type == TurnInputType.TEXT and not (self.text or "").strip():
             raise ValueError("TEXT input requires text")
         if self.type == TurnInputType.OPTION and not (self.option_id or "").strip():
