@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+from typing_extensions import TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -71,12 +72,17 @@ class TemplateSelection(BaseModel):
     internal_reason: str
 
 
-class ShortformGraphState(dict):
-    """Marker type for runtime dict state.
-
-    LangGraph accepts mapping-like state. The public API state remains Pydantic
-    validated at the service boundary; this marker keeps graph wiring lightweight.
-    """
-
-
 GraphMode = Literal["TURN", "RECOMMEND"]
+
+
+class ShortformGraphState(TypedDict, total=False):
+    mode: GraphMode
+    domain_context: str
+    store_context: dict[str, Any]
+    project_state: dict[str, Any]
+    conversation: list[dict[str, str]]
+    user_input: dict[str, Any]
+    photo_urls: list[str]
+    candidate_templates: list[dict[str, Any]]
+    decision: dict[str, Any]
+    recommendation: dict[str, Any]
