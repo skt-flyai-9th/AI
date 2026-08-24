@@ -87,7 +87,19 @@ class Settings(BaseSettings):
     editing_probe_timeout_seconds: int = Field(default=45, ge=5, le=300)
     editing_renderer_url: str = ""
     editing_renderer_timeout_seconds: int = Field(default=1800, ge=30, le=7200)
+    editing_renderer_health_timeout_seconds: int = Field(default=3, ge=1, le=30)
     editing_reals_registry_path: Path = Path("reals-video-engine/registry")
+
+    # The renderer runs as a separate process from the AI API/worker. Its
+    # public base URL is returned to the backend after a successful render.
+    renderer_public_base_url: str = "http://localhost:8080"
+    renderer_work_dir: Path = Path("runtime-data/renderer/work")
+    renderer_output_dir: Path = Path("runtime-data/renderer/output")
+    renderer_max_download_bytes: int = Field(
+        default=1_073_741_824, ge=1_048_576, le=10_737_418_240
+    )
+    renderer_download_timeout_seconds: int = Field(default=300, ge=10, le=3600)
+    editing_reals_engine_path: Path = Path("reals-video-engine")
 
     @property
     def effective_internal_api_key(self) -> str:

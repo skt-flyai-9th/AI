@@ -399,6 +399,7 @@ docker compose up --build -d
 - Redis
 - Celery Worker
 - Celery Beat
+- REALS Renderer (`http://localhost:8080`)
 
 ### 필수 환경변수
 

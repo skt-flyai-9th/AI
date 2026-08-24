@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Literal
 from typing_extensions import TypedDict
 
@@ -80,6 +81,7 @@ class EditingGraphState(TypedDict, total=False):
     repair_attempts: int
     max_repair_attempts: int
     exhausted: bool
+    stage_callback: Callable[[str, int], None]
 
 
 def persistable_video_context(context: VideoContext) -> dict[str, Any]:

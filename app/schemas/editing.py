@@ -22,6 +22,7 @@ class EditingRunStage(StrEnum):
     VALIDATING_RECIPE = "VALIDATING_RECIPE"
     RENDERING = "RENDERING"
     COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 
 class EditingProject(BaseModel):
@@ -185,6 +186,17 @@ class EditingRevisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     revision_action: str = Field(min_length=1, max_length=1000)
+    videos: list[EditingVideoInput] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_unique_videos(self) -> EditingRevisionRequest:
+        video_ids = [video.video_id for video in self.videos]
+        if len(video_ids) != len(set(video_ids)):
+            raise ValueError("video_id must be unique")
+        orders = [video.shooting_scene_order for video in self.videos]
+        if len(orders) != len(set(orders)):
+            raise ValueError("shooting_scene_order must be unique")
+        return self
 
 
 class EditingRevisionResponse(BaseModel):
