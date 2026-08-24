@@ -33,7 +33,23 @@ _AGENT_REGISTRY: dict[str, AgentDefinition] = {
         result_endpoint_template="/api/v1/ranking-runs/{run_id}/result",
         current_result_endpoint="/api/v1/challenges?limit=100",
         docs_path="docs/BACKEND_INTEGRATION.md",
-    )
+    ),
+    "shortform": AgentDefinition(
+        id="shortform",
+        name="숏폼 Agent",
+        status="AVAILABLE",
+        description=(
+            "Collects the project brief through conversation and recommends exactly one "
+            "compatible ACTIVE video-editing template at a time."
+        ),
+        trigger_endpoint="/api/v1/shortform-sessions",
+        status_endpoint_template="/api/v1/shortform-sessions/{session_id}/turns",
+        result_endpoint_template=(
+            "/api/v1/shortform-sessions/{session_id}/recommendations/next"
+        ),
+        current_result_endpoint="",
+        docs_path="docs/BACKEND_INTEGRATION.md",
+    ),
 }
 
 
