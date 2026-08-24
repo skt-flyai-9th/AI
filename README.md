@@ -456,7 +456,7 @@ python -m app.cli generate-video-editing-db <record_id> --trend-id <trend_id>
 python -m app.cli generate-trade-area-db trade_area_office evidence.json
 ```
 
-`exports/trendcluster.json`은 제공된 영상편집DB의 세 영상으로 초기화되어 있다. 원본 순위 1·2·3을 유지하고, URL이 있는 항목은 대표영상과 가이드영상에 같은 YouTube URL을 사용한다. 카페 추천 리뷰 릴스는 원본 DB에 공개 URL이 없으므로 두 URL을 모두 `null`로 보존한다. 위 동기화 명령을 다시 실행하면 같은 상태로 원자적으로 복구된다.
+`exports/trendcluster.json`은 제공된 영상편집DB의 세 영상으로 초기화되어 있다. 원본 순위 1·2·3을 유지하고, 모든 항목의 대표영상과 가이드영상에 같은 YouTube URL을 사용한다. 카페 추천 리뷰 릴스는 `https://www.youtube.com/shorts/OWnLiuJU8Ks`를 사용한다. 위 동기화 명령을 다시 실행하면 같은 상태로 원자적으로 복구된다.
 
 ## 장애 처리
 

@@ -62,8 +62,10 @@ Gemini 분석은 공개 `https` YouTube URL만 허용하며, 같은 trend/url/mo
 초기 라이브러리는 코드가 만든 합성 샘플이 아니라 사용자가 제공한 두 원본 파일을 사용한다.
 
 - `app/template_knowledge/sources/영상편집DB.xlsx` — 영상편집 DB v5.1
-- `app/template_knowledge/sources/상권분석DB.xlsx` — 상권분석 DB v1.2
+- `app/template_knowledge/sources/상권분석DB.xlsx` — 상권분석 DB v1.1(연령 세분화 컬럼 제외본)
 - 같은 디렉터리의 canonical JSON은 Excel 내용을 행 단위로 변환한 런타임 import 자산이다.
+
+제공본의 `categories!A1`은 깨진 헤더 `x\``로 저장되어 있어, 저장소 사본에서 런타임 조인키인 `category_id`로 복구했다. 그 외 데이터와 `draft` 승인 상태는 제공본을 유지한다.
 
 `python -m app.cli import-database-library`는 파일 SHA-256을 검증하고 모든 시트와 원본 행을 `template_source_bundles`·`template_source_records`에 idempotent하게 적재한다. 합성 seed는 만들지 않는다.
 
@@ -88,7 +90,7 @@ python -m app.cli approve-database-candidate <candidate_id> <reviewer>
 python -m app.cli analyze-trade-area-db evidence.json --database-id trade_area_office
 ```
 
-초기 `exports/trendcluster.json`은 영상편집DB의 세 영상과 원본 순위 1·2·3을 그대로 사용한다. 대표영상과 가이드영상은 같은 DB URL로 맞췄다. 카페 추천 리뷰 릴스는 원본 DB에 공개 URL이 없어서 두 값이 모두 `null`이며, 로컬 파일명을 공개 URL로 추정하지 않는다.
+초기 `exports/trendcluster.json`은 영상편집DB의 세 영상과 원본 순위 1·2·3을 그대로 사용한다. 대표영상과 가이드영상은 같은 DB URL로 맞췄으며, 카페 추천 리뷰 릴스는 `https://www.youtube.com/shorts/OWnLiuJU8Ks`를 사용한다.
 
 AI 서버 내부 운영 API도 `/api/v1/database-knowledge` 아래에 준비되어 있다. Gemini/GPT를 호출하는 생성·분석 요청은 `202 Accepted`와 `run_id`를 반환하고 Celery worker가 실행한다. `/runs/{run_id}`를 polling한 뒤 `/runs/{run_id}/result`에서 결과를 조회한다.
 

@@ -341,6 +341,7 @@ def test_trade_area_source_context_respects_workbook_draft_status():
             include_draft=True,
         )
         assert review.region["name"] == "서촌"
+        assert not any(key.startswith("age_") for key in review.region)
         assert review.category["name"] == "카페"
         assert review.region_category_fit["fit_score(0~1)"] is not None
         assert review.draft_data_included is True
