@@ -220,3 +220,22 @@ def test_renderer_builds_the_native_reals_final_render_contract(tmp_path):
     assert native_request.execution_mode.value == "FINAL_RENDER"
     assert native_request.produced_video.path == str(produced_path)
     assert native_request.edit_recipe.recipe_id == "native-contract-test_recipe"
+
+
+def test_cpu_encoder_honors_free_tier_preset_override(monkeypatch):
+    renderer_service_module._load_native_reals(Path("reals-video-engine").resolve())
+    from reals_edit_engine.ffmpeg_graph import video_encode_args
+
+    monkeypatch.setenv("REALS_FFMPEG_PRESET_OVERRIDE", "veryfast")
+    args = video_encode_args(
+        {
+            "video_codec": "libx264",
+            "crf": 20,
+            "preset": "medium",
+            "x264_profile": "high",
+            "level": "4.1",
+            "gop": 60,
+        }
+    )
+
+    assert args[args.index("-preset") + 1] == "veryfast"

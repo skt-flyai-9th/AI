@@ -30,6 +30,7 @@ class FFmpegVideoContextBuilder:
         self.ffmpeg_path = settings.editing_ffmpeg_path
         self.timeout = settings.editing_probe_timeout_seconds
         self.max_keyframes = settings.editing_max_keyframes_per_video
+        self.max_source_duration_ms = settings.editing_max_source_duration_seconds * 1000
 
     def build(self, videos: list[EditingVideoInput]) -> list[VideoContext]:
         return [self._build_one(video) for video in sorted(videos, key=lambda item: item.shooting_scene_order)]
@@ -38,6 +39,11 @@ class FFmpegVideoContextBuilder:
         self._validate_url(video.footage_url)
         metadata = self._probe(video.footage_url, video.video_id)
         duration_ms = metadata["duration_ms"]
+        if duration_ms > self.max_source_duration_ms:
+            raise VideoContextError(
+                f"Video duration exceeds the {self.max_source_duration_ms}ms limit "
+                f"for video_id={video.video_id}."
+            )
         timestamps = _sample_timestamps(duration_ms, self.max_keyframes)
         keyframes = self._extract_keyframes(video.footage_url, video.video_id, timestamps)
         if not keyframes:

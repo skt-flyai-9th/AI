@@ -62,6 +62,7 @@ class EditingAgentService:
         self.graph = build_editing_graph(self.llm, self.validator)
 
     def create_run(self, db: Session, request: EditingRunCreateRequest) -> EditingRun:
+        self._validate_video_limit(request.videos)
         self._get_active_template(db, request.selected_shortform)
         run = EditingRun(
             id=f"edit_{uuid.uuid4().hex}",
@@ -86,6 +87,7 @@ class EditingAgentService:
         parent_run_id: str,
         request: EditingRevisionRequest,
     ) -> EditingRun:
+        self._validate_video_limit(request.videos)
         parent = db.get(EditingRun, parent_run_id)
         if parent is None:
             raise EditingDomainError("EDITING_RUN_NOT_FOUND", "Editing run not found.", status_code=404)
@@ -140,6 +142,15 @@ class EditingAgentService:
         db.commit()
         db.refresh(run)
         return run
+
+    def _validate_video_limit(self, videos: list[Any]) -> None:
+        limit = self.settings.editing_max_videos_per_run
+        if len(videos) > limit:
+            raise EditingDomainError(
+                "EDITING_VIDEO_LIMIT_EXCEEDED",
+                f"At most {limit} videos can be processed in one editing run.",
+                status_code=422,
+            )
 
     def execute(self, db: Session, run_id: str) -> EditingRun:
         run = db.get(EditingRun, run_id)

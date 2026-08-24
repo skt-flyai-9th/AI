@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.agents.editing.service import EditingAgentService
+import pytest
+
+from app.agents.editing.service import EditingAgentService, EditingDomainError
 from app.agents.editing.types import EditingPlanDecision, VideoContext, VideoKeyframe
+from app.agents.editing.video_context import FFmpegVideoContextBuilder, VideoContextError
+from app.core.config import Settings
 from app.db.session import SessionLocal
 from app.models.editing_run import EditingRun
 from app.models.editing_template import EditingTemplate
@@ -206,6 +210,49 @@ def _seed_template(db) -> None:
         )
     )
     db.commit()
+
+
+def test_editing_run_rejects_more_videos_than_free_tier_limit():
+    request_payload = _request().model_dump(mode="json")
+    request_payload["videos"] = [
+        {
+            "video_id": f"take_{index}",
+            "footage_url": f"https://cdn.example/take-{index}.mp4",
+            "shooting_scene_order": index,
+        }
+        for index in range(1, 8)
+    ]
+    request = EditingRunCreateRequest.model_validate(request_payload)
+    service = EditingAgentService(
+        llm=RepairingFakeLLM(),
+        video_context_builder=FakeVideoContextBuilder(),
+        renderer=FakeRenderer(),
+    )
+    service.settings = Settings(editing_max_videos_per_run=6)
+
+    with SessionLocal() as db, pytest.raises(EditingDomainError) as error:
+        service.create_run(db, request)
+
+    assert error.value.code == "EDITING_VIDEO_LIMIT_EXCEEDED"
+    assert error.value.status_code == 422
+
+
+def test_video_context_rejects_source_over_cpu_profile_limit(monkeypatch):
+    builder = FFmpegVideoContextBuilder()
+    builder.max_source_duration_ms = 30_000
+    monkeypatch.setattr(
+        builder,
+        "_probe",
+        lambda *_: {"duration_ms": 30_001, "width": 1080, "height": 1920, "fps": 30.0},
+    )
+    monkeypatch.setattr(
+        builder,
+        "_extract_keyframes",
+        lambda *_: pytest.fail("over-limit input must not be decoded"),
+    )
+
+    with pytest.raises(VideoContextError, match="30000ms limit"):
+        builder._build_one(_request().videos[0])
 
 
 def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
