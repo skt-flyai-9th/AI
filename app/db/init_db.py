@@ -1,5 +1,11 @@
 from app.db.session import Base, engine
-from app.models import challenge, pipeline_run, ranking_snapshot  # noqa: F401
+from app.models import (  # noqa: F401
+    challenge,
+    editing_template,
+    pipeline_run,
+    ranking_snapshot,
+    shortform_session,
+)
 
 
 def init_db() -> None:
