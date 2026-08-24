@@ -61,6 +61,20 @@ class Settings(BaseSettings):
     shortform_max_output_tokens: int = Field(default=1800, ge=256, le=10000)
     shortform_max_photo_inputs: int = Field(default=4, ge=0, le=10)
 
+    # Editing Agent has its own prompt/schema and turns video into a bounded
+    # timestamped context before calling the model.
+    editing_openai_model: str = "gpt-5.4-mini-2026-03-17"
+    editing_request_timeout_seconds: int = Field(default=30, ge=5, le=180)
+    editing_max_output_tokens: int = Field(default=5000, ge=512, le=20000)
+    editing_max_repair_attempts: int = Field(default=2, ge=0, le=5)
+    editing_max_keyframes_per_video: int = Field(default=5, ge=1, le=12)
+    editing_ffprobe_path: str = "ffprobe"
+    editing_ffmpeg_path: str = "ffmpeg"
+    editing_probe_timeout_seconds: int = Field(default=45, ge=5, le=300)
+    editing_renderer_url: str = ""
+    editing_renderer_timeout_seconds: int = Field(default=1800, ge=30, le=7200)
+    editing_reals_registry_path: Path = Path("reals-video-engine/registry")
+
     @property
     def effective_internal_api_key(self) -> str:
         return (self.internal_api_key or self.admin_api_token).strip()
@@ -68,6 +82,14 @@ class Settings(BaseSettings):
     @property
     def shortform_llm_ready(self) -> bool:
         return bool(self.openai_api_key.strip() and self.shortform_openai_model.strip())
+
+    @property
+    def editing_runtime_ready(self) -> bool:
+        return bool(
+            self.openai_api_key.strip()
+            and self.editing_openai_model.strip()
+            and self.editing_renderer_url.strip()
+        )
 
     @property
     def required_api_key_status(self) -> dict[str, bool]:

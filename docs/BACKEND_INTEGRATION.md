@@ -150,6 +150,92 @@ Content-Type: application/json
 
 Apify, Gemini, YouTube, NAVER의 부분 실패는 가능한 경우 HTTP 오류 대신 `COMPLETED` 결과의 `warnings`와 `source_status`에 기록된다.
 
+## 편집 Agent
+
+편집은 Celery 비동기 run으로 처리한다. 입력 템플릿은 반드시 `ACTIVE`인 정확한 버전이어야 하며 영상은 HTTP(S) 서명 URL로 전달한다.
+
+```http
+POST /api/v1/editing-runs
+X-Internal-API-Key: <INTERNAL_API_KEY>
+Content-Type: application/json
+```
+
+```json
+{
+  "project": {
+    "project_id": "project_123",
+    "store_id": "store_123",
+    "promotion_subject": {"type": "MENU", "name": "딸기 크림 라떼", "menu_id": "menu_001"},
+    "promotion_objective": "sales",
+    "face_exposure": "not_allowed"
+  },
+  "selected_shortform": {
+    "recommendation_id": "rec_123",
+    "editing_template_id": "edit_template_014",
+    "editing_template_version": 3
+  },
+  "videos": [
+    {
+      "video_id": "take_501",
+      "footage_url": "https://cdn.example/takes/501.mp4",
+      "shooting_scene_order": 1
+    }
+  ],
+  "revision": null
+}
+```
+
+응답은 `202 Accepted`이며 `run_id`, `status=QUEUED`, `task_id`를 반환한다. 이후 다음 상태 API를 polling한다.
+
+```http
+GET /api/v1/editing-runs/{run_id}
+```
+
+stage는 `PREPARING_VIDEO_CONTEXT → PLANNING_RECIPE → VALIDATING_RECIPE → RENDERING → COMPLETED` 순서다. 상태가 `COMPLETED` 또는 `SOURCE_GAP`이면 결과를 조회한다.
+
+```http
+GET /api/v1/editing-runs/{run_id}/result
+```
+
+`COMPLETED` 결과는 `recipe`, `render`, `publishing`, `warnings`를 포함한다. 촬영 근거가 부족한 경우 Agent가 재촬영을 결정하지 않고 아래 형태를 반환한다.
+
+```json
+{
+  "run_id": "edit_123",
+  "status": "SOURCE_GAP",
+  "recipe": null,
+  "render": null,
+  "publishing": null,
+  "warnings": [],
+  "missing_scene_roles": ["RESULT"],
+  "available_options": ["USE_REDUCED_STRUCTURE", "ADD_MORE_VIDEO"]
+}
+```
+
+자연어 수정은 기존 run을 변경하지 않고 새 immutable child run을 만든다.
+
+```http
+POST /api/v1/editing-runs/{run_id}/revisions
+Content-Type: application/json
+
+{"revision_action":"첫 장면을 더 짧게 하고 자막을 크게 해줘"}
+```
+
+AI worker는 MP4 자체를 GPT에 보내지 않는다. `ffprobe` 메타데이터와 타임스탬프 키프레임을 제한적으로 생성하며, DB에는 base64 이미지가 아닌 키프레임 시각만 저장한다. Validator를 통과한 `VIDEO_ONLY` 레시피만 `EDITING_RENDERER_URL/renders`에 전달된다.
+
+Renderer 요청은 `reals-render-job-1.0` 계약을 사용한다. 원격 영상 URL과 메타데이터, 다중 컷의 순서·트림을 담은 `source_assembly`, 엔진 계약과 같은 필드명의 `final_render.edit_recipe`를 함께 보낸다. 단일 컷은 `ONE_TAKE_PASSTHROUGH`, 다중 컷은 정확한 트림 조립 후 `MULTI_CUT_ASSEMBLED`로 처리한다. Renderer 서비스는 URL을 로컬 `MediaFileRef.path`로 resolve하고, 필요 시 조립본을 만든 뒤 REALS `FinalRenderRequest`를 실행해야 한다.
+
+AI 측 preflight Validator와 LLM capability는 `EDITING_REALS_REGISTRY_PATH`에 있는 REALS registry bundle을 함께 읽는다. 시작 시 manifest SHA-256을 검증하고, 효과·전환·최소 컷·자막 제한·렌더 프로필을 그 registry에서 가져온다. Renderer 내부의 native Validator는 로컬 파일 범위, 폰트 파일/글리프, 최종 QC를 다시 검증하며 최종 권한을 가진다.
+
+```text
+EditRecipe
+  → registry-backed preflight + bounded LLM repair
+  → RealsRecipeAdapter
+  → POST /renders (reals-render-job-1.0)
+  → source assembly (multi-cut only)
+  → REALS native Validator + FINAL_RENDER + QC
+```
+
 ## cURL 예시
 
 ```bash

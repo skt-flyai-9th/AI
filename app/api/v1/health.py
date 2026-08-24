@@ -25,5 +25,6 @@ def ready(db: Session = Depends(get_db)) -> dict:
         "agents": [item["id"] for item in list_agent_definitions()],
         "api_keys": settings.required_api_key_status,
         "shortform_llm_ready": settings.shortform_llm_ready,
+        "editing_runtime_ready": settings.editing_runtime_ready,
         "internal_auth_configured": bool(settings.effective_internal_api_key),
     }

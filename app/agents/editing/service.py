@@ -1,0 +1,334 @@
+from __future__ import annotations
+
+import shutil
+import uuid
+from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from app.agents.editing.graph import build_editing_graph
+from app.agents.editing.llm import EditingLLM, OpenAIEditingLLM
+from app.agents.editing.renderer import EditingRenderer, HttpEditingRenderer
+from app.agents.editing.reals import RealsRegistryError, get_reals_registry
+from app.agents.editing.types import (
+    EditingPlanDecision,
+    persistable_video_context,
+)
+from app.agents.editing.validator import EditRecipeValidator
+from app.agents.editing.video_context import FFmpegVideoContextBuilder, VideoContextBuilder
+from app.core.config import get_settings
+from app.models.editing_run import EditingRun
+from app.models.editing_template import EditingTemplate
+from app.schemas.editing import (
+    EditRecipe,
+    EditingRevisionRequest,
+    EditingRevisionResponse,
+    EditingRunCreateRequest,
+    EditingRunCreateResponse,
+    EditingRunResultResponse,
+    EditingRunStage,
+    EditingRunStatus,
+    PublishingResult,
+    SelectedShortform,
+)
+
+
+class EditingDomainError(RuntimeError):
+    def __init__(self, code: str, message: str, *, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
+
+
+class EditingAgentService:
+    def __init__(
+        self,
+        *,
+        llm: EditingLLM | None = None,
+        video_context_builder: VideoContextBuilder | None = None,
+        validator: EditRecipeValidator | None = None,
+        renderer: EditingRenderer | None = None,
+    ) -> None:
+        self.llm = llm or OpenAIEditingLLM()
+        self.video_context_builder = video_context_builder or FFmpegVideoContextBuilder()
+        self.validator = validator or EditRecipeValidator()
+        self.renderer = renderer or HttpEditingRenderer()
+        self.settings = get_settings()
+        self.domain_context = _load_domain_context()
+        self.graph = build_editing_graph(self.llm, self.validator)
+
+    def create_run(self, db: Session, request: EditingRunCreateRequest) -> EditingRun:
+        self._get_active_template(db, request.selected_shortform)
+        run = EditingRun(
+            id=f"edit_{uuid.uuid4().hex}",
+            status=EditingRunStatus.QUEUED.value,
+            stage=EditingRunStage.QUEUED.value,
+            progress=0,
+            request_snapshot=request.model_dump(mode="json"),
+            revision_action=request.revision,
+            warnings=[],
+            video_context=[],
+            missing_scene_roles=[],
+            available_options=[],
+        )
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        return run
+
+    def create_revision(
+        self,
+        db: Session,
+        parent_run_id: str,
+        request: EditingRevisionRequest,
+    ) -> EditingRun:
+        parent = db.get(EditingRun, parent_run_id)
+        if parent is None:
+            raise EditingDomainError("EDITING_RUN_NOT_FOUND", "Editing run not found.", status_code=404)
+        if parent.status not in {
+            EditingRunStatus.COMPLETED.value,
+            EditingRunStatus.SOURCE_GAP.value,
+        }:
+            raise EditingDomainError(
+                "EDITING_RUN_NOT_REVISION_READY",
+                "A revision can be created only from a completed or source-gap run.",
+                status_code=409,
+            )
+        snapshot = EditingRunCreateRequest.model_validate(parent.request_snapshot)
+        snapshot.revision = request.revision_action
+        self._get_active_template(db, snapshot.selected_shortform)
+        run = EditingRun(
+            id=f"edit_{uuid.uuid4().hex}",
+            parent_run_id=parent.id,
+            status=EditingRunStatus.QUEUED.value,
+            stage=EditingRunStage.QUEUED.value,
+            progress=0,
+            request_snapshot=snapshot.model_dump(mode="json"),
+            revision_action=request.revision_action,
+            warnings=[],
+            video_context=[],
+            missing_scene_roles=[],
+            available_options=[],
+        )
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        return run
+
+    def execute(self, db: Session, run_id: str) -> EditingRun:
+        run = db.get(EditingRun, run_id)
+        if run is None:
+            raise EditingDomainError("EDITING_RUN_NOT_FOUND", "Editing run not found.", status_code=404)
+        if run.status != EditingRunStatus.QUEUED.value:
+            return run
+
+        try:
+            request = EditingRunCreateRequest.model_validate(run.request_snapshot)
+            template = self._get_active_template(db, request.selected_shortform)
+            template_payload = _template_payload(template)
+            parent = db.get(EditingRun, run.parent_run_id) if run.parent_run_id else None
+            parent_recipe = parent.recipe if parent is not None else None
+
+            run.status = EditingRunStatus.RUNNING.value
+            run.started_at = datetime.now(timezone.utc)
+            self._set_stage(db, run, EditingRunStage.PREPARING_VIDEO_CONTEXT, 10)
+            contexts = self.video_context_builder.build(request.videos)
+            run.video_context = [persistable_video_context(context) for context in contexts]
+            self._set_stage(db, run, EditingRunStage.PLANNING_RECIPE, 35)
+
+            result = self.graph.invoke(
+                {
+                    "domain_context": self.domain_context,
+                    "project": request.project.model_dump(mode="json"),
+                    "selected_shortform": request.selected_shortform.model_dump(mode="json"),
+                    "template": template_payload,
+                    "videos": [video.model_dump(mode="json") for video in request.videos],
+                    "video_contexts": [context.model_dump(mode="json") for context in contexts],
+                    "parent_recipe": parent_recipe,
+                    "revision_action": run.revision_action,
+                    "max_repair_attempts": self.settings.editing_max_repair_attempts,
+                    "repair_attempts": 0,
+                }
+            )
+            self._set_stage(db, run, EditingRunStage.VALIDATING_RECIPE, 65)
+            if result.get("exhausted"):
+                errors = [_format_validation_issue(item) for item in result.get("validation_errors", [])]
+                raise EditingDomainError(
+                    "EDITING_RECIPE_INVALID",
+                    "Recipe validation failed after repair: " + "; ".join(errors),
+                    status_code=500,
+                )
+
+            decision = EditingPlanDecision.model_validate(result["decision"])
+            if decision.outcome == "SOURCE_GAP":
+                run.status = EditingRunStatus.SOURCE_GAP.value
+                run.stage = EditingRunStage.COMPLETED.value
+                run.progress = 100
+                run.missing_scene_roles = decision.missing_scene_roles
+                run.available_options = decision.available_options
+                run.finished_at = datetime.now(timezone.utc)
+                db.commit()
+                db.refresh(run)
+                return run
+
+            recipe = EditRecipe.model_validate(decision.recipe)
+            publishing = PublishingResult.model_validate(decision.publishing).model_copy(
+                update={"post_note": "음원은 게시 시 플랫폼 내에서 추가해주세요."}
+            )
+            self._set_stage(db, run, EditingRunStage.RENDERING, 80)
+            render_result = self.renderer.render(
+                run_id=run.id,
+                recipe=recipe,
+                videos=request.videos,
+                video_contexts=contexts,
+                template=template_payload,
+            )
+            run.recipe = recipe.model_dump(mode="json")
+            run.publishing_result = publishing.model_dump(mode="json")
+            run.render_result = render_result.model_dump(mode="json")
+            run.status = EditingRunStatus.COMPLETED.value
+            run.stage = EditingRunStage.COMPLETED.value
+            run.progress = 100
+            run.finished_at = datetime.now(timezone.utc)
+            db.commit()
+            db.refresh(run)
+            return run
+        except Exception as exc:
+            db.rollback()
+            failed = db.get(EditingRun, run_id)
+            if failed is not None:
+                failed.status = EditingRunStatus.FAILED.value
+                failed.progress = min(failed.progress, 99)
+                failed.error_message = _safe_error_message(exc)
+                failed.finished_at = datetime.now(timezone.utc)
+                db.commit()
+            raise
+
+    def result(self, run: EditingRun) -> EditingRunResultResponse:
+        return EditingRunResultResponse(
+            run_id=run.id,
+            status=EditingRunStatus(run.status),
+            recipe=EditRecipe.model_validate(run.recipe) if run.recipe else None,
+            render=run.render_result,
+            publishing=run.publishing_result,
+            warnings=[str(item) for item in (run.warnings or [])],
+            missing_scene_roles=[str(item) for item in (run.missing_scene_roles or [])],
+            available_options=run.available_options or [],
+        )
+
+    @staticmethod
+    def _set_stage(
+        db: Session,
+        run: EditingRun,
+        stage: EditingRunStage,
+        progress: int,
+    ) -> None:
+        run.stage = stage.value
+        run.progress = progress
+        db.commit()
+
+    @staticmethod
+    def _get_active_template(
+        db: Session,
+        selected: SelectedShortform,
+    ) -> EditingTemplate:
+        template = db.get(
+            EditingTemplate,
+            (selected.editing_template_id, selected.editing_template_version),
+        )
+        if template is None:
+            raise EditingDomainError(
+                "EDITING_TEMPLATE_NOT_FOUND",
+                "The selected editing template version was not found.",
+                status_code=404,
+            )
+        if template.status != "ACTIVE":
+            raise EditingDomainError(
+                "EDITING_TEMPLATE_INACTIVE",
+                "The selected editing template version is not ACTIVE.",
+                status_code=409,
+            )
+        return template
+
+
+def validate_editing_runtime() -> dict[str, bool]:
+    settings = get_settings()
+    return {
+        "openai": bool(settings.openai_api_key.strip() and settings.editing_openai_model.strip()),
+        "renderer": bool(settings.editing_renderer_url.strip()),
+        "reals_registry": _reals_registry_ready(),
+        "ffprobe": _command_exists(settings.editing_ffprobe_path),
+        "ffmpeg": _command_exists(settings.editing_ffmpeg_path),
+    }
+
+
+def _command_exists(command: str) -> bool:
+    path = Path(command)
+    return path.is_file() if path.parent != Path(".") else shutil.which(command) is not None
+
+
+def _reals_registry_ready() -> bool:
+    try:
+        get_reals_registry()
+    except RealsRegistryError:
+        return False
+    return True
+
+
+def _template_payload(template: EditingTemplate) -> dict[str, Any]:
+    return {
+        "editing_template_id": template.template_id,
+        "editing_template_version": template.version,
+        "name": template.name,
+        "recommendation_title": template.recommendation_title,
+        "recommendation_concept": template.recommendation_concept,
+        "shooting_guide": template.shooting_guide or {},
+        "editing_rules": template.editing_rules or {},
+    }
+
+
+def _safe_error_message(exc: Exception) -> str:
+    if isinstance(exc, EditingDomainError):
+        return str(exc)[:1000]
+    return f"{type(exc).__name__}: {str(exc)}"[:1000]
+
+
+def _format_validation_issue(value: Any) -> str:
+    if not isinstance(value, dict):
+        return str(value)
+    code = str(value.get("code") or "VALIDATION_ERROR")
+    path = str(value.get("path") or "recipe")
+    message = str(value.get("message") or "Recipe validation failed.")
+    return f"{code} at {path}: {message}"
+
+
+def _load_domain_context() -> str:
+    return (Path(__file__).with_name("context.md")).read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=1)
+def get_editing_agent_service() -> EditingAgentService:
+    return EditingAgentService()
+
+
+def create_response(run: EditingRun) -> EditingRunCreateResponse:
+    return EditingRunCreateResponse(
+        run_id=run.id,
+        parent_run_id=run.parent_run_id,
+        status=EditingRunStatus(run.status),
+        task_id=run.celery_task_id,
+    )
+
+
+def revision_response(run: EditingRun) -> EditingRevisionResponse:
+    if run.parent_run_id is None:
+        raise ValueError("Revision run has no parent_run_id")
+    return EditingRevisionResponse(
+        run_id=run.id,
+        parent_run_id=run.parent_run_id,
+        status=EditingRunStatus(run.status),
+        task_id=run.celery_task_id,
+    )
