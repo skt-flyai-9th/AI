@@ -61,6 +61,20 @@ class Settings(BaseSettings):
     shortform_max_output_tokens: int = Field(default=1800, ge=256, le=10000)
     shortform_max_photo_inputs: int = Field(default=4, ge=0, le=10)
 
+    # Template Knowledge Manager. GPT generates version candidates and trade-area
+    # analyses; Gemini inspects public YouTube reference videos from Trend Research.
+    template_openai_model: str = "gpt-5.4-mini-2026-03-17"
+    template_request_timeout_seconds: int = Field(default=60, ge=5, le=300)
+    template_max_output_tokens: int = Field(default=6000, ge=512, le=30000)
+    template_gemini_model: str = "auto"
+    template_video_analysis_timeout_seconds: int = Field(default=300, ge=30, le=900)
+    template_max_reference_videos: int = Field(default=5, ge=1, le=10)
+    template_require_human_approval: bool = True
+    template_maintenance_enabled: bool = False
+    template_maintenance_weekday: int = Field(default=0, ge=0, le=6)
+    template_maintenance_hour_kst: int = Field(default=5, ge=0, le=23)
+    template_maintenance_minute_kst: int = Field(default=0, ge=0, le=59)
+
     # Editing Agent has its own prompt/schema and turns video into a bounded
     # timestamped context before calling the model.
     editing_openai_model: str = "gpt-5.4-mini-2026-03-17"
@@ -90,6 +104,20 @@ class Settings(BaseSettings):
             and self.editing_openai_model.strip()
             and self.editing_renderer_url.strip()
         )
+
+    @property
+    def template_knowledge_runtime(self) -> dict[str, bool]:
+        return {
+            "candidate_generation": bool(
+                self.openai_api_key.strip() and self.template_openai_model.strip()
+            ),
+            "trade_area_analysis": bool(
+                self.openai_api_key.strip() and self.template_openai_model.strip()
+            ),
+            "reference_video_analysis": bool(
+                self.gemini_api_key.strip() and self.template_gemini_model.strip()
+            ),
+        }
 
     @property
     def required_api_key_status(self) -> dict[str, bool]:

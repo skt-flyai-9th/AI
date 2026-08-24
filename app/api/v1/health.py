@@ -20,11 +20,16 @@ def live() -> dict:
 def ready(db: Session = Depends(get_db)) -> dict:
     db.execute(text("SELECT 1"))
     settings = get_settings()
+    template_runtime = settings.template_knowledge_runtime
     return {
         "status": "ready",
         "agents": [item["id"] for item in list_agent_definitions()],
         "api_keys": settings.required_api_key_status,
         "shortform_llm_ready": settings.shortform_llm_ready,
         "editing_runtime_ready": settings.editing_runtime_ready,
+        "template_knowledge_ready": all(template_runtime.values()),
+        "template_knowledge_runtime": template_runtime,
+        "template_human_approval_required": settings.template_require_human_approval,
+        "template_maintenance_enabled": settings.template_maintenance_enabled,
         "internal_auth_configured": bool(settings.effective_internal_api_key),
     }

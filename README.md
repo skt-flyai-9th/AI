@@ -14,6 +14,8 @@ Apify / Gemini / YouTube / NAVER API HUB
 
 이 저장소는 여러 AI Agent를 독립 경계로 제공하는 서버입니다. 현재 `challenge-ranking`, `shortform`, `editing` 세 Agent를 사용할 수 있습니다.
 
+두 템플릿 종류를 함께 관리하는 `Template Knowledge Manager`도 구현되어 있습니다. 상권 근거를 GPT로 비교해 `상권분석템플릿` 후보를 만들고, Trend Research의 대표 YouTube 영상을 Gemini가 직접 분석해 `영상편집템플릿` 후보를 만듭니다. 모든 후보는 diff와 결정론적 검증을 거치며 기본값에서는 사람 승인 후에만 새 ACTIVE 버전이 됩니다. 자세한 내용은 [`docs/TEMPLATE_KNOWLEDGE_MANAGER.md`](docs/TEMPLATE_KNOWLEDGE_MANAGER.md)를 참고합니다.
+
 Agent와 별도로, 검증된 GPU 기반 숏폼 렌더링 파이프라인은 [`reals-video-engine/`](reals-video-engine/)에 독립 모듈로 포함되어 있습니다.
 
 ## 현재 구현 상태
@@ -89,6 +91,7 @@ AI 서버의 책임:
 5. YouTube 대표영상·가이드영상 선정
 6. 작업 상태와 결과를 PostgreSQL에 저장
 7. 메인 백엔드에 JSON API로 결과 제공
+8. 상권/영상편집 템플릿의 버전 후보·검증·승인·활성화 관리
 
 AI 서버가 담당하지 않는 범위:
 
@@ -442,6 +445,14 @@ python scripts/check_apis.py
 python -m app.cli run-ranking
 ```
 
+초기 템플릿 라이브러리와 독립 운영 명령:
+
+```bash
+python -m app.cli seed-template-library
+python -m app.cli generate-editing-template edit_menu_reveal --trend-id <trend_id>
+python -m app.cli generate-trade-area-template trade_area_office evidence.json
+```
+
 ## 장애 처리
 
 - Apify 일부 seed 실패: 해당 seed만 건너뜀
@@ -477,6 +488,12 @@ python -m app.cli run-ranking
 | POST | `/api/v1/shortform-sessions/{id}/turns` | 숏폼 대화 진행 |
 | POST | `/api/v1/editing-runs` | 비동기 영상 편집 실행 시작 |
 | GET | `/api/v1/editing-runs/{id}` | 편집 진행 상태 |
+| GET | `/api/v1/template-knowledge/templates` | 상권/영상편집 템플릿 버전 조회 |
+| GET | `/api/v1/template-knowledge/candidates` | 갱신 후보·diff·검증·승인 상태 조회 |
+| POST | `/api/v1/template-knowledge/trade-area/candidates` | 비동기 상권 템플릿 후보 run 생성 |
+| POST | `/api/v1/template-knowledge/video-editing/candidates` | 비동기 Trend/Gemini 편집 템플릿 후보 run 생성 |
+| GET | `/api/v1/template-knowledge/runs/{id}` | 템플릿 생성·분석 run 상태 |
+| GET | `/api/v1/template-knowledge/runs/{id}/result` | 완료된 템플릿 생성·분석 결과 |
 | GET | `/api/v1/editing-runs/{id}/result` | EditRecipe·렌더·게시 문구 결과 |
 | POST | `/api/v1/editing-runs/{id}/revisions` | 기존 결과를 보존한 수정 run 생성 |
 | GET | `/api/v1/challenges?limit=100` | 최신 유효 Top 100 |

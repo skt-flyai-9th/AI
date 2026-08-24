@@ -11,6 +11,14 @@ from app.schemas.challenge import OverrideImportItem
 from app.services.challenges import import_override_items
 from app.services.pipeline import create_run, execute_pipeline, export_latest_json
 from app.services.retention import cleanup_history
+from app.schemas.template_knowledge import (
+    CandidateDecision,
+    EditingCandidateCreate,
+    TradeAreaAnalyzeRequest,
+    TradeAreaCandidateCreate,
+)
+from app.template_knowledge.seeds import seed_template_library
+from app.template_knowledge.service import TemplateKnowledgeService
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -54,6 +62,87 @@ def export_ranking() -> None:
     with SessionLocal() as db:
         path = export_latest_json(db)
     typer.echo(str(path))
+
+
+@app.command("seed-template-library")
+def seed_templates() -> None:
+    init_db()
+    with SessionLocal() as db:
+        result = seed_template_library(db)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+
+
+@app.command("generate-trade-area-template")
+def generate_trade_area_template(
+    template_id: str,
+    evidence_path: Path,
+) -> None:
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    manager = TemplateKnowledgeService()
+    with SessionLocal() as db:
+        candidate = manager.create_trade_area_candidate(
+            db,
+            TradeAreaCandidateCreate(template_id=template_id, evidence=payload),
+        )
+    typer.echo(
+        json.dumps(
+            {"candidate_id": candidate.id, "status": candidate.status},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@app.command("generate-editing-template")
+def generate_editing_template(
+    template_id: str,
+    trend_id: list[str] | None = typer.Option(None, "--trend-id"),
+) -> None:
+    manager = TemplateKnowledgeService()
+    with SessionLocal() as db:
+        candidate = manager.create_editing_candidate(
+            db,
+            EditingCandidateCreate(template_id=template_id, trend_ids=trend_id or []),
+        )
+    typer.echo(
+        json.dumps(
+            {"candidate_id": candidate.id, "status": candidate.status},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@app.command("approve-template-candidate")
+def approve_template_candidate(
+    candidate_id: str,
+    actor: str,
+    note: str = "",
+) -> None:
+    manager = TemplateKnowledgeService()
+    with SessionLocal() as db:
+        candidate = manager.approve_candidate(
+            db, candidate_id, CandidateDecision(actor=actor, note=note)
+        )
+    typer.echo(
+        json.dumps(
+            {"candidate_id": candidate.id, "status": candidate.status},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+@app.command("analyze-trade-area")
+def analyze_trade_area(evidence_path: Path, template_id: str | None = None) -> None:
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    manager = TemplateKnowledgeService()
+    with SessionLocal() as db:
+        result = manager.analyze_trade_area(
+            db,
+            TradeAreaAnalyzeRequest(evidence=payload, template_id=template_id),
+        )
+    typer.echo(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

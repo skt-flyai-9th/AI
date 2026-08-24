@@ -23,6 +23,7 @@ Client
 
 - `shortform`: 대화형 brief 수집과 ACTIVE 편집 템플릿 추천
 - `editing`: 영상 컨텍스트 생성, EditRecipe 계획·검증·repair, Renderer 연동
+- `Template Knowledge Manager`: 상권/영상편집 템플릿 후보 생성, Gemini 참고영상 분석, diff·검증·승인·버전 활성화
 
 ## Agent 구조
 
@@ -32,6 +33,13 @@ app/agents/
 ├─ challenge_ranking/
 ├─ shortform/
 └─ editing/
+
+app/template_knowledge/
+├─ llm.py
+├─ validation.py
+├─ service.py
+├─ maintenance.py
+└─ seeds.py
 ```
 
 `registry.py`는 현재 제공 가능한 Agent와 API 계약을 노출한다. 각 Agent는 외부 API 라우터가 내부 구현 세부사항에 직접 의존하지 않도록 서비스 경계를 제공한다.
@@ -84,8 +92,13 @@ AI 서버 DB는 다음을 저장한다.
 - source status and warnings
 - shortform session and confirmed brief state
 - editing run, immutable revision lineage, recipe, render result
+- trade-area/editing template immutable versions and activation lineage
+- template update candidates, diffs, validation and approval audit
+- Gemini reference-video insights and trade-area analysis evidence snapshots
 
 메인 백엔드의 사용자·매장·프로젝트 데이터는 저장하지 않는다.
+
+Template Knowledge Manager의 상세 수명주기와 독립 실행 방법은 `docs/TEMPLATE_KNOWLEDGE_MANAGER.md`를 참고한다. 메인 백엔드 호출 연결은 별도 범위다.
 
 ## 결과 모델
 

@@ -20,7 +20,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.3.0",
+    version="1.4.0",
     description=(
         "Independent AI server called by the main backend. "
         "Available agents include Korean trend research (challenge-ranking) "
@@ -50,4 +50,5 @@ def root() -> dict:
         "current_challenge_ranking": f"{settings.api_v1_prefix}/challenges?limit=100",
         "shortform_sessions": f"{settings.api_v1_prefix}/shortform-sessions",
         "editing_runs": f"{settings.api_v1_prefix}/editing-runs",
+        "template_knowledge": f"{settings.api_v1_prefix}/template-knowledge/templates",
     }

@@ -9,6 +9,7 @@ from app.api.v1 import (
     overrides,
     ranking_runs,
     shortform_sessions,
+    template_knowledge,
 )
 
 api_router = APIRouter()
@@ -20,3 +21,4 @@ api_router.include_router(overrides.router)
 api_router.include_router(shortform_sessions.router)
 api_router.include_router(editing_templates.router)
 api_router.include_router(editing_runs.router)
+api_router.include_router(template_knowledge.router)

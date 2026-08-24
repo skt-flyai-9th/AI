@@ -58,5 +58,14 @@ else:
                 ),
                 "args": (),
             },
+            "weekly-template-maintenance": {
+                "task": "app.workers.tasks.run_template_maintenance",
+                "schedule": crontab(
+                    day_of_week=settings.template_maintenance_weekday,
+                    hour=settings.template_maintenance_hour_kst,
+                    minute=settings.template_maintenance_minute_kst,
+                ),
+                "args": (),
+            },
         },
     )
