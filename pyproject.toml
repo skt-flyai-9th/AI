@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flyai-ai-service"
-version = "1.1.0"
+version = "1.2.0"
 description = "Independent FastAPI AI service with Korean trend research and shortform agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -51,7 +51,7 @@ addopts = "-q"
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-exclude = ["alembic/versions"]
+exclude = ["alembic/versions", "sarils-video-engine"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
