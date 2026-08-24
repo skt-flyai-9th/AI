@@ -43,14 +43,14 @@ def cleanup_history_task() -> dict:
         return cleanup_history(db)
 
 
-@celery_app.task(name="app.workers.tasks.run_template_maintenance")
-def run_template_maintenance_task() -> dict:
+@celery_app.task(name="app.workers.tasks.run_database_maintenance")
+def run_database_maintenance_task() -> dict:
     with SessionLocal() as db:
         return run_scheduled_template_maintenance(db)
 
 
-@celery_app.task(name="app.workers.tasks.run_template_knowledge", bind=True)
-def run_template_knowledge(self, run_id: str) -> dict:
+@celery_app.task(name="app.workers.tasks.run_database_knowledge", bind=True)
+def run_database_knowledge(self, run_id: str) -> dict:
     with SessionLocal() as db:
         run = db.get(TemplateKnowledgeRun, run_id)
         if run is not None:
@@ -111,8 +111,8 @@ def enqueue_editing_pipeline(run_id: str):
     return _ImmediateResult(id=task_id)
 
 
-def enqueue_template_knowledge(run_id: str):
-    delay = getattr(run_template_knowledge, "delay", None)
+def enqueue_database_knowledge(run_id: str):
+    delay = getattr(run_database_knowledge, "delay", None)
     if callable(delay):
         return delay(run_id)
 
@@ -124,5 +124,5 @@ def enqueue_template_knowledge(run_id: str):
     class _TaskSelf:
         request = _Request()
 
-    run_template_knowledge(_TaskSelf(), run_id)
+    run_database_knowledge(_TaskSelf(), run_id)
     return _ImmediateResult(id=task_id)

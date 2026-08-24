@@ -46,7 +46,7 @@ def trade_area_payload() -> dict:
     }
 
 
-def editing_template_payload() -> dict:
+def video_editing_db_payload() -> dict:
     return {
         "name": "메뉴 결과 선공개 테스트",
         "recommendation_title": "완성 메뉴를 먼저 보여주세요",

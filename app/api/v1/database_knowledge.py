@@ -37,11 +37,11 @@ from app.template_knowledge.service import (
     TemplateKnowledgeService,
     get_template_knowledge_service,
 )
-from app.workers.tasks import enqueue_template_knowledge
+from app.workers.tasks import enqueue_database_knowledge
 
 router = APIRouter(
-    prefix="/template-knowledge",
-    tags=["template-knowledge"],
+    prefix="/database-knowledge",
+    tags=["database-knowledge"],
     dependencies=[Depends(require_internal_api_key)],
 )
 
@@ -77,7 +77,7 @@ def list_template_source_records(
     )
 
 
-@router.get("/trade-area/source-context", response_model=TradeAreaSourceContextRead)
+@router.get("/trade-area-db/source-context", response_model=TradeAreaSourceContextRead)
 def get_trade_area_source_context(
     region_id: str | None = None,
     category_id: str | None = None,
@@ -96,7 +96,7 @@ def get_trade_area_source_context(
     except TemplateSourceImportError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "TEMPLATE_SOURCE_UNAVAILABLE", "message": str(exc)},
+            detail={"code": "DATABASE_SOURCE_UNAVAILABLE", "message": str(exc)},
         ) from exc
 
 
@@ -126,7 +126,7 @@ def get_candidate(
 
 
 @router.post(
-    "/trade-area/candidates",
+    "/trade-area-db/candidates",
     response_model=TemplateKnowledgeRunCreateResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
@@ -145,7 +145,7 @@ def create_trade_area_candidate(
 
 
 @router.post(
-    "/video-editing/candidates",
+    "/video-editing-db/candidates",
     response_model=TemplateKnowledgeRunCreateResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
@@ -205,8 +205,8 @@ def reject_candidate(
         raise _http_error(exc) from exc
 
 
-@router.get("/templates", response_model=list[TemplateVersionRead])
-def list_template_versions(
+@router.get("/databases", response_model=list[TemplateVersionRead])
+def list_database_versions(
     template_type: TemplateType | None = None,
     version_status: TemplateVersionStatus | None = Query(default=None, alias="status"),
     db: Session = Depends(get_db),
@@ -216,7 +216,7 @@ def list_template_versions(
 
 
 @router.post(
-    "/trade-area/analyze",
+    "/trade-area-db/analyze",
     response_model=TemplateKnowledgeRunCreateResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
@@ -284,14 +284,14 @@ def _start_run(
 ) -> TemplateKnowledgeRunCreateResponse:
     run = service.create_run(db, operation, request_payload)
     try:
-        task = enqueue_template_knowledge(run.id)
+        task = enqueue_database_knowledge(run.id)
     except Exception as exc:
-        service.mark_enqueue_failed(db, run, "The template knowledge task could not be queued.")
+        service.mark_enqueue_failed(db, run, "The database knowledge task could not be queued.")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
-                "code": "TEMPLATE_RUN_ENQUEUE_FAILED",
-                "message": "The template knowledge task could not be queued. Retry the request.",
+                "code": "DATABASE_RUN_ENQUEUE_FAILED",
+                "message": "The database knowledge task could not be queued. Retry the request.",
                 "run_id": run.id,
             },
         ) from exc
@@ -308,7 +308,7 @@ def _start_run(
 def _require_runtime(operation: TemplateKnowledgeOperation) -> None:
     from app.core.config import get_settings
 
-    runtime = get_settings().template_knowledge_runtime
+    runtime = get_settings().database_knowledge_runtime
     required = ["candidate_generation"]
     if operation == TemplateKnowledgeOperation.VIDEO_EDITING_CANDIDATE:
         required.append("reference_video_analysis")
@@ -316,5 +316,5 @@ def _require_runtime(operation: TemplateKnowledgeOperation) -> None:
     if missing:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"missing_template_dependencies": missing},
+            detail={"missing_database_dependencies": missing},
         )

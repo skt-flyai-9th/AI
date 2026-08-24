@@ -276,7 +276,7 @@ class RealsRecipeAdapter:
         recipe: EditRecipe,
         videos: list[EditingVideoInput],
         video_contexts: list[VideoContext],
-        template: dict[str, Any],
+        video_editing_db: dict[str, Any],
     ) -> RealsRenderJobRequest:
         videos_by_id = {video.video_id: video for video in videos}
         contexts_by_id = {context.video_id: context for context in video_contexts}
@@ -298,7 +298,7 @@ class RealsRecipeAdapter:
             for video_id in used_ids
         ]
 
-        rules = template.get("editing_rules") or {}
+        rules = video_editing_db.get("editing_rules") or {}
         render_profile_id = str(rules.get("render_profile_id") or "INSTAGRAM_REELS_V1")
         safe_area_profile_id = str(
             rules.get("safe_area_profile_id") or "INSTAGRAM_REELS_2026_V1"

@@ -21,9 +21,9 @@ Client
 - 처리: Instagram 후보 발견, Gemini 분석, NAVER 국내성 검증, YouTube 영상 선정
 - 출력: 챌린지 Top 100과 대표영상·가이드영상 링크
 
-- `shortform`: 대화형 brief 수집과 ACTIVE 편집 템플릿 추천
+- `shortform`: 대화형 brief 수집과 ACTIVE 영상편집DB 추천
 - `editing`: 영상 컨텍스트 생성, EditRecipe 계획·검증·repair, Renderer 연동
-- `Template Knowledge Manager`: 상권/영상편집 템플릿 후보 생성, Gemini 참고영상 분석, diff·검증·승인·버전 활성화
+- `Database Knowledge Manager`: 상권분석DB/영상편집DB 후보 생성, Gemini 참고영상 분석, diff·검증·승인·버전 활성화
 
 ## Agent 구조
 
@@ -94,14 +94,14 @@ AI 서버 DB는 다음을 저장한다.
 - source status and warnings
 - shortform session and confirmed brief state
 - editing run, immutable revision lineage, recipe, render result
-- trade-area/editing template immutable versions and activation lineage
-- user-provided template source bundles, checksums, dataset manifests and row records
-- template update candidates, diffs, validation and approval audit
-- Gemini reference-video insights and trade-area analysis evidence snapshots
+- trade-area/video-editing DB immutable versions and activation lineage
+- user-provided database source bundles, checksums, dataset manifests and row records
+- database update candidates, diffs, validation and approval audit
+- Gemini trendcluster video insights and trade-area DB analysis evidence snapshots
 
 메인 백엔드의 사용자·매장·프로젝트 데이터는 저장하지 않는다.
 
-Template Knowledge Manager의 상세 수명주기와 독립 실행 방법은 `docs/TEMPLATE_KNOWLEDGE_MANAGER.md`를 참고한다. 메인 백엔드 호출 연결은 별도 범위다.
+Database Knowledge Manager의 상세 수명주기와 독립 실행 방법은 `docs/DATABASE_KNOWLEDGE_MANAGER.md`를 참고한다. 메인 백엔드 호출 연결은 별도 범위다.
 
 ## 결과 모델
 

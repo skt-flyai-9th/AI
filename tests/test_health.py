@@ -8,4 +8,4 @@ def test_ready(client):
     response = client.get("/api/v1/health/ready")
     assert response.status_code == 200
     assert response.json()["status"] == "ready"
-    assert "template_knowledge_runtime" in response.json()
+    assert "database_knowledge_runtime" in response.json()

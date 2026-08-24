@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.models.editing_template import EditingTemplate
+from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.models.template_update_candidate import TemplateUpdateCandidate
 from app.schemas.template_knowledge import EditingCandidateCreate, TemplateCandidateStatus
 from app.template_knowledge.service import (
@@ -19,15 +19,15 @@ def run_scheduled_template_maintenance(
     service: TemplateKnowledgeService | None = None,
 ) -> dict:
     settings = get_settings()
-    if not settings.template_maintenance_enabled:
+    if not settings.database_maintenance_enabled:
         return {"status": "DISABLED", "created": [], "skipped": [], "failures": []}
     manager = service or TemplateKnowledgeService()
     active_ids = list(
         db.scalars(
-            select(EditingTemplate.template_id)
-            .where(EditingTemplate.status == "ACTIVE")
+            select(VideoEditingDBRecord.template_id)
+            .where(VideoEditingDBRecord.status == "ACTIVE")
             .distinct()
-            .order_by(EditingTemplate.template_id)
+            .order_by(VideoEditingDBRecord.template_id)
         )
     )
     pending_ids = set(

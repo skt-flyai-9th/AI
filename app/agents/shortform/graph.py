@@ -5,7 +5,7 @@ from typing import Literal
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.shortform.llm import ShortformLLM
-from app.agents.shortform.types import ShortformGraphState, TemplateCandidate
+from app.agents.shortform.types import ShortformGraphState, VideoEditingDBCandidate
 
 
 def build_shortform_graph(llm: ShortformLLM):
@@ -19,8 +19,14 @@ def build_shortform_graph(llm: ShortformLLM):
     def route_start(state: ShortformGraphState) -> dict:
         return {}
 
-    def choose_path(state: ShortformGraphState) -> Literal["decide_turn", "select_template"]:
-        return "select_template" if state.get("mode") == "RECOMMEND" else "decide_turn"
+    def choose_path(
+        state: ShortformGraphState,
+    ) -> Literal["decide_turn", "select_video_editing_db"]:
+        return (
+            "select_video_editing_db"
+            if state.get("mode") == "RECOMMEND"
+            else "decide_turn"
+        )
 
     def decide_turn(state: ShortformGraphState) -> dict:
         decision = llm.decide_turn(
@@ -33,9 +39,12 @@ def build_shortform_graph(llm: ShortformLLM):
         )
         return {"decision": decision.model_dump(mode="json")}
 
-    def select_template(state: ShortformGraphState) -> dict:
-        candidates = [TemplateCandidate.model_validate(item) for item in state["candidate_templates"]]
-        selection = llm.select_template(
+    def select_video_editing_db(state: ShortformGraphState) -> dict:
+        candidates = [
+            VideoEditingDBCandidate.model_validate(item)
+            for item in state["video_editing_db_candidates"]
+        ]
+        selection = llm.select_video_editing_db(
             domain_context=state["domain_context"],
             store_context=state["store_context"],
             project_state=state["project_state"],
@@ -47,7 +56,7 @@ def build_shortform_graph(llm: ShortformLLM):
     builder = StateGraph(ShortformGraphState)
     builder.add_node("route_start", route_start)
     builder.add_node("decide_turn", decide_turn)
-    builder.add_node("select_template", select_template)
+    builder.add_node("select_video_editing_db", select_video_editing_db)
 
     builder.add_edge(START, "route_start")
     builder.add_conditional_edges(
@@ -55,9 +64,9 @@ def build_shortform_graph(llm: ShortformLLM):
         choose_path,
         {
             "decide_turn": "decide_turn",
-            "select_template": "select_template",
+            "select_video_editing_db": "select_video_editing_db",
         },
     )
     builder.add_edge("decide_turn", END)
-    builder.add_edge("select_template", END)
+    builder.add_edge("select_video_editing_db", END)
     return builder.compile()

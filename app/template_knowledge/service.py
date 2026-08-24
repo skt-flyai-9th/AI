@@ -12,17 +12,17 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models.challenge import Challenge
-from app.models.editing_template import EditingTemplate
+from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.models.template_update_candidate import TemplateUpdateCandidate
 from app.models.template_video_analysis import TemplateVideoAnalysis
 from app.models.template_knowledge_run import TemplateKnowledgeRun
 from app.models.trade_area_analysis import TradeAreaAnalysis
-from app.models.trade_area_template import TradeAreaTemplate
+from app.models.trade_area_db_record import TradeAreaDBRecord
 from app.schemas.template_knowledge import (
     CandidateDecision,
     CandidateRejection,
     EditingCandidateCreate,
-    EditingTemplateContent,
+    VideoEditingDBContent,
     EditingVideoInsight,
     TemplateCandidateRead,
     TemplateCandidateStatus,
@@ -36,7 +36,7 @@ from app.schemas.template_knowledge import (
     TradeAreaAnalysisResult,
     TradeAreaAnalyzeRequest,
     TradeAreaCandidateCreate,
-    TradeAreaTemplateContent,
+    TradeAreaDBContent,
 )
 from app.template_knowledge.llm import (
     GeminiYouTubeVideoAnalyzer,
@@ -99,8 +99,8 @@ class TemplateKnowledgeService:
         run = self.get_run(db, run_id)
         if run.status != TemplateKnowledgeRunStatus.QUEUED.value:
             raise TemplateKnowledgeDomainError(
-                "TEMPLATE_RUN_NOT_QUEUED",
-                "Only a QUEUED template knowledge run can be executed.",
+                "DATABASE_RUN_NOT_QUEUED",
+                "Only a QUEUED database knowledge run can be executed.",
                 status_code=409,
             )
         run.status = TemplateKnowledgeRunStatus.RUNNING.value
@@ -111,7 +111,7 @@ class TemplateKnowledgeService:
         try:
             operation = TemplateKnowledgeOperation(run.operation)
             if operation == TemplateKnowledgeOperation.TRADE_AREA_CANDIDATE:
-                run.stage = "GENERATING_TEMPLATE_CANDIDATE"
+                run.stage = "GENERATING_DATABASE_CANDIDATE"
                 run.progress = 35
                 db.commit()
                 candidate = self.create_trade_area_candidate(
@@ -158,7 +158,7 @@ class TemplateKnowledgeService:
             return self._fail_run(
                 db,
                 run,
-                code="TEMPLATE_RUN_EXECUTION_FAILED",
+                code="DATABASE_RUN_EXECUTION_FAILED",
                 message="Template knowledge run failed unexpectedly.",
                 retryable=True,
             )
@@ -177,7 +177,7 @@ class TemplateKnowledgeService:
         run = db.get(TemplateKnowledgeRun, run_id)
         if run is None:
             raise TemplateKnowledgeDomainError(
-                "TEMPLATE_RUN_NOT_FOUND", "Template knowledge run was not found.", status_code=404
+                "DATABASE_RUN_NOT_FOUND", "Database knowledge run was not found.", status_code=404
             )
         return run
 
@@ -185,7 +185,7 @@ class TemplateKnowledgeService:
         run = self.get_run(db, run_id)
         if run.status != TemplateKnowledgeRunStatus.COMPLETED.value or run.result is None:
             raise TemplateKnowledgeDomainError(
-                "TEMPLATE_RUN_NOT_COMPLETED",
+                "DATABASE_RUN_NOT_COMPLETED",
                 "Template knowledge result is not available yet.",
                 status_code=409,
                 retryable=run.status
@@ -207,7 +207,7 @@ class TemplateKnowledgeService:
         return self._fail_run(
             db,
             run,
-            code="TEMPLATE_RUN_ENQUEUE_FAILED",
+            code="DATABASE_RUN_ENQUEUE_FAILED",
             message=message,
             retryable=True,
         )
@@ -253,7 +253,7 @@ class TemplateKnowledgeService:
             source_evidence={"trade_area_evidence": request.evidence.model_dump(mode="json")},
             generation_model=self.generator.model_name,
             requires_human_approval=(
-                request.requires_human_approval or self.settings.template_require_human_approval
+                request.requires_human_approval or self.settings.database_require_human_approval
             ),
         )
         return candidate
@@ -266,8 +266,8 @@ class TemplateKnowledgeService:
         trends = self._select_trends(db, request.trend_ids)
         if not trends:
             raise TemplateKnowledgeDomainError(
-                "TREND_RESEARCH_REQUIRED",
-                "No active Trend Research result with a representative YouTube URL is available.",
+                "TRENDCLUSTER_REQUIRED",
+                "No active trendcluster entry with a representative YouTube URL is available.",
                 status_code=409,
             )
         trend_context = [_trend_payload(item) for item in trends]
@@ -322,7 +322,7 @@ class TemplateKnowledgeService:
             },
             generation_model=self.generator.model_name,
             requires_human_approval=(
-                request.requires_human_approval or self.settings.template_require_human_approval
+                request.requires_human_approval or self.settings.database_require_human_approval
             ),
         )
 
@@ -488,19 +488,19 @@ class TemplateKnowledgeService:
     ) -> list[TemplateVersionRead]:
         result: list[TemplateVersionRead] = []
         if template_type in {None, TemplateType.TRADE_AREA}:
-            query = select(TradeAreaTemplate).order_by(
-                TradeAreaTemplate.template_id, TradeAreaTemplate.version.desc()
+            query = select(TradeAreaDBRecord).order_by(
+                TradeAreaDBRecord.template_id, TradeAreaDBRecord.version.desc()
             )
             if status is not None:
-                query = query.where(TradeAreaTemplate.status == status.value)
+                query = query.where(TradeAreaDBRecord.status == status.value)
             for row in db.scalars(query):
                 result.append(_trade_area_read(row))
         if template_type in {None, TemplateType.VIDEO_EDITING}:
-            query = select(EditingTemplate).order_by(
-                EditingTemplate.template_id, EditingTemplate.version.desc()
+            query = select(VideoEditingDBRecord).order_by(
+                VideoEditingDBRecord.template_id, VideoEditingDBRecord.version.desc()
             )
             if status is not None:
-                query = query.where(EditingTemplate.status == status.value)
+                query = query.where(VideoEditingDBRecord.status == status.value)
             for row in db.scalars(query):
                 result.append(_editing_read(row))
         return result
@@ -565,8 +565,8 @@ class TemplateKnowledgeService:
         db: Session,
         request: TradeAreaAnalyzeRequest,
     ) -> TradeAreaAnalysisRead:
-        template = self._select_trade_area_template(db, request)
-        content = TradeAreaTemplateContent.model_validate(_trade_area_payload(template))
+        template = self._select_trade_area_db(db, request)
+        content = TradeAreaDBContent.model_validate(_trade_area_payload(template))
         try:
             result = self.generator.analyze_trade_area(
                 template=content,
@@ -609,16 +609,16 @@ class TemplateKnowledgeService:
         now = _now()
         template_type = TemplateType(candidate.template_type)
         if template_type == TemplateType.TRADE_AREA:
-            content = TradeAreaTemplateContent.model_validate(candidate.proposed_payload)
+            content = TradeAreaDBContent.model_validate(candidate.proposed_payload)
             for current in db.scalars(
-                select(TradeAreaTemplate).where(
-                    TradeAreaTemplate.template_id == candidate.template_id,
-                    TradeAreaTemplate.status == TemplateVersionStatus.ACTIVE.value,
+                select(TradeAreaDBRecord).where(
+                    TradeAreaDBRecord.template_id == candidate.template_id,
+                    TradeAreaDBRecord.status == TemplateVersionStatus.ACTIVE.value,
                 )
             ):
                 current.status = TemplateVersionStatus.ARCHIVED.value
             db.add(
-                TradeAreaTemplate(
+                TradeAreaDBRecord(
                     template_id=candidate.template_id,
                     version=candidate.proposed_version,
                     status=TemplateVersionStatus.ACTIVE.value,
@@ -641,16 +641,16 @@ class TemplateKnowledgeService:
                 )
             )
         else:
-            content = EditingTemplateContent.model_validate(candidate.proposed_payload)
+            content = VideoEditingDBContent.model_validate(candidate.proposed_payload)
             for current in db.scalars(
-                select(EditingTemplate).where(
-                    EditingTemplate.template_id == candidate.template_id,
-                    EditingTemplate.status == TemplateVersionStatus.ACTIVE.value,
+                select(VideoEditingDBRecord).where(
+                    VideoEditingDBRecord.template_id == candidate.template_id,
+                    VideoEditingDBRecord.status == TemplateVersionStatus.ACTIVE.value,
                 )
             ):
                 current.status = TemplateVersionStatus.ARCHIVED.value
             db.add(
-                EditingTemplate(
+                VideoEditingDBRecord(
                     template_id=candidate.template_id,
                     version=candidate.proposed_version,
                     status=TemplateVersionStatus.ACTIVE.value,
@@ -708,48 +708,48 @@ class TemplateKnowledgeService:
                         Challenge.automatic_rank.asc().nullslast(),
                         Challenge.automatic_score.desc(),
                     )
-                    .limit(self.settings.template_max_reference_videos * 3)
+                    .limit(self.settings.database_max_reference_videos * 3)
                 )
             )
         return [row for row in ordered if _representative_youtube_url(row)][
-            : self.settings.template_max_reference_videos
+            : self.settings.database_max_reference_videos
         ]
 
-    def _select_trade_area_template(
+    def _select_trade_area_db(
         self, db: Session, request: TradeAreaAnalyzeRequest
-    ) -> TradeAreaTemplate:
+    ) -> TradeAreaDBRecord:
         if request.template_id is not None:
             if request.template_version is not None:
                 template = db.get(
-                    TradeAreaTemplate, (request.template_id, request.template_version)
+                    TradeAreaDBRecord, (request.template_id, request.template_version)
                 )
             else:
                 template = db.scalar(
-                    select(TradeAreaTemplate)
+                    select(TradeAreaDBRecord)
                     .where(
-                        TradeAreaTemplate.template_id == request.template_id,
-                        TradeAreaTemplate.status == TemplateVersionStatus.ACTIVE.value,
+                        TradeAreaDBRecord.template_id == request.template_id,
+                        TradeAreaDBRecord.status == TemplateVersionStatus.ACTIVE.value,
                     )
-                    .order_by(TradeAreaTemplate.version.desc())
+                    .order_by(TradeAreaDBRecord.version.desc())
                 )
             if template is None or template.status != TemplateVersionStatus.ACTIVE.value:
                 raise TemplateKnowledgeDomainError(
-                    "ACTIVE_TRADE_AREA_TEMPLATE_NOT_FOUND",
-                    "The requested ACTIVE trade-area template was not found.",
+                    "ACTIVE_TRADE_AREA_DB_NOT_FOUND",
+                    "The requested ACTIVE trade-area DB version was not found.",
                     status_code=404,
                 )
             return template
         templates = list(
             db.scalars(
-                select(TradeAreaTemplate).where(
-                    TradeAreaTemplate.status == TemplateVersionStatus.ACTIVE.value
+                select(TradeAreaDBRecord).where(
+                    TradeAreaDBRecord.status == TemplateVersionStatus.ACTIVE.value
                 )
             )
         )
         industry = request.evidence.industry_category.casefold()
         area_type = (request.evidence.area_type or "").casefold()
 
-        def score(item: TradeAreaTemplate) -> tuple[int, int]:
+        def score(item: TradeAreaDBRecord) -> tuple[int, int]:
             industries = {str(value).casefold() for value in item.industry_categories}
             areas = {str(value).casefold() for value in item.area_types}
             return (
@@ -760,31 +760,31 @@ class TemplateKnowledgeService:
         compatible = [item for item in templates if score(item) > (0, 0)]
         if not compatible:
             raise TemplateKnowledgeDomainError(
-                "ACTIVE_TRADE_AREA_TEMPLATE_NOT_FOUND",
-                "No ACTIVE trade-area template matches the supplied industry and area type.",
+                "ACTIVE_TRADE_AREA_DB_NOT_FOUND",
+                "No ACTIVE trade-area DB version matches the supplied industry and area type.",
                 status_code=404,
             )
         return max(compatible, key=lambda item: (score(item), item.version))
 
     @staticmethod
-    def _latest_trade_area(db: Session, template_id: str) -> TradeAreaTemplate | None:
+    def _latest_trade_area(db: Session, template_id: str) -> TradeAreaDBRecord | None:
         return db.scalar(
-            select(TradeAreaTemplate)
-            .where(TradeAreaTemplate.template_id == template_id)
-            .order_by(TradeAreaTemplate.version.desc())
+            select(TradeAreaDBRecord)
+            .where(TradeAreaDBRecord.template_id == template_id)
+            .order_by(TradeAreaDBRecord.version.desc())
         )
 
     @staticmethod
-    def _latest_editing(db: Session, template_id: str) -> EditingTemplate | None:
+    def _latest_editing(db: Session, template_id: str) -> VideoEditingDBRecord | None:
         return db.scalar(
-            select(EditingTemplate)
-            .where(EditingTemplate.template_id == template_id)
-            .order_by(EditingTemplate.version.desc())
+            select(VideoEditingDBRecord)
+            .where(VideoEditingDBRecord.template_id == template_id)
+            .order_by(VideoEditingDBRecord.version.desc())
         )
 
     def _latest_version(
         self, db: Session, template_type: TemplateType, template_id: str
-    ) -> TradeAreaTemplate | EditingTemplate | None:
+    ) -> TradeAreaDBRecord | VideoEditingDBRecord | None:
         if template_type == TemplateType.TRADE_AREA:
             return self._latest_trade_area(db, template_id)
         return self._latest_editing(db, template_id)
@@ -792,7 +792,7 @@ class TemplateKnowledgeService:
     @staticmethod
     def _version_payload(
         template_type: TemplateType,
-        row: TradeAreaTemplate | EditingTemplate,
+        row: TradeAreaDBRecord | VideoEditingDBRecord,
     ) -> dict[str, Any]:
         if template_type == TemplateType.TRADE_AREA:
             return _trade_area_payload(row)  # type: ignore[arg-type]
@@ -804,7 +804,7 @@ def get_template_knowledge_service() -> TemplateKnowledgeService:
     return TemplateKnowledgeService()
 
 
-def _trade_area_payload(row: TradeAreaTemplate) -> dict[str, Any]:
+def _trade_area_payload(row: TradeAreaDBRecord) -> dict[str, Any]:
     return {
         "name": row.name,
         "description": row.description,
@@ -818,7 +818,7 @@ def _trade_area_payload(row: TradeAreaTemplate) -> dict[str, Any]:
     }
 
 
-def _editing_payload(row: EditingTemplate) -> dict[str, Any]:
+def _editing_payload(row: VideoEditingDBRecord) -> dict[str, Any]:
     return {
         "name": row.name,
         "recommendation_title": row.recommendation_title,
@@ -830,7 +830,7 @@ def _editing_payload(row: EditingTemplate) -> dict[str, Any]:
     }
 
 
-def _trade_area_read(row: TradeAreaTemplate) -> TemplateVersionRead:
+def _trade_area_read(row: TradeAreaDBRecord) -> TemplateVersionRead:
     return TemplateVersionRead(
         template_type=TemplateType.TRADE_AREA,
         template_id=row.template_id,
@@ -843,7 +843,7 @@ def _trade_area_read(row: TradeAreaTemplate) -> TemplateVersionRead:
     )
 
 
-def _editing_read(row: EditingTemplate) -> TemplateVersionRead:
+def _editing_read(row: VideoEditingDBRecord) -> TemplateVersionRead:
     return TemplateVersionRead(
         template_type=TemplateType.VIDEO_EDITING,
         template_id=row.template_id,
@@ -911,7 +911,7 @@ def _validate_youtube_url(value: str) -> None:
 def _llm_domain_error(
     exc: TemplateKnowledgeLLMError,
     *,
-    code: str = "TEMPLATE_LLM_FAILED",
+    code: str = "DATABASE_LLM_FAILED",
 ) -> TemplateKnowledgeDomainError:
     return TemplateKnowledgeDomainError(
         code,

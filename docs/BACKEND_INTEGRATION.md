@@ -152,7 +152,7 @@ Apify, Gemini, YouTube, NAVER의 부분 실패는 가능한 경우 HTTP 오류 �
 
 ## 편집 Agent
 
-편집은 Celery 비동기 run으로 처리한다. 입력 템플릿은 반드시 `ACTIVE`인 정확한 버전이어야 하며 영상은 HTTP(S) 서명 URL로 전달한다.
+편집은 Celery 비동기 run으로 처리한다. 입력 영상편집DB는 반드시 `ACTIVE`인 정확한 버전이어야 하며 영상은 HTTP(S) 서명 URL로 전달한다.
 
 ```http
 POST /api/v1/editing-runs
@@ -171,8 +171,8 @@ Content-Type: application/json
   },
   "selected_shortform": {
     "recommendation_id": "rec_123",
-    "editing_template_id": "edit_template_014",
-    "editing_template_version": 3
+    "video_editing_db_id": "video_editing_db_014",
+    "video_editing_db_version": 3
   },
   "videos": [
     {

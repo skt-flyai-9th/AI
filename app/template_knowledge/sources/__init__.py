@@ -1,1 +1,1 @@
-"""Canonical user-provided template source bundles."""
+"""Canonical user-provided database source bundles."""

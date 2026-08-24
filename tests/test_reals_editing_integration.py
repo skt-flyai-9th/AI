@@ -36,10 +36,10 @@ def _contexts() -> list[VideoContext]:
     ]
 
 
-def _template() -> dict:
+def _video_editing_db() -> dict:
     return {
-        "editing_template_id": "edit_template_014",
-        "editing_template_version": 3,
+        "video_editing_db_id": "video_editing_db_014",
+        "video_editing_db_version": 3,
         "editing_rules": {
             "min_cut_duration_ms": 300,
             "max_duration_sec": 30,
@@ -64,7 +64,7 @@ def test_reals_adapter_builds_multicut_assembly_and_engine_recipe():
         recipe=recipe,
         videos=_request().videos,
         video_contexts=_contexts(),
-        template=_template(),
+        video_editing_db=_video_editing_db(),
     )
 
     assert request.contract_version == "reals-render-job-1.0"
@@ -112,7 +112,7 @@ def test_reals_adapter_uses_one_take_without_source_assembly():
         recipe=recipe,
         videos=_request().videos,
         video_contexts=_contexts(),
-        template=_template(),
+        video_editing_db=_video_editing_db(),
     )
 
     assert request.source_assembly is None
@@ -136,7 +136,7 @@ def test_reals_adapter_maps_output_time_back_to_produced_time_with_speed():
         recipe=recipe,
         videos=_request().videos,
         video_contexts=_contexts(),
-        template=_template(),
+        video_editing_db=_video_editing_db(),
     )
 
     caption = request.final_render.edit_recipe.overlays[0]
@@ -154,7 +154,7 @@ def test_validator_returns_structured_issues_from_reals_registry():
         selected_shortform=SelectedShortform.model_validate(
             _request().selected_shortform.model_dump(mode="json")
         ),
-        template=_template(),
+        video_editing_db=_video_editing_db(),
         video_contexts=_contexts(),
     )
 
@@ -232,7 +232,7 @@ def test_http_renderer_posts_reals_contract(monkeypatch):
         recipe=_recipe(),
         videos=_request().videos,
         video_contexts=_contexts(),
-        template=_template(),
+        video_editing_db=_video_editing_db(),
     )
 
     assert result.duration_sec == 4.0
@@ -267,7 +267,7 @@ def test_http_renderer_maps_structured_validation_error(monkeypatch):
             recipe=_recipe(),
             videos=_request().videos,
             video_contexts=_contexts(),
-            template=_template(),
+            video_editing_db=_video_editing_db(),
         )
 
     assert captured.value.code == "REALS_RECIPE_INVALID"

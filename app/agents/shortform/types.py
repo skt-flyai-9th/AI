@@ -70,12 +70,12 @@ class ShortformTurnDecision(BaseModel):
     ready_for_confirmation: bool
 
 
-class TemplateCandidate(BaseModel):
+class VideoEditingDBCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidate_key: str
-    editing_template_id: str
-    editing_template_version: int
+    video_editing_db_id: str
+    video_editing_db_version: int
     name: str
     recommendation_title: str
     recommendation_concept: str
@@ -83,7 +83,7 @@ class TemplateCandidate(BaseModel):
     trend_context: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class TemplateSelection(BaseModel):
+class VideoEditingDBSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidate_key: str
@@ -104,6 +104,6 @@ class ShortformGraphState(TypedDict, total=False):
     conversation: list[dict[str, str]]
     user_input: dict[str, Any]
     photo_urls: list[str]
-    candidate_templates: list[dict[str, Any]]
+    video_editing_db_candidates: list[dict[str, Any]]
     decision: dict[str, Any]
     recommendation: dict[str, Any]

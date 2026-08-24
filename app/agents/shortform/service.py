@@ -10,10 +10,14 @@ from sqlalchemy.orm import Session
 
 from app.agents.shortform.graph import build_shortform_graph
 from app.agents.shortform.llm import OpenAIShortformLLM, ShortformLLM, ShortformLLMError
-from app.agents.shortform.types import ShortformTurnDecision, TemplateCandidate, TemplateSelection
+from app.agents.shortform.types import (
+    ShortformTurnDecision,
+    VideoEditingDBCandidate,
+    VideoEditingDBSelection,
+)
 from app.core.config import get_settings
 from app.models.challenge import Challenge
-from app.models.editing_template import EditingTemplate
+from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.models.shortform_session import ShortformSession
 from app.schemas.shortform import (
     FaceExposure,
@@ -77,7 +81,7 @@ class ShortformAgentService:
             store_context=store_context.model_dump(mode="json"),
             project_state=_initial_project_state(),
             conversation=[],
-            shown_template_ids=[],
+            shown_video_editing_db_ids=[],
             current_recommendation=None,
         )
         db.add(session)
@@ -199,7 +203,7 @@ class ShortformAgentService:
         return NextRecommendationResponse(
             session_id=session.id,
             recommendation=response.recommendation,
-            shown_template_ids=list(session.shown_template_ids or []),
+            shown_video_editing_db_ids=list(session.shown_video_editing_db_ids or []),
         )
 
     def delete_session(self, db: Session, session_id: str) -> None:
@@ -213,17 +217,17 @@ class ShortformAgentService:
         template_id: str,
         version: int,
     ) -> ShootingGuideResponse:
-        template = db.get(EditingTemplate, (template_id, version))
+        template = db.get(VideoEditingDBRecord, (template_id, version))
         if template is None:
             raise ShortformDomainError(
-                "EDITING_TEMPLATE_NOT_FOUND",
-                "Editing template was not found.",
+                "VIDEO_EDITING_DB_NOT_FOUND",
+                "Video-editing DB record was not found.",
                 status_code=404,
             )
         guide = dict(template.shooting_guide or {})
         return ShootingGuideResponse(
-            template_id=template.template_id,
-            version=template.version,
+            video_editing_db_id=template.template_id,
+            video_editing_db_version=template.version,
             estimated_shooting_sec=guide.get("estimated_shooting_sec"),
             difficulty=guide.get("difficulty") or template.recommendation_metadata.get("difficulty"),
             scenes=list(guide.get("scenes") or []),
@@ -294,15 +298,15 @@ class ShortformAgentService:
         *,
         user_event: str | None = None,
     ) -> ShortformTurnResponse:
-        candidates = self._template_candidates(db, session, strict=True)
+        candidates = self._video_editing_db_candidates(db, session, strict=True)
         if not candidates:
             # Relax only soft applicability metadata. Hard product/safety/physical
             # constraints remain enforced.
-            candidates = self._template_candidates(db, session, strict=False)
+            candidates = self._video_editing_db_candidates(db, session, strict=False)
         if not candidates:
             raise ShortformDomainError(
-                "NO_COMPATIBLE_ACTIVE_EDITING_TEMPLATE",
-                "No compatible ACTIVE editing template is available.",
+                "NO_COMPATIBLE_ACTIVE_VIDEO_EDITING_DB",
+                "No compatible ACTIVE video-editing DB record is available.",
                 status_code=409,
             )
 
@@ -313,16 +317,18 @@ class ShortformAgentService:
                 "store_context": session.store_context,
                 "project_state": session.project_state,
                 "conversation": session.conversation,
-                "candidate_templates": [item.model_dump(mode="json") for item in candidates],
+                "video_editing_db_candidates": [
+                    item.model_dump(mode="json") for item in candidates
+                ],
             }
         )
-        selection = TemplateSelection.model_validate(graph_result["recommendation"])
+        selection = VideoEditingDBSelection.model_validate(graph_result["recommendation"])
         by_key = {item.candidate_key: item for item in candidates}
         selected = by_key.get(selection.candidate_key)
         if selected is None:
             raise ShortformDomainError(
-                "INVALID_LLM_TEMPLATE_SELECTION",
-                "The Shortform Agent selected a template outside the candidate pool.",
+                "INVALID_LLM_VIDEO_EDITING_DB_SELECTION",
+                "The Shortform Agent selected a DB version outside the candidate pool.",
                 status_code=500,
                 retryable=True,
             )
@@ -332,17 +338,17 @@ class ShortformAgentService:
             project_title=(selection.project_title or selected.recommendation_title or selected.name).strip(),
             title=(selection.title or selected.recommendation_title or selected.name).strip(),
             concept=(selection.concept or selected.recommendation_concept or selected.name).strip(),
-            editing_template_id=selected.editing_template_id,
-            editing_template_version=selected.editing_template_version,
+            video_editing_db_id=selected.video_editing_db_id,
+            video_editing_db_version=selected.video_editing_db_version,
         )
         stored = recommendation.model_dump(mode="json")
         stored["internal_reason"] = selection.internal_reason
         session.current_recommendation = stored
         session.status = ShortformSessionStatus.WAITING_RECOMMENDATION_ACTION.value
-        shown = list(session.shown_template_ids or [])
-        if selected.editing_template_id not in shown:
-            shown.append(selected.editing_template_id)
-        session.shown_template_ids = shown
+        shown = list(session.shown_video_editing_db_ids or [])
+        if selected.video_editing_db_id not in shown:
+            shown.append(selected.video_editing_db_id)
+        session.shown_video_editing_db_ids = shown
         conversation = list(session.conversation or [])
         if user_event:
             conversation.append({"role": "user", "content": user_event})
@@ -363,27 +369,30 @@ class ShortformAgentService:
             recommendation=recommendation,
         )
 
-    def _template_candidates(
+    def _video_editing_db_candidates(
         self,
         db: Session,
         session: ShortformSession,
         *,
         strict: bool,
-    ) -> list[TemplateCandidate]:
+    ) -> list[VideoEditingDBCandidate]:
         rows = list(
             db.scalars(
-                select(EditingTemplate)
-                .where(EditingTemplate.status == "ACTIVE")
-                .order_by(EditingTemplate.template_id.asc(), EditingTemplate.version.desc())
+                select(VideoEditingDBRecord)
+                .where(VideoEditingDBRecord.status == "ACTIVE")
+                .order_by(
+                    VideoEditingDBRecord.template_id.asc(),
+                    VideoEditingDBRecord.version.desc(),
+                )
             )
         )
-        latest_by_id: dict[str, EditingTemplate] = {}
+        latest_by_id: dict[str, VideoEditingDBRecord] = {}
         for row in rows:
             latest_by_id.setdefault(row.template_id, row)
 
         project_state = session.project_state or {}
-        shown = set(session.shown_template_ids or [])
-        result: list[TemplateCandidate] = []
+        shown = set(session.shown_video_editing_db_ids or [])
+        result: list[VideoEditingDBCandidate] = []
         for template in latest_by_id.values():
             if template.template_id in shown:
                 continue
@@ -393,10 +402,10 @@ class ShortformAgentService:
             if strict and not _passes_soft_constraints(metadata, project_state):
                 continue
             result.append(
-                TemplateCandidate(
+                VideoEditingDBCandidate(
                     candidate_key=f"{template.template_id}@{template.version}",
-                    editing_template_id=template.template_id,
-                    editing_template_version=template.version,
+                    video_editing_db_id=template.template_id,
+                    video_editing_db_version=template.version,
                     name=template.name,
                     recommendation_title=template.recommendation_title or template.name,
                     recommendation_concept=template.recommendation_concept or template.name,

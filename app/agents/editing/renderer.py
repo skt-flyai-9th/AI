@@ -33,7 +33,7 @@ class EditingRenderer(Protocol):
         recipe: EditRecipe,
         videos: list[EditingVideoInput],
         video_contexts: list[VideoContext],
-        template: dict[str, Any],
+        video_editing_db: dict[str, Any],
     ) -> EditingRenderResult: ...
 
 
@@ -54,7 +54,7 @@ class HttpEditingRenderer:
         recipe: EditRecipe,
         videos: list[EditingVideoInput],
         video_contexts: list[VideoContext],
-        template: dict[str, Any],
+        video_editing_db: dict[str, Any],
     ) -> EditingRenderResult:
         if not self.url:
             raise RendererError(
@@ -68,7 +68,7 @@ class HttpEditingRenderer:
                 recipe=recipe,
                 videos=videos,
                 video_contexts=video_contexts,
-                template=template,
+                video_editing_db=video_editing_db,
             )
         except ValueError as exc:
             raise RendererError(

@@ -11,10 +11,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.editing_template import EditingTemplate
+from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.models.template_source import TemplateSourceBundle, TemplateSourceRecord
 from app.schemas.template_knowledge import (
-    EditingTemplateContent,
+    VideoEditingDBContent,
     TemplateSourceBundleRead,
     TemplateSourceRecordRead,
     TemplateSourceStatus,
@@ -186,7 +186,7 @@ def import_provided_template_library(
         marker = f"SOURCE_BUNDLE:{template_type.value}:{bundle.schema_version}"
         (imported if was_created else skipped).append(marker)
 
-    editing_result = _import_editing_templates(
+    editing_result = _import_video_editing_db(
         db,
         payloads[TemplateType.VIDEO_EDITING],
         bundles[TemplateType.VIDEO_EDITING],
@@ -200,11 +200,11 @@ def import_provided_template_library(
         "source_bundles": {
             template_type.value: bundles[template_type].id for template_type in bundles
         },
-        "editing_templates": editing_result,
+        "video_editing_db": editing_result,
         "trade_area": {
             "status": bundles[TemplateType.TRADE_AREA].status,
             "service_eligible": False,
-            "reason": "The provided workbook marks the trade-area knowledge rows as draft.",
+            "reason": "The provided trade-area DB marks its knowledge rows as draft.",
         },
     }
 
@@ -300,7 +300,7 @@ def _import_bundle(
     return bundle, True
 
 
-def _import_editing_templates(
+def _import_video_editing_db(
     db: Session,
     payload: dict[str, Any],
     bundle: TemplateSourceBundle,
@@ -323,7 +323,7 @@ def _import_editing_templates(
         source_version = int(rows[0]["template_version"])
         template_id = re.sub(r"_v\d+$", "", source_template_id)
         marker = f"VIDEO_EDITING:{template_id}:v{source_version}"
-        if db.get(EditingTemplate, (template_id, source_version)) is not None:
+        if db.get(VideoEditingDBRecord, (template_id, source_version)) is not None:
             skipped.append(marker)
             continue
         content = _editing_content(
@@ -337,17 +337,17 @@ def _import_editing_templates(
         )
         if errors:
             raise TemplateSourceImportError(
-                f"Provided editing template {source_template_id} failed validation: {errors}"
+                f"Provided video-editing DB record {source_template_id} failed validation: {errors}"
             )
         for current in db.scalars(
-            select(EditingTemplate).where(
-                EditingTemplate.template_id == template_id,
-                EditingTemplate.status == "ACTIVE",
+            select(VideoEditingDBRecord).where(
+                VideoEditingDBRecord.template_id == template_id,
+                VideoEditingDBRecord.status == "ACTIVE",
             )
         ):
             current.status = "ARCHIVED"
         db.add(
-            EditingTemplate(
+            VideoEditingDBRecord(
                 template_id=template_id,
                 version=source_version,
                 status="ACTIVE",
@@ -378,7 +378,7 @@ def _import_editing_templates(
 
 def _editing_content(
     rows: list[dict[str, Any]], *, challenge_name: str
-) -> EditingTemplateContent:
+) -> VideoEditingDBContent:
     challenge_id = str(rows[0]["challenge_id"])
     active_rows = [row for row in rows if row["template_status"] == "ACTIVE"]
     if not active_rows:
@@ -420,7 +420,7 @@ def _editing_content(
         2000,
     )
     max_duration = max(float(row["end_ms"]) for row in active_rows) / 1000
-    return EditingTemplateContent.model_validate(
+    return VideoEditingDBContent.model_validate(
         {
             "name": challenge_name,
             "recommendation_title": challenge_name,

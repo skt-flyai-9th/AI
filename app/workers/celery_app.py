@@ -58,12 +58,12 @@ else:
                 ),
                 "args": (),
             },
-            "weekly-template-maintenance": {
-                "task": "app.workers.tasks.run_template_maintenance",
+            "weekly-database-maintenance": {
+                "task": "app.workers.tasks.run_database_maintenance",
                 "schedule": crontab(
-                    day_of_week=settings.template_maintenance_weekday,
-                    hour=settings.template_maintenance_hour_kst,
-                    minute=settings.template_maintenance_minute_kst,
+                    day_of_week=settings.database_maintenance_weekday,
+                    hour=settings.database_maintenance_hour_kst,
+                    minute=settings.database_maintenance_minute_kst,
                 ),
                 "args": (),
             },

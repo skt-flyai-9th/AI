@@ -113,7 +113,7 @@ class TradeAreaPolicy(BaseModel):
     sensitive_attribute_inference: Literal["FORBIDDEN"] = "FORBIDDEN"
 
 
-class TradeAreaTemplateContent(BaseModel):
+class TradeAreaDBContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=255)
@@ -171,7 +171,7 @@ class EditingShootingGuide(BaseModel):
     tasks: list[ShootingGuideTask] = Field(max_length=30)
 
 
-class EditingTemplateRules(BaseModel):
+class VideoEditingDBRules(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_type: Literal["VIDEO_ONLY"] = "VIDEO_ONLY"
@@ -185,7 +185,7 @@ class EditingTemplateRules(BaseModel):
     allowed_transition_ids: list[str] = Field(max_length=30)
 
 
-class EditingTemplateContent(BaseModel):
+class VideoEditingDBContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=255)
@@ -193,7 +193,7 @@ class EditingTemplateContent(BaseModel):
     recommendation_concept: str = Field(min_length=1, max_length=2000)
     recommendation_metadata: EditingRecommendationMetadata
     shooting_guide: EditingShootingGuide
-    editing_rules: EditingTemplateRules
+    editing_rules: VideoEditingDBRules
     trend_ids: list[str] = Field(max_length=50)
 
 
@@ -224,7 +224,7 @@ class VideoPacing(BaseModel):
 
 
 TradeAreaInferenceRule.model_rebuild()
-TradeAreaTemplateContent.model_rebuild()
+TradeAreaDBContent.model_rebuild()
 EditingVideoInsight.model_rebuild()
 
 

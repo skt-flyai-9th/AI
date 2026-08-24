@@ -8,7 +8,7 @@ from app.db.session import get_db
 from app.models.challenge import Challenge
 from app.schemas.challenge import ChallengeListResponse, ChallengeRead, ChallengeUpdate
 from app.services.challenges import apply_update, get_latest_generated_at, list_challenges, to_read
-from app.services.pipeline import export_latest_json
+from app.services.pipeline import export_trendcluster
 
 router = APIRouter(
     prefix="/challenges",
@@ -52,5 +52,5 @@ def update_challenge(
     apply_update(row, payload)
     db.commit()
     db.refresh(row)
-    export_latest_json(db)
+    export_trendcluster(db)
     return to_read(row)

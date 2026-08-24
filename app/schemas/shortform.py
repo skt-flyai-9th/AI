@@ -168,8 +168,8 @@ class ShortformRecommendation(BaseModel):
     project_title: str
     title: str
     concept: str
-    editing_template_id: str
-    editing_template_version: int
+    video_editing_db_id: str
+    video_editing_db_version: int
 
 
 class ShortformTurnResponse(BaseModel):
@@ -184,14 +184,14 @@ class ShortformTurnResponse(BaseModel):
 class NextRecommendationResponse(BaseModel):
     session_id: str
     recommendation: ShortformRecommendation
-    shown_template_ids: list[str]
+    shown_video_editing_db_ids: list[str]
 
 
 class ShootingGuideResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    template_id: str
-    version: int
+    video_editing_db_id: str
+    video_editing_db_version: int
     estimated_shooting_sec: int | None = None
     difficulty: str | None = None
     scenes: list[dict[str, Any]] = Field(default_factory=list)

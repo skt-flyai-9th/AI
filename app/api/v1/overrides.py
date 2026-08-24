@@ -7,7 +7,7 @@ from app.core.security import require_internal_api_key
 from app.db.session import get_db
 from app.schemas.challenge import OverrideImportItem
 from app.services.challenges import import_override_items
-from app.services.pipeline import export_latest_json
+from app.services.pipeline import export_trendcluster
 
 router = APIRouter(
     prefix="/overrides",
@@ -19,5 +19,5 @@ router = APIRouter(
 @router.post("/import")
 def import_overrides(items: list[OverrideImportItem], db: Session = Depends(get_db)) -> dict:
     updated, missing = import_override_items(db, items)
-    export_latest_json(db)
+    export_trendcluster(db)
     return {"updated": updated, "missing_challenge_ids": missing}

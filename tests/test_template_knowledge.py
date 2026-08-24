@@ -5,16 +5,16 @@ from sqlalchemy import select
 from app.db.session import SessionLocal
 from app.main import app
 from app.models.challenge import Challenge
-from app.models.editing_template import EditingTemplate
+from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.models.template_update_candidate import TemplateUpdateCandidate
 from app.models.template_video_analysis import TemplateVideoAnalysis
 from app.models.template_knowledge_run import TemplateKnowledgeRun
 from app.models.template_source import TemplateSourceBundle, TemplateSourceRecord
-from app.models.trade_area_template import TradeAreaTemplate
+from app.models.trade_area_db_record import TradeAreaDBRecord
 from app.schemas.template_knowledge import (
     CandidateDecision,
     EditingCandidateCreate,
-    EditingTemplateContent,
+    VideoEditingDBContent,
     EditingVideoInsight,
     TemplateCandidateStatus,
     TemplateType,
@@ -22,7 +22,7 @@ from app.schemas.template_knowledge import (
     TradeAreaAnalyzeRequest,
     TradeAreaCandidateCreate,
     TradeAreaEvidence,
-    TradeAreaTemplateContent,
+    TradeAreaDBContent,
 )
 from app.template_knowledge.seeds import seed_template_library
 from app.template_knowledge.service import (
@@ -31,7 +31,7 @@ from app.template_knowledge.service import (
 )
 from app.template_knowledge.llm import _make_strict_schema
 from app.template_knowledge.source_library import TemplateSourceService
-from tests.template_payloads import editing_template_payload, trade_area_payload
+from tests.template_payloads import trade_area_payload, video_editing_db_payload
 
 
 def _evidence() -> TradeAreaEvidence:
@@ -62,16 +62,16 @@ def _evidence() -> TradeAreaEvidence:
 class FakeGenerator:
     model_name = "fake-template-model"
 
-    def generate_trade_area(self, **kwargs) -> TradeAreaTemplateContent:
+    def generate_trade_area(self, **kwargs) -> TradeAreaDBContent:
         payload = trade_area_payload()
         payload["description"] = "새 집계 근거를 반영한 오피스 상권 분석 템플릿입니다."
-        return TradeAreaTemplateContent.model_validate(payload)
+        return TradeAreaDBContent.model_validate(payload)
 
-    def generate_editing(self, **kwargs) -> EditingTemplateContent:
-        payload = editing_template_payload()
+    def generate_editing(self, **kwargs) -> VideoEditingDBContent:
+        payload = video_editing_db_payload()
         payload["recommendation_concept"] = "검증된 트렌드 훅을 반영한 메뉴 결과 중심 구성입니다."
         payload["trend_ids"] = [item.trend_id for item in kwargs["insights"]]
-        return EditingTemplateContent.model_validate(payload)
+        return VideoEditingDBContent.model_validate(payload)
 
     def analyze_trade_area(self, **kwargs) -> TradeAreaAnalysisResult:
         return TradeAreaAnalysisResult(
@@ -116,13 +116,18 @@ def _service() -> tuple[TemplateKnowledgeService, FakeVideoAnalyzer]:
     return TemplateKnowledgeService(generator=FakeGenerator(), video_analyzer=video), video
 
 
-def test_bootstrap_imports_provided_sources_and_only_activates_approved_editing_templates():
+def test_bootstrap_imports_provided_sources_and_only_activates_video_editing_db():
     service, _ = _service()
     with SessionLocal() as db:
         result = seed_template_library(db, service=service)
         assert len(result["created"]) == 5
-        assert db.scalar(select(TradeAreaTemplate).where(TradeAreaTemplate.status == "ACTIVE")) is None
-        assert len(list(db.scalars(select(EditingTemplate)))) == 3
+        assert (
+            db.scalar(
+                select(TradeAreaDBRecord).where(TradeAreaDBRecord.status == "ACTIVE")
+            )
+            is None
+        )
+        assert len(list(db.scalars(select(VideoEditingDBRecord)))) == 3
         assert len(list(db.scalars(select(TemplateSourceBundle)))) == 2
         assert db.scalar(select(TemplateSourceRecord)) is not None
         assert result["trade_area"]["status"] == "DRAFT"
@@ -169,17 +174,17 @@ def test_candidate_lifecycle_creates_new_version_and_archives_base():
             CandidateDecision(actor="template-reviewer", note="근거와 diff 확인"),
         )
         assert applied.status == "APPLIED"
-        assert db.get(TradeAreaTemplate, ("trade_area_office", 1)).status == "ARCHIVED"
-        assert db.get(TradeAreaTemplate, ("trade_area_office", 2)).status == "ACTIVE"
+        assert db.get(TradeAreaDBRecord, ("trade_area_office", 1)).status == "ARCHIVED"
+        assert db.get(TradeAreaDBRecord, ("trade_area_office", 2)).status == "ACTIVE"
         assert (
-            db.get(TradeAreaTemplate, ("trade_area_office", 1)).description
-            != db.get(TradeAreaTemplate, ("trade_area_office", 2)).description
+            db.get(TradeAreaDBRecord, ("trade_area_office", 1)).description
+            != db.get(TradeAreaDBRecord, ("trade_area_office", 2)).description
         )
 
 
 def test_editing_candidate_rejects_tts_before_activation():
     service, _ = _service()
-    invalid = editing_template_payload()
+    invalid = video_editing_db_payload()
     invalid["recommendation_metadata"]["requires_tts"] = True
     with SessionLocal() as db:
         candidate = service.create_candidate_from_payload(
@@ -193,7 +198,7 @@ def test_editing_candidate_rejects_tts_before_activation():
         )
         assert candidate.status == "INVALID"
         assert "TTS_FORBIDDEN" in {item["code"] for item in candidate.validation_errors}
-        assert db.get(EditingTemplate, ("invalid_tts", 1)) is None
+        assert db.get(VideoEditingDBRecord, ("invalid_tts", 1)) is None
 
 
 def test_trend_video_analysis_generates_editing_candidate_and_uses_cache():
@@ -261,25 +266,25 @@ def test_trade_area_analysis_uses_active_template_and_persists_result():
 
 
 def test_template_knowledge_api_bootstrap_and_async_analysis(client, auth_headers, monkeypatch):
-    from app.api.v1 import template_knowledge as template_api
+    from app.api.v1 import database_knowledge as database_api
 
     class FakeTask:
         id = "task-template-1"
 
     service, _ = _service()
     app.dependency_overrides[get_template_knowledge_service] = lambda: service
-    monkeypatch.setattr(template_api, "_require_runtime", lambda operation: None)
-    monkeypatch.setattr(template_api, "enqueue_template_knowledge", lambda run_id: FakeTask())
+    monkeypatch.setattr(database_api, "_require_runtime", lambda operation: None)
+    monkeypatch.setattr(database_api, "enqueue_database_knowledge", lambda run_id: FakeTask())
     try:
-        created = client.post("/api/v1/template-knowledge/bootstrap", headers=auth_headers)
+        created = client.post("/api/v1/database-knowledge/bootstrap", headers=auth_headers)
         assert created.status_code == 201
         versions = client.get(
-            "/api/v1/template-knowledge/templates?status=ACTIVE",
+            "/api/v1/database-knowledge/databases?status=ACTIVE",
             headers=auth_headers,
         )
         assert versions.status_code == 200
         assert len(versions.json()) == 3
-        sources = client.get("/api/v1/template-knowledge/sources", headers=auth_headers)
+        sources = client.get("/api/v1/database-knowledge/sources", headers=auth_headers)
         assert sources.status_code == 200
         assert len(sources.json()) == 2
 
@@ -295,7 +300,7 @@ def test_template_knowledge_api_bootstrap_and_async_analysis(client, auth_header
             )
 
         analyzed = client.post(
-            "/api/v1/template-knowledge/trade-area/analyze",
+            "/api/v1/database-knowledge/trade-area-db/analyze",
             headers=auth_headers,
             json={"evidence": _evidence().model_dump(mode="json")},
         )
@@ -306,7 +311,7 @@ def test_template_knowledge_api_bootstrap_and_async_analysis(client, auth_header
             completed = service.execute_run(db, run_id)
             assert completed.status == "COMPLETED"
         result = client.get(
-            f"/api/v1/template-knowledge/runs/{run_id}/result",
+            f"/api/v1/database-knowledge/runs/{run_id}/result",
             headers=auth_headers,
         )
         assert result.status_code == 200
@@ -342,26 +347,26 @@ def test_trade_area_source_context_respects_workbook_draft_status():
 
 
 def test_template_knowledge_api_requires_internal_key(client):
-    response = client.get("/api/v1/template-knowledge/templates")
+    response = client.get("/api/v1/database-knowledge/databases")
     assert response.status_code == 401
 
 
 def test_template_knowledge_api_marks_run_failed_when_enqueue_fails(
     client, auth_headers, monkeypatch
 ):
-    from app.api.v1 import template_knowledge as template_api
+    from app.api.v1 import database_knowledge as database_api
 
     service, _ = _service()
     app.dependency_overrides[get_template_knowledge_service] = lambda: service
-    monkeypatch.setattr(template_api, "_require_runtime", lambda operation: None)
+    monkeypatch.setattr(database_api, "_require_runtime", lambda operation: None)
 
     def fail_enqueue(run_id):
         raise ConnectionError("broker unavailable")
 
-    monkeypatch.setattr(template_api, "enqueue_template_knowledge", fail_enqueue)
+    monkeypatch.setattr(database_api, "enqueue_database_knowledge", fail_enqueue)
     try:
         response = client.post(
-            "/api/v1/template-knowledge/trade-area/candidates",
+            "/api/v1/database-knowledge/trade-area-db/candidates",
             headers=auth_headers,
             json={
                 "template_id": "trade_area_office",
@@ -374,7 +379,7 @@ def test_template_knowledge_api_marks_run_failed_when_enqueue_fails(
         with SessionLocal() as db:
             failed = db.get(TemplateKnowledgeRun, run_id)
             assert failed.status == "FAILED"
-            assert failed.error["code"] == "TEMPLATE_RUN_ENQUEUE_FAILED"
+            assert failed.error["code"] == "DATABASE_RUN_ENQUEUE_FAILED"
     finally:
         app.dependency_overrides.pop(get_template_knowledge_service, None)
 
@@ -390,7 +395,7 @@ def test_llm_output_schemas_are_strict_and_have_no_open_objects():
             for item in value.values():
                 yield from walk(item)
 
-    for model in (TradeAreaTemplateContent, EditingTemplateContent, EditingVideoInsight):
+    for model in (TradeAreaDBContent, VideoEditingDBContent, EditingVideoInsight):
         schema = _make_strict_schema(model.model_json_schema())
         objects = list(walk(schema))
         assert objects

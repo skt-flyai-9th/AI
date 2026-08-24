@@ -299,8 +299,9 @@ def _build_public_ranking(config: dict[str, Any], ranking: pd.DataFrame) -> tupl
 
     public = pd.DataFrame(
         {
+            "id": ranked["challenge_id"],
             "rank": ranked["published_rank"],
-            "challenge": ranked["name"],
+            "name": ranked["name"],
             "representative_youtube_url": ranked["representative_youtube_url"],
             "guide_youtube_url": ranked["guide_youtube_url"],
         }
@@ -348,13 +349,18 @@ def _write_outputs(
     details_export = published_details[detail_columns].copy()
 
     paths = {
-        "ranking_latest_json": str(output_dir / "ranking_latest.json"),
+        "trendcluster_json": str(output_dir / "trendcluster.json"),
         "ranking_details_latest_json": str(output_dir / "ranking_details_latest.json"),
         "ranking_full_latest_json": str(output_dir / "ranking_full_latest.json"),
         "source_metrics_latest_json": str(output_dir / "source_metrics_latest.json"),
         "status_latest_json": str(output_dir / "run_status_latest.json"),
     }
-    write_json_atomic(public_export.to_dict(orient="records"), paths["ranking_latest_json"])
+    trendcluster_payload = {
+        "generated_at": now.isoformat(),
+        "count": int(len(public_export)),
+        "results": public_export.to_dict(orient="records"),
+    }
+    write_json_atomic(trendcluster_payload, paths["trendcluster_json"])
     write_json_atomic(details_export.to_dict(orient="records"), paths["ranking_details_latest_json"])
     write_json_atomic(ranking.sort_values("final_rank").to_dict(orient="records"), paths["ranking_full_latest_json"])
     write_json_atomic(source_metrics.to_dict(orient="records"), paths["source_metrics_latest_json"])

@@ -1,0 +1,27 @@
+{
+  "generated_at": "2026-08-24T22:00:00.000Z",
+  "count": 3,
+  "results": [
+    {
+      "id": "jujutsu_transition",
+      "rank": 1,
+      "name": "주술회전 트랜지션",
+      "representative_youtube_url": "https://www.youtube.com/shorts/Yc7ZjC0n7oY?si=p0vD4OMH9It_RBk_",
+      "guide_youtube_url": "https://www.youtube.com/shorts/Yc7ZjC0n7oY?si=p0vD4OMH9It_RBk_"
+    },
+    {
+      "id": "cafe_recommendation_reels",
+      "rank": 2,
+      "name": "카페 추천 리뷰 릴스",
+      "representative_youtube_url": null,
+      "guide_youtube_url": null
+    },
+    {
+      "id": "otsukare_summer_challenge",
+      "rank": 3,
+      "name": "오츠카레 썸머 챌린지",
+      "representative_youtube_url": "https://www.youtube.com/shorts/e-dU9yQfmik?si=fGCn4wuBsTEm2Q-p",
+      "guide_youtube_url": "https://www.youtube.com/shorts/e-dU9yQfmik?si=fGCn4wuBsTEm2Q-p"
+    }
+  ]
+}

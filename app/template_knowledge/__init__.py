@@ -1,1 +1,1 @@
-"""Versioned trade-area and video-editing template knowledge management."""
+"""Versioned trade-area and video-editing database knowledge management."""

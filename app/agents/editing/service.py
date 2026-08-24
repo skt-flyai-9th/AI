@@ -22,7 +22,7 @@ from app.agents.editing.validator import EditRecipeValidator
 from app.agents.editing.video_context import FFmpegVideoContextBuilder, VideoContextBuilder
 from app.core.config import get_settings
 from app.models.editing_run import EditingRun
-from app.models.editing_template import EditingTemplate
+from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.schemas.editing import (
     EditRecipe,
     EditingRevisionRequest,
@@ -62,7 +62,7 @@ class EditingAgentService:
         self.graph = build_editing_graph(self.llm, self.validator)
 
     def create_run(self, db: Session, request: EditingRunCreateRequest) -> EditingRun:
-        self._get_active_template(db, request.selected_shortform)
+        self._get_active_database(db, request.selected_shortform)
         run = EditingRun(
             id=f"edit_{uuid.uuid4().hex}",
             status=EditingRunStatus.QUEUED.value,
@@ -122,7 +122,7 @@ class EditingAgentService:
             )
         snapshot.videos = sorted(request.videos, key=lambda video: video.shooting_scene_order)
         snapshot.revision = request.revision_action
-        self._get_active_template(db, snapshot.selected_shortform)
+        self._get_active_database(db, snapshot.selected_shortform)
         run = EditingRun(
             id=f"edit_{uuid.uuid4().hex}",
             parent_run_id=parent.id,
@@ -150,8 +150,8 @@ class EditingAgentService:
 
         try:
             request = EditingRunCreateRequest.model_validate(run.request_snapshot)
-            template = self._get_active_template(db, request.selected_shortform)
-            template_payload = _template_payload(template)
+            database_record = self._get_active_database(db, request.selected_shortform)
+            database_payload = _database_payload(database_record)
             parent = db.get(EditingRun, run.parent_run_id) if run.parent_run_id else None
             parent_recipe = parent.recipe if parent is not None else None
 
@@ -174,7 +174,7 @@ class EditingAgentService:
                     "domain_context": self.domain_context,
                     "project": request.project.model_dump(mode="json"),
                     "selected_shortform": request.selected_shortform.model_dump(mode="json"),
-                    "template": template_payload,
+                    "video_editing_db": database_payload,
                     "videos": [video.model_dump(mode="json") for video in request.videos],
                     "video_contexts": [context.model_dump(mode="json") for context in contexts],
                     "parent_recipe": parent_recipe,
@@ -214,7 +214,7 @@ class EditingAgentService:
                 recipe=recipe,
                 videos=request.videos,
                 video_contexts=contexts,
-                template=template_payload,
+                video_editing_db=database_payload,
             )
             run.recipe = recipe.model_dump(mode="json")
             run.publishing_result = publishing.model_dump(mode="json")
@@ -270,27 +270,27 @@ class EditingAgentService:
         db.commit()
 
     @staticmethod
-    def _get_active_template(
+    def _get_active_database(
         db: Session,
         selected: SelectedShortform,
-    ) -> EditingTemplate:
-        template = db.get(
-            EditingTemplate,
-            (selected.editing_template_id, selected.editing_template_version),
+    ) -> VideoEditingDBRecord:
+        database_record = db.get(
+            VideoEditingDBRecord,
+            (selected.video_editing_db_id, selected.video_editing_db_version),
         )
-        if template is None:
+        if database_record is None:
             raise EditingDomainError(
-                "EDITING_TEMPLATE_NOT_FOUND",
-                "The selected editing template version was not found.",
+                "VIDEO_EDITING_DB_NOT_FOUND",
+                "The selected video-editing DB version was not found.",
                 status_code=404,
             )
-        if template.status != "ACTIVE":
+        if database_record.status != "ACTIVE":
             raise EditingDomainError(
-                "EDITING_TEMPLATE_INACTIVE",
-                "The selected editing template version is not ACTIVE.",
+                "VIDEO_EDITING_DB_INACTIVE",
+                "The selected video-editing DB version is not ACTIVE.",
                 status_code=409,
             )
-        return template
+        return database_record
 
 
 def validate_editing_runtime() -> dict[str, bool]:
@@ -335,15 +335,15 @@ def _reals_registry_ready() -> bool:
     return True
 
 
-def _template_payload(template: EditingTemplate) -> dict[str, Any]:
+def _database_payload(database_record: VideoEditingDBRecord) -> dict[str, Any]:
     return {
-        "editing_template_id": template.template_id,
-        "editing_template_version": template.version,
-        "name": template.name,
-        "recommendation_title": template.recommendation_title,
-        "recommendation_concept": template.recommendation_concept,
-        "shooting_guide": template.shooting_guide or {},
-        "editing_rules": template.editing_rules or {},
+        "video_editing_db_id": database_record.template_id,
+        "video_editing_db_version": database_record.version,
+        "name": database_record.name,
+        "recommendation_title": database_record.recommendation_title,
+        "recommendation_concept": database_record.recommendation_concept,
+        "shooting_guide": database_record.shooting_guide or {},
+        "editing_rules": database_record.editing_rules or {},
     }
 
 

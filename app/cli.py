@@ -5,11 +5,15 @@ from pathlib import Path
 
 import typer
 
+from app.agents.challenge_ranking.trendcluster import (
+    sync_video_editing_db_trendcluster,
+)
+from app.core.config import get_settings
 from app.db.init_db import init_db
 from app.db.session import SessionLocal
 from app.schemas.challenge import OverrideImportItem
 from app.services.challenges import import_override_items
-from app.services.pipeline import create_run, execute_pipeline, export_latest_json
+from app.services.pipeline import create_run, execute_pipeline, export_trendcluster
 from app.services.retention import cleanup_history
 from app.schemas.template_knowledge import (
     CandidateDecision,
@@ -54,40 +58,41 @@ def import_overrides(path: Path) -> None:
     items = [OverrideImportItem.model_validate(item) for item in payload]
     with SessionLocal() as db:
         updated, missing = import_override_items(db, items)
-        export_latest_json(db)
+        export_trendcluster(db)
     typer.echo(json.dumps({"updated": updated, "missing": missing}, ensure_ascii=False))
 
 
-@app.command("export-ranking")
-def export_ranking() -> None:
+@app.command("export-trendcluster")
+def export_trendcluster_command() -> None:
     with SessionLocal() as db:
-        path = export_latest_json(db)
+        path = export_trendcluster(db)
     typer.echo(str(path))
 
 
-@app.command("seed-template-library")
-def seed_templates() -> None:
-    """Compatibility alias for importing the bundled user-provided workbooks."""
+@app.command("sync-trendcluster-from-video-editing-db")
+def sync_trendcluster_from_video_editing_db() -> None:
+    """Replace trendcluster with the three entries in the provided video-editing DB."""
 
-    _import_templates()
-
-
-@app.command("import-template-library")
-def import_templates() -> None:
-    """Import the user-provided video-editing and trade-area workbooks."""
-
-    _import_templates()
+    path = sync_video_editing_db_trendcluster(get_settings().export_dir)
+    typer.echo(str(path))
 
 
-def _import_templates() -> None:
+@app.command("import-database-library")
+def import_databases() -> None:
+    """Import the user-provided video-editing and trade-area databases."""
+
+    _import_databases()
+
+
+def _import_databases() -> None:
     init_db()
     with SessionLocal() as db:
         result = seed_template_library(db)
     typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
 
-@app.command("resolve-trade-area-context")
-def resolve_trade_area_context(
+@app.command("resolve-trade-area-db-context")
+def resolve_trade_area_db_context(
     region_id: str | None = None,
     category_id: str | None = None,
     official_trade_area_code: str | None = None,
@@ -105,9 +110,9 @@ def resolve_trade_area_context(
     typer.echo(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
 
 
-@app.command("generate-trade-area-template")
-def generate_trade_area_template(
-    template_id: str,
+@app.command("generate-trade-area-db")
+def generate_trade_area_db(
+    database_id: str,
     evidence_path: Path,
 ) -> None:
     payload = json.loads(evidence_path.read_text(encoding="utf-8"))
@@ -115,7 +120,7 @@ def generate_trade_area_template(
     with SessionLocal() as db:
         candidate = manager.create_trade_area_candidate(
             db,
-            TradeAreaCandidateCreate(template_id=template_id, evidence=payload),
+            TradeAreaCandidateCreate(template_id=database_id, evidence=payload),
         )
     typer.echo(
         json.dumps(
@@ -126,16 +131,16 @@ def generate_trade_area_template(
     )
 
 
-@app.command("generate-editing-template")
-def generate_editing_template(
-    template_id: str,
+@app.command("generate-video-editing-db")
+def generate_video_editing_db(
+    database_id: str,
     trend_id: list[str] | None = typer.Option(None, "--trend-id"),
 ) -> None:
     manager = TemplateKnowledgeService()
     with SessionLocal() as db:
         candidate = manager.create_editing_candidate(
             db,
-            EditingCandidateCreate(template_id=template_id, trend_ids=trend_id or []),
+            EditingCandidateCreate(template_id=database_id, trend_ids=trend_id or []),
         )
     typer.echo(
         json.dumps(
@@ -146,8 +151,8 @@ def generate_editing_template(
     )
 
 
-@app.command("approve-template-candidate")
-def approve_template_candidate(
+@app.command("approve-database-candidate")
+def approve_database_candidate(
     candidate_id: str,
     actor: str,
     note: str = "",
@@ -166,14 +171,14 @@ def approve_template_candidate(
     )
 
 
-@app.command("analyze-trade-area")
-def analyze_trade_area(evidence_path: Path, template_id: str | None = None) -> None:
+@app.command("analyze-trade-area-db")
+def analyze_trade_area_db(evidence_path: Path, database_id: str | None = None) -> None:
     payload = json.loads(evidence_path.read_text(encoding="utf-8"))
     manager = TemplateKnowledgeService()
     with SessionLocal() as db:
         result = manager.analyze_trade_area(
             db,
-            TradeAreaAnalyzeRequest(evidence=payload, template_id=template_id),
+            TradeAreaAnalyzeRequest(evidence=payload, template_id=database_id),
         )
     typer.echo(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
 

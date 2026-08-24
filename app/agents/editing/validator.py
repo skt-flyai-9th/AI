@@ -23,7 +23,7 @@ class EditRecipeValidator:
         recipe: EditRecipe,
         *,
         selected_shortform: SelectedShortform,
-        template: dict[str, Any],
+        video_editing_db: dict[str, Any],
         video_contexts: list[VideoContext],
     ) -> list[ValidationIssue]:
         issues: list[ValidationIssue] = []
@@ -46,20 +46,20 @@ class EditRecipeValidator:
                 )
             )
 
-        if recipe.editing_template_id != selected_shortform.editing_template_id:
+        if recipe.video_editing_db_id != selected_shortform.video_editing_db_id:
             add(
-                "TEMPLATE_ID_MISMATCH",
-                "editing_template_id",
-                "editing_template_id must match selected_shortform.",
+                "VIDEO_EDITING_DB_ID_MISMATCH",
+                "video_editing_db_id",
+                "video_editing_db_id must match selected_shortform.",
             )
-        if recipe.editing_template_version != selected_shortform.editing_template_version:
+        if recipe.video_editing_db_version != selected_shortform.video_editing_db_version:
             add(
-                "TEMPLATE_VERSION_MISMATCH",
-                "editing_template_version",
-                "editing_template_version must match selected_shortform.",
+                "VIDEO_EDITING_DB_VERSION_MISMATCH",
+                "video_editing_db_version",
+                "video_editing_db_version must match selected_shortform.",
             )
 
-        rules = template.get("editing_rules") or {}
+        rules = video_editing_db.get("editing_rules") or {}
         renderer_effects = self.registry.creative_effect_ids
         configured_effects = rules.get("allowed_effect_ids")
         allowed_effects = (
@@ -87,7 +87,7 @@ class EditRecipeValidator:
         if render_profile is None:
             add(
                 "RENDER_PROFILE_UNKNOWN",
-                "template.editing_rules.render_profile_id",
+                "video_editing_db.editing_rules.render_profile_id",
                 f"Unknown REALS render profile: {render_profile_id}.",
                 source="REALS_REGISTRY",
                 repairable=False,
@@ -95,8 +95,8 @@ class EditRecipeValidator:
             profile_max_duration_ms = 60_000
         else:
             profile_max_duration_ms = int(float(render_profile["max_duration_sec"]) * 1000)
-        template_max_duration_ms = int(float(rules.get("max_duration_sec") or 90) * 1000)
-        max_duration_ms = min(template_max_duration_ms, profile_max_duration_ms)
+        database_max_duration_ms = int(float(rules.get("max_duration_sec") or 90) * 1000)
+        max_duration_ms = min(database_max_duration_ms, profile_max_duration_ms)
 
         safe_area_profile_id = str(
             rules.get("safe_area_profile_id") or "INSTAGRAM_REELS_2026_V1"
@@ -104,7 +104,7 @@ class EditRecipeValidator:
         if not self.registry.has_safe_area_profile(safe_area_profile_id):
             add(
                 "SAFE_AREA_PROFILE_UNKNOWN",
-                "template.editing_rules.safe_area_profile_id",
+                "video_editing_db.editing_rules.safe_area_profile_id",
                 f"Unknown REALS safe-area profile: {safe_area_profile_id}.",
                 source="REALS_REGISTRY",
                 repairable=False,
@@ -112,7 +112,7 @@ class EditRecipeValidator:
         if self.registry.audio_mix_policy("SILENT_V1") is None:
             add(
                 "AUDIO_POLICY_MISSING",
-                "template.editing_rules",
+                "video_editing_db.editing_rules",
                 "REALS audio policy SILENT_V1 is missing.",
                 source="REALS_REGISTRY",
                 repairable=False,
@@ -123,7 +123,7 @@ class EditRecipeValidator:
         if len(recipe.timeline) > 1 and self.registry.render_profile(assembly_profile_id) is None:
             add(
                 "ASSEMBLY_PROFILE_UNKNOWN",
-                "template.editing_rules.assembly_profile_id",
+                "video_editing_db.editing_rules.assembly_profile_id",
                 f"Unknown REALS assembly profile: {assembly_profile_id}.",
                 source="REALS_REGISTRY",
                 repairable=False,

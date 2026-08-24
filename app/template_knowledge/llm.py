@@ -9,11 +9,11 @@ from pydantic import BaseModel
 from app.core.config import get_settings
 from app.ranker_core.gemini_json import call_gemini_structured, resolve_gemini_model
 from app.schemas.template_knowledge import (
-    EditingTemplateContent,
+    VideoEditingDBContent,
     EditingVideoInsight,
     TradeAreaAnalysisResult,
     TradeAreaEvidence,
-    TradeAreaTemplateContent,
+    TradeAreaDBContent,
 )
 
 
@@ -33,7 +33,7 @@ class TemplateCandidateGenerator(Protocol):
         template_id: str,
         base_payload: dict[str, Any] | None,
         evidence: TradeAreaEvidence,
-    ) -> TradeAreaTemplateContent: ...
+    ) -> TradeAreaDBContent: ...
 
     def generate_editing(
         self,
@@ -42,12 +42,12 @@ class TemplateCandidateGenerator(Protocol):
         base_payload: dict[str, Any] | None,
         trend_context: list[dict[str, Any]],
         insights: list[EditingVideoInsight],
-    ) -> EditingTemplateContent: ...
+    ) -> VideoEditingDBContent: ...
 
     def analyze_trade_area(
         self,
         *,
-        template: TradeAreaTemplateContent,
+        template: TradeAreaDBContent,
         evidence: TradeAreaEvidence,
     ) -> TradeAreaAnalysisResult: ...
 
@@ -66,15 +66,15 @@ class ReferenceVideoAnalyzer(Protocol):
 
 
 class OpenAITemplateCandidateGenerator:
-    """GPT application that proposes templates; deterministic code validates them."""
+    """GPT application that proposes DB versions; deterministic code validates them."""
 
     def __init__(self) -> None:
         settings = get_settings()
         self.api_key = settings.openai_api_key.strip()
         self.base_url = settings.openai_base_url.rstrip("/")
-        self._model_name = settings.template_openai_model.strip()
-        self.timeout = settings.template_request_timeout_seconds
-        self.max_output_tokens = settings.template_max_output_tokens
+        self._model_name = settings.database_openai_model.strip()
+        self.timeout = settings.database_request_timeout_seconds
+        self.max_output_tokens = settings.database_max_output_tokens
 
     @property
     def model_name(self) -> str:
@@ -86,20 +86,20 @@ class OpenAITemplateCandidateGenerator:
         template_id: str,
         base_payload: dict[str, Any] | None,
         evidence: TradeAreaEvidence,
-    ) -> TradeAreaTemplateContent:
+    ) -> TradeAreaDBContent:
         return self._request(
-            schema_model=TradeAreaTemplateContent,
-            schema_name="trade_area_template_candidate",
+            schema_model=TradeAreaDBContent,
+            schema_name="trade_area_db_candidate",
             instructions=(
-                "You maintain SARILS trade-area analysis templates. Produce a conservative, "
-                "evidence-bound Korean commercial-area template. Never infer an individual "
+                "You maintain the SARILS trade-area DB. Produce a conservative, "
+                "evidence-bound Korean commercial-area database version. Never infer an individual "
                 "customer's attributes. Preserve useful existing rules, update only where the "
                 "new evidence supports it, and make every rule machine-readable."
             ),
             payload={
                 "task": "Create a new version candidate; never mutate the base version.",
-                "template_id": template_id,
-                "base_template": base_payload,
+                "database_id": template_id,
+                "base_database": base_payload,
                 "new_evidence": evidence.model_dump(mode="json"),
                 "hard_policy": {
                     "aggregate_only": True,
@@ -116,21 +116,21 @@ class OpenAITemplateCandidateGenerator:
         base_payload: dict[str, Any] | None,
         trend_context: list[dict[str, Any]],
         insights: list[EditingVideoInsight],
-    ) -> EditingTemplateContent:
+    ) -> VideoEditingDBContent:
         return self._request(
-            schema_model=EditingTemplateContent,
-            schema_name="editing_template_candidate",
+            schema_model=VideoEditingDBContent,
+            schema_name="video_editing_db_candidate",
             instructions=(
-                "You maintain SARILS video-editing templates. Generate one version candidate "
-                "grounded only in the supplied Trend Research records and Gemini video insights. "
+                "You maintain the SARILS video-editing DB. Generate one version candidate "
+                "grounded only in the supplied trendcluster records and Gemini video insights. "
                 "The product accepts user-recorded video only. TTS, narration synthesis, still "
                 "photos on the timeline, and photo-to-video are forbidden. Use only renderer "
                 "capabilities included in the payload."
             ),
             payload={
                 "task": "Create a new version candidate; never mutate the base version.",
-                "template_id": template_id,
-                "base_template": base_payload,
+                "database_id": template_id,
+                "base_database": base_payload,
                 "trend_context": trend_context,
                 "gemini_video_insights": [item.model_dump(mode="json") for item in insights],
                 "renderer_contract": {
@@ -150,19 +150,19 @@ class OpenAITemplateCandidateGenerator:
     def analyze_trade_area(
         self,
         *,
-        template: TradeAreaTemplateContent,
+        template: TradeAreaDBContent,
         evidence: TradeAreaEvidence,
     ) -> TradeAreaAnalysisResult:
         return self._request(
             schema_model=TradeAreaAnalysisResult,
             schema_name="trade_area_analysis",
             instructions=(
-                "Apply the supplied SARILS trade-area template to aggregate evidence. "
+                "Apply the supplied SARILS trade-area DB version to aggregate evidence. "
                 "Return only evidence-grounded area characteristics and audience ranges. "
                 "Do not describe any identifiable person or claim inferred traits as facts."
             ),
             payload={
-                "template": template.model_dump(mode="json"),
+                "database": template.model_dump(mode="json"),
                 "evidence": evidence.model_dump(mode="json"),
             },
         )
@@ -177,7 +177,7 @@ class OpenAITemplateCandidateGenerator:
     ) -> _ModelT:
         if not self.api_key or not self.model_name:
             raise TemplateKnowledgeLLMError(
-                "OPENAI_API_KEY or TEMPLATE_OPENAI_MODEL is not configured.", retryable=False
+                "OPENAI_API_KEY or DATABASE_OPENAI_MODEL is not configured.", retryable=False
             )
         schema = _make_strict_schema(schema_model.model_json_schema())
         request_payload = {
@@ -217,9 +217,9 @@ class OpenAITemplateCandidateGenerator:
                     json=request_payload,
                 )
         except httpx.TimeoutException as exc:
-            raise TemplateKnowledgeLLMError("Template GPT request timed out.") from exc
+            raise TemplateKnowledgeLLMError("Database GPT request timed out.") from exc
         except httpx.HTTPError as exc:
-            raise TemplateKnowledgeLLMError("Template GPT request failed.") from exc
+            raise TemplateKnowledgeLLMError("Database GPT request failed.") from exc
         if response.status_code >= 400:
             retryable = response.status_code == 429 or response.status_code >= 500
             raise TemplateKnowledgeLLMError(
@@ -231,7 +231,7 @@ class OpenAITemplateCandidateGenerator:
             return schema_model.model_validate(parsed)
         except (TypeError, ValueError) as exc:
             raise TemplateKnowledgeLLMError(
-                "Template GPT returned invalid structured output."
+                "Database GPT returned invalid structured output."
             ) from exc
 
 
@@ -241,9 +241,9 @@ class GeminiYouTubeVideoAnalyzer:
     def __init__(self) -> None:
         settings = get_settings()
         self.api_key = settings.gemini_api_key.strip()
-        self._configured_model_name = settings.template_gemini_model.strip()
+        self._configured_model_name = settings.database_gemini_model.strip()
         self._resolved_model_name = ""
-        self.timeout = settings.template_video_analysis_timeout_seconds
+        self.timeout = settings.database_video_analysis_timeout_seconds
 
     @property
     def model_name(self) -> str:
@@ -272,7 +272,7 @@ class GeminiYouTubeVideoAnalyzer:
             {
                 "task": (
                     "Analyze the supplied public YouTube video as editing evidence for a Korean "
-                    "small-business short-form template. Describe observable hooks, shot order, "
+                    "small-business short-form video-editing database. Describe observable hooks, shot order, "
                     "pacing, captions, camera, transitions, and reusable editing rules with "
                     "timestamps in evidence_notes where possible. Do not recommend TTS, generated "
                     "narration, still-photo scenes, or unobserved content."

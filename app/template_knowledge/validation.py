@@ -6,10 +6,10 @@ from pydantic import ValidationError
 
 from app.agents.editing.reals import RealsRegistry, get_reals_registry
 from app.schemas.template_knowledge import (
-    EditingTemplateContent,
+    VideoEditingDBContent,
     ShootingGuideScene,
     TemplateType,
-    TradeAreaTemplateContent,
+    TradeAreaDBContent,
 )
 
 
@@ -32,7 +32,7 @@ class TemplateCandidateValidator:
     def _validate_trade_area(payload: dict[str, Any]) -> list[dict[str, Any]]:
         errors: list[dict[str, Any]] = []
         try:
-            content = TradeAreaTemplateContent.model_validate(payload)
+            content = TradeAreaDBContent.model_validate(payload)
         except ValidationError as exc:
             return _pydantic_errors(exc)
 
@@ -61,7 +61,7 @@ class TemplateCandidateValidator:
                 errors,
                 "INDIVIDUAL_INFERENCE_FORBIDDEN",
                 "policy.no_individual_attribute_assertions",
-                "The template must forbid individual attribute assertions.",
+                "The trade-area DB must forbid individual attribute assertions.",
             )
         for index, rule in enumerate(content.inference_rules):
             serialized = str(rule.model_dump(mode="json")).lower()
@@ -95,10 +95,10 @@ class TemplateCandidateValidator:
                     errors,
                     "PHOTO_TIMELINE_FORBIDDEN",
                     "recommendation_metadata.requires_photo_input",
-                    "Editing templates must use recorded video only.",
+                    "Video-editing DB records must use recorded video only.",
                 )
         try:
-            content = EditingTemplateContent.model_validate(payload)
+            content = VideoEditingDBContent.model_validate(payload)
         except ValidationError as exc:
             return errors + _pydantic_errors(exc)
 
@@ -108,7 +108,7 @@ class TemplateCandidateValidator:
                 errors,
                 "RENDERER_SUPPORT_REQUIRED",
                 "recommendation_metadata.renderer_supported",
-                "Only renderer-supported templates can be activated.",
+                "Only renderer-supported video-editing DB records can be activated.",
             )
         if metadata.get("source_type", "VIDEO_ONLY") != "VIDEO_ONLY":
             _add(
@@ -190,7 +190,7 @@ class TemplateCandidateValidator:
                 errors,
                 "AUDIO_POLICY_INVALID",
                 "editing_rules.audio_policy",
-                "Templates must remove source audio and leave platform music to publishing.",
+                "Video-editing DB records must remove source audio and leave platform music to publishing.",
             )
         allowed_effects = rules.allowed_effect_ids
         if not isinstance(allowed_effects, list) or not set(allowed_effects).issubset(
@@ -200,7 +200,7 @@ class TemplateCandidateValidator:
                 errors,
                 "EFFECT_UNSUPPORTED",
                 "editing_rules.allowed_effect_ids",
-                "Template contains an effect outside the REALS registry.",
+                "Video-editing DB record contains an effect outside the REALS registry.",
             )
         allowed_transitions = rules.allowed_transition_ids
         renderer_transitions = self.registry.transition_ids | {"CUT"}
@@ -211,7 +211,7 @@ class TemplateCandidateValidator:
                 errors,
                 "TRANSITION_UNSUPPORTED",
                 "editing_rules.allowed_transition_ids",
-                "Template contains a transition outside the REALS registry.",
+                "Video-editing DB record contains a transition outside the REALS registry.",
             )
         min_cut = rules.min_cut_duration_ms
         registry_min = int(self.registry.edit_policies.get("min_cut_duration_ms", 300))
@@ -242,7 +242,7 @@ class TemplateCandidateValidator:
                 errors,
                 "TREND_EVIDENCE_REQUIRED",
                 "trend_ids",
-                "An editing-template update requires Trend Research evidence.",
+                "A video-editing DB update requires trendcluster evidence.",
             )
         return errors
 
