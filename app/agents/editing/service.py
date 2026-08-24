@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.agents.editing.graph import build_editing_graph
 from app.agents.editing.llm import EditingLLM, OpenAIEditingLLM
 from app.agents.editing.renderer import EditingRenderer, HttpEditingRenderer
+from app.agents.editing.reals import RealsRegistryError, get_reals_registry
 from app.agents.editing.types import (
     EditingPlanDecision,
     persistable_video_context,
@@ -127,6 +128,7 @@ class EditingAgentService:
         try:
             request = EditingRunCreateRequest.model_validate(run.request_snapshot)
             template = self._get_active_template(db, request.selected_shortform)
+            template_payload = _template_payload(template)
             parent = db.get(EditingRun, run.parent_run_id) if run.parent_run_id else None
             parent_recipe = parent.recipe if parent is not None else None
 
@@ -142,7 +144,7 @@ class EditingAgentService:
                     "domain_context": self.domain_context,
                     "project": request.project.model_dump(mode="json"),
                     "selected_shortform": request.selected_shortform.model_dump(mode="json"),
-                    "template": _template_payload(template),
+                    "template": template_payload,
                     "videos": [video.model_dump(mode="json") for video in request.videos],
                     "video_contexts": [context.model_dump(mode="json") for context in contexts],
                     "parent_recipe": parent_recipe,
@@ -153,7 +155,7 @@ class EditingAgentService:
             )
             self._set_stage(db, run, EditingRunStage.VALIDATING_RECIPE, 65)
             if result.get("exhausted"):
-                errors = [str(item) for item in result.get("validation_errors", [])]
+                errors = [_format_validation_issue(item) for item in result.get("validation_errors", [])]
                 raise EditingDomainError(
                     "EDITING_RECIPE_INVALID",
                     "Recipe validation failed after repair: " + "; ".join(errors),
@@ -181,6 +183,8 @@ class EditingAgentService:
                 run_id=run.id,
                 recipe=recipe,
                 videos=request.videos,
+                video_contexts=contexts,
+                template=template_payload,
             )
             run.recipe = recipe.model_dump(mode="json")
             run.publishing_result = publishing.model_dump(mode="json")
@@ -255,6 +259,7 @@ def validate_editing_runtime() -> dict[str, bool]:
     return {
         "openai": bool(settings.openai_api_key.strip() and settings.editing_openai_model.strip()),
         "renderer": bool(settings.editing_renderer_url.strip()),
+        "reals_registry": _reals_registry_ready(),
         "ffprobe": _command_exists(settings.editing_ffprobe_path),
         "ffmpeg": _command_exists(settings.editing_ffmpeg_path),
     }
@@ -263,6 +268,14 @@ def validate_editing_runtime() -> dict[str, bool]:
 def _command_exists(command: str) -> bool:
     path = Path(command)
     return path.is_file() if path.parent != Path(".") else shutil.which(command) is not None
+
+
+def _reals_registry_ready() -> bool:
+    try:
+        get_reals_registry()
+    except RealsRegistryError:
+        return False
+    return True
 
 
 def _template_payload(template: EditingTemplate) -> dict[str, Any]:
@@ -281,6 +294,15 @@ def _safe_error_message(exc: Exception) -> str:
     if isinstance(exc, EditingDomainError):
         return str(exc)[:1000]
     return f"{type(exc).__name__}: {str(exc)}"[:1000]
+
+
+def _format_validation_issue(value: Any) -> str:
+    if not isinstance(value, dict):
+        return str(value)
+    code = str(value.get("code") or "VALIDATION_ERROR")
+    path = str(value.get("path") or "recipe")
+    message = str(value.get("message") or "Recipe validation failed.")
+    return f"{code} at {path}: {message}"
 
 
 def _load_domain_context() -> str:

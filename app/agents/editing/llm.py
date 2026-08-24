@@ -6,6 +6,7 @@ from typing import Any, Protocol
 import httpx
 
 from app.agents.editing.types import EditingPlanDecision, VideoContext
+from app.agents.editing.reals import get_reals_registry
 from app.core.config import get_settings
 
 
@@ -37,7 +38,7 @@ class EditingLLM(Protocol):
         template: dict[str, Any],
         video_contexts: list[VideoContext],
         decision: EditingPlanDecision,
-        validation_errors: list[str],
+        validation_errors: list[dict[str, Any]],
         parent_recipe: dict[str, Any] | None,
         revision_action: str | None,
     ) -> EditingPlanDecision: ...
@@ -88,7 +89,7 @@ class OpenAIEditingLLM:
         template: dict[str, Any],
         video_contexts: list[VideoContext],
         decision: EditingPlanDecision,
-        validation_errors: list[str],
+        validation_errors: list[dict[str, Any]],
         parent_recipe: dict[str, Any] | None,
         revision_action: str | None,
     ) -> EditingPlanDecision:
@@ -200,17 +201,7 @@ def _text_video_contexts(contexts: list[VideoContext]) -> list[dict[str, Any]]:
 
 
 def _renderer_capabilities() -> dict[str, Any]:
-    return {
-        "source_type": "VIDEO_ONLY",
-        "speed_range": [0.5, 2.0],
-        "crop_modes": ["KEEP", "SUBJECT_CENTER", "CENTER_9_16"],
-        "transitions": ["CUT", "HARD_CUT", "FLASH_WHITE"],
-        "effects": ["PUNCH_ZOOM", "COLOR_TONE", "SMOOTH_ZOOM"],
-        "caption_positions": ["BOTTOM", "MIDDLE", "TOP"],
-        "font_weights": ["REGULAR", "SEMIBOLD", "BOLD"],
-        "original_audio_policy": "REMOVE",
-        "bgm_policy": "NONE",
-    }
+    return get_reals_registry().llm_capabilities()
 
 
 def _requirements() -> list[str]:
@@ -219,6 +210,7 @@ def _requirements() -> list[str]:
         "Preserve ascending shooting_scene_order and use only supplied video ids.",
         "Every source timestamp must be inside that video's duration.",
         "Caption times are absolute timeline milliseconds and must stay inside their clip.",
+        "Caption scale must remain 1.0; use an approved style_id for visual emphasis.",
         "Use only renderer capabilities and the template editing_rules.",
         "Keep captions at most 40 characters each and at most 8 captions total.",
         "Publishing post_note must tell the user to add music in the platform.",

@@ -35,7 +35,7 @@ X-Internal-API-Key: <INTERNAL_API_KEY>
 
 ## 숏폼 영상 편집 엔진
 
-`reals-video-engine/`는 가이드 분석 결과와 촬영 영상을 받아 세로형 숏폼 MP4를 만드는 **독립 실행형 편집 엔진**입니다. `editing` Agent는 검증된 EditRecipe만 Renderer 서비스 경계로 전달하며, 엔진 내부에는 LLM을 두지 않습니다.
+`reals-video-engine/`는 가이드 분석 결과와 촬영 영상을 받아 세로형 숏폼 MP4를 만드는 **독립 실행형 편집 엔진**입니다. `editing` Agent는 REALS registry 기반 preflight를 통과한 EditRecipe를 `reals-render-job-1.0` 계약으로 변환해 Renderer 서비스 경계로 전달하며, 엔진 내부에는 LLM을 두지 않습니다. 같은 registry manifest의 SHA-256을 AI와 Renderer 양쪽에서 검증해 지원 효과와 정책의 드리프트를 차단합니다.
 
 ```text
 Guide Analysis / Orchestrator

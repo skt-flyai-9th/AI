@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     editing_probe_timeout_seconds: int = Field(default=45, ge=5, le=300)
     editing_renderer_url: str = ""
     editing_renderer_timeout_seconds: int = Field(default=1800, ge=30, le=7200)
+    editing_reals_registry_path: Path = Path("reals-video-engine/registry")
 
     @property
     def effective_internal_api_key(self) -> str:

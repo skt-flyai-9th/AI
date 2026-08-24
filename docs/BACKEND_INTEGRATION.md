@@ -221,7 +221,20 @@ Content-Type: application/json
 {"revision_action":"첫 장면을 더 짧게 하고 자막을 크게 해줘"}
 ```
 
-AI worker는 MP4 자체를 GPT에 보내지 않는다. `ffprobe` 메타데이터와 타임스탬프 키프레임을 제한적으로 생성하며, DB에는 base64 이미지가 아닌 키프레임 시각만 저장한다. Validator를 통과한 `VIDEO_ONLY` 레시피만 `EDITING_RENDERER_URL/renders`에 전달된다. Renderer 요청은 촬영 원음 `REMOVE`, BGM `NONE`, 촬영 순서 보존 정책을 포함한다.
+AI worker는 MP4 자체를 GPT에 보내지 않는다. `ffprobe` 메타데이터와 타임스탬프 키프레임을 제한적으로 생성하며, DB에는 base64 이미지가 아닌 키프레임 시각만 저장한다. Validator를 통과한 `VIDEO_ONLY` 레시피만 `EDITING_RENDERER_URL/renders`에 전달된다.
+
+Renderer 요청은 `reals-render-job-1.0` 계약을 사용한다. 원격 영상 URL과 메타데이터, 다중 컷의 순서·트림을 담은 `source_assembly`, 엔진 계약과 같은 필드명의 `final_render.edit_recipe`를 함께 보낸다. 단일 컷은 `ONE_TAKE_PASSTHROUGH`, 다중 컷은 정확한 트림 조립 후 `MULTI_CUT_ASSEMBLED`로 처리한다. Renderer 서비스는 URL을 로컬 `MediaFileRef.path`로 resolve하고, 필요 시 조립본을 만든 뒤 REALS `FinalRenderRequest`를 실행해야 한다.
+
+AI 측 preflight Validator와 LLM capability는 `EDITING_REALS_REGISTRY_PATH`에 있는 REALS registry bundle을 함께 읽는다. 시작 시 manifest SHA-256을 검증하고, 효과·전환·최소 컷·자막 제한·렌더 프로필을 그 registry에서 가져온다. Renderer 내부의 native Validator는 로컬 파일 범위, 폰트 파일/글리프, 최종 QC를 다시 검증하며 최종 권한을 가진다.
+
+```text
+EditRecipe
+  → registry-backed preflight + bounded LLM repair
+  → RealsRecipeAdapter
+  → POST /renders (reals-render-job-1.0)
+  → source assembly (multi-cut only)
+  → REALS native Validator + FINAL_RENDER + QC
+```
 
 ## cURL 예시
 

@@ -35,7 +35,10 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
             template=state["template"],
             video_contexts=_contexts(state),
         )
-        return {"validation_errors": errors, "validation_passed": not errors}
+        return {
+            "validation_errors": [error.model_dump(mode="json") for error in errors],
+            "validation_passed": not errors,
+        }
 
     def route_validation(state: EditingGraphState) -> Literal["done", "repair", "exhausted"]:
         if state.get("validation_passed"):

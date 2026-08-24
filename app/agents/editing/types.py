@@ -27,6 +27,16 @@ class VideoContext(BaseModel):
     keyframes: list[VideoKeyframe]
 
 
+class ValidationIssue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    path: str
+    message: str
+    source: Literal["DOMAIN", "REALS_REGISTRY"]
+    repairable: bool = True
+
+
 class EditingPlanDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -65,7 +75,7 @@ class EditingGraphState(TypedDict, total=False):
     parent_recipe: dict[str, Any] | None
     revision_action: str | None
     decision: dict[str, Any]
-    validation_errors: list[str]
+    validation_errors: list[dict[str, Any]]
     validation_passed: bool
     repair_attempts: int
     max_repair_attempts: int

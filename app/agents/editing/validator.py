@@ -2,16 +2,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.agents.editing.types import VideoContext
+from app.agents.editing.reals import RealsRegistry, get_reals_registry
+from app.agents.editing.types import ValidationIssue, VideoContext
 from app.schemas.editing import EditRecipe, SelectedShortform
 
 
-_RENDERER_EFFECTS = {"PUNCH_ZOOM", "COLOR_TONE", "SMOOTH_ZOOM"}
-_RENDERER_TRANSITIONS = {None, "CUT", "HARD_CUT", "FLASH_WHITE"}
-
-
 class EditRecipeValidator:
-    """Deterministic hard-constraint gate before any recipe reaches Renderer."""
+    """Domain preflight backed by the REALS engine's registry bundle.
+
+    This runs before the network boundary so repairable LLM mistakes can be
+    corrected cheaply. The REALS engine remains the final authority and runs
+    its native validator again after remote assets have been assembled.
+    """
+
+    def __init__(self, registry: RealsRegistry | None = None) -> None:
+        self.registry = registry or get_reals_registry()
 
     def validate(
         self,
@@ -20,31 +25,109 @@ class EditRecipeValidator:
         selected_shortform: SelectedShortform,
         template: dict[str, Any],
         video_contexts: list[VideoContext],
-    ) -> list[str]:
-        errors: list[str] = []
+    ) -> list[ValidationIssue]:
+        issues: list[ValidationIssue] = []
+
+        def add(
+            code: str,
+            path: str,
+            message: str,
+            *,
+            source: str = "DOMAIN",
+            repairable: bool = True,
+        ) -> None:
+            issues.append(
+                ValidationIssue(
+                    code=code,
+                    path=path,
+                    message=message,
+                    source=source,
+                    repairable=repairable,
+                )
+            )
+
         if recipe.editing_template_id != selected_shortform.editing_template_id:
-            errors.append("editing_template_id must match selected_shortform")
+            add(
+                "TEMPLATE_ID_MISMATCH",
+                "editing_template_id",
+                "editing_template_id must match selected_shortform.",
+            )
         if recipe.editing_template_version != selected_shortform.editing_template_version:
-            errors.append("editing_template_version must match selected_shortform")
+            add(
+                "TEMPLATE_VERSION_MISMATCH",
+                "editing_template_version",
+                "editing_template_version must match selected_shortform.",
+            )
 
         rules = template.get("editing_rules") or {}
+        renderer_effects = self.registry.creative_effect_ids
         configured_effects = rules.get("allowed_effect_ids")
         allowed_effects = (
             set(configured_effects)
             if isinstance(configured_effects, list)
-            else set(_RENDERER_EFFECTS)
+            else set(renderer_effects)
         )
-        allowed_effects &= _RENDERER_EFFECTS
+        allowed_effects &= renderer_effects
+
+        renderer_transitions = self.registry.transition_ids | {"CUT"}
         configured_transitions = rules.get("allowed_transition_ids")
         allowed_transitions = (
             set(configured_transitions)
             if isinstance(configured_transitions, list)
-            else set(_RENDERER_TRANSITIONS)
+            else set(renderer_transitions)
         )
-        allowed_transitions &= _RENDERER_TRANSITIONS
+        allowed_transitions &= renderer_transitions
         allowed_transitions.add(None)
-        min_cut_ms = max(300, int(rules.get("min_cut_duration_ms") or 300))
-        max_duration_ms = int(float(rules.get("max_duration_sec") or 90) * 1000)
+
+        policies = self.registry.edit_policies
+        registry_min_cut_ms = int(policies.get("min_cut_duration_ms", 300))
+        min_cut_ms = max(registry_min_cut_ms, int(rules.get("min_cut_duration_ms") or 0))
+        render_profile_id = str(rules.get("render_profile_id") or "INSTAGRAM_REELS_V1")
+        render_profile = self.registry.render_profile(render_profile_id)
+        if render_profile is None:
+            add(
+                "RENDER_PROFILE_UNKNOWN",
+                "template.editing_rules.render_profile_id",
+                f"Unknown REALS render profile: {render_profile_id}.",
+                source="REALS_REGISTRY",
+                repairable=False,
+            )
+            profile_max_duration_ms = 60_000
+        else:
+            profile_max_duration_ms = int(float(render_profile["max_duration_sec"]) * 1000)
+        template_max_duration_ms = int(float(rules.get("max_duration_sec") or 90) * 1000)
+        max_duration_ms = min(template_max_duration_ms, profile_max_duration_ms)
+
+        safe_area_profile_id = str(
+            rules.get("safe_area_profile_id") or "INSTAGRAM_REELS_2026_V1"
+        )
+        if not self.registry.has_safe_area_profile(safe_area_profile_id):
+            add(
+                "SAFE_AREA_PROFILE_UNKNOWN",
+                "template.editing_rules.safe_area_profile_id",
+                f"Unknown REALS safe-area profile: {safe_area_profile_id}.",
+                source="REALS_REGISTRY",
+                repairable=False,
+            )
+        if self.registry.audio_mix_policy("SILENT_V1") is None:
+            add(
+                "AUDIO_POLICY_MISSING",
+                "template.editing_rules",
+                "REALS audio policy SILENT_V1 is missing.",
+                source="REALS_REGISTRY",
+                repairable=False,
+            )
+        assembly_profile_id = str(
+            rules.get("assembly_profile_id") or "INTERMEDIATE_VERTICAL_V1"
+        )
+        if len(recipe.timeline) > 1 and self.registry.render_profile(assembly_profile_id) is None:
+            add(
+                "ASSEMBLY_PROFILE_UNKNOWN",
+                "template.editing_rules.assembly_profile_id",
+                f"Unknown REALS assembly profile: {assembly_profile_id}.",
+                source="REALS_REGISTRY",
+                repairable=False,
+            )
 
         contexts = {context.video_id: context for context in video_contexts}
         order_by_video = {
@@ -53,81 +136,246 @@ class EditRecipeValidator:
         clip_orders = [clip.clip_order for clip in recipe.timeline]
         expected_orders = list(range(1, len(recipe.timeline) + 1))
         if clip_orders != expected_orders:
-            errors.append(f"clip_order must be consecutive: expected {expected_orders}")
+            add(
+                "CLIP_ORDER_NON_CONSECUTIVE",
+                "timeline",
+                f"clip_order must be consecutive; expected {expected_orders}.",
+            )
 
         expected_start = 0.0
         scene_orders: list[int] = []
-        caption_count = 0
-        for clip in recipe.timeline:
+        caption_count = 1  # CTA is rendered as a caption overlay.
+        for index, clip in enumerate(recipe.timeline):
+            path = f"timeline[{index}]"
             context = contexts.get(clip.video_id)
             if context is None:
-                errors.append(f"clip {clip.clip_order}: unknown video_id={clip.video_id}")
+                add(
+                    "VIDEO_UNKNOWN",
+                    f"{path}.video_id",
+                    f"Unknown video_id: {clip.video_id}.",
+                )
                 continue
             scene_orders.append(order_by_video[clip.video_id])
             if clip.source_start_ms >= clip.source_end_ms:
-                errors.append(f"clip {clip.clip_order}: source_start_ms must be before source_end_ms")
+                add(
+                    "SOURCE_RANGE_INVALID",
+                    path,
+                    "source_start_ms must be before source_end_ms.",
+                )
                 continue
             if clip.source_end_ms > context.duration_ms:
-                errors.append(
-                    f"clip {clip.clip_order}: source_end_ms exceeds {clip.video_id} duration"
+                add(
+                    "SOURCE_RANGE_OUT_OF_BOUNDS",
+                    f"{path}.source_end_ms",
+                    f"source_end_ms exceeds {clip.video_id} duration ({context.duration_ms}ms).",
                 )
             source_duration = clip.source_end_ms - clip.source_start_ms
             output_duration = source_duration / clip.speed
             if output_duration < min_cut_ms:
-                errors.append(f"clip {clip.clip_order}: output duration is below {min_cut_ms}ms")
+                add(
+                    "CUT_TOO_SHORT",
+                    path,
+                    f"Output duration must be at least {min_cut_ms}ms.",
+                    source="REALS_REGISTRY",
+                )
             if abs(clip.timeline_start_ms - expected_start) > 1:
-                errors.append(
-                    f"clip {clip.clip_order}: timeline_start_ms must be {round(expected_start)}"
+                add(
+                    "TIMELINE_NOT_GAPLESS",
+                    f"{path}.timeline_start_ms",
+                    f"timeline_start_ms must be {round(expected_start)}.",
                 )
             clip_end = clip.timeline_start_ms + output_duration
-            expected_start = clip_end
+            expected_start += output_duration
 
-            if clip.transition_in not in allowed_transitions:
-                errors.append(f"clip {clip.clip_order}: unsupported transition_in")
-            if clip.transition_out not in allowed_transitions:
-                errors.append(f"clip {clip.clip_order}: unsupported transition_out")
-            for effect in clip.effects:
+            self._validate_transition(
+                clip.transition_in,
+                f"{path}.transition_in",
+                allowed_transitions,
+                add,
+            )
+            self._validate_transition(
+                clip.transition_out,
+                f"{path}.transition_out",
+                allowed_transitions,
+                add,
+            )
+            if index > 0:
+                previous = recipe.timeline[index - 1].transition_out
+                if (
+                    clip.transition_in is not None
+                    and previous is not None
+                    and _normalize_transition(clip.transition_in)
+                    != _normalize_transition(previous)
+                ):
+                    add(
+                        "TRANSITION_CONFLICT",
+                        f"{path}.transition_in",
+                        "transition_in conflicts with the previous clip's transition_out.",
+                    )
+
+            color_tone_count = 0
+            for effect_index, effect in enumerate(clip.effects):
+                effect_path = f"{path}.effects[{effect_index}]"
                 if effect.effect_id not in allowed_effects:
-                    errors.append(
-                        f"clip {clip.clip_order}: unsupported effect_id={effect.effect_id}"
+                    add(
+                        "EFFECT_UNSUPPORTED",
+                        f"{effect_path}.effect_id",
+                        f"Unsupported effect_id: {effect.effect_id}.",
+                        source="REALS_REGISTRY",
                     )
-                errors.extend(
-                    _validate_effect_params(
-                        clip.clip_order,
-                        effect.effect_id,
-                        effect.params.model_dump(exclude_none=True),
-                    )
+                    continue
+                if effect.effect_id == "COLOR_TONE":
+                    color_tone_count += 1
+                self._validate_effect_params(
+                    effect.effect_id,
+                    effect.params.model_dump(exclude_none=True),
+                    effect_path,
+                    add,
+                )
+            if color_tone_count > 1:
+                add(
+                    "COLOR_TONE_DUPLICATED",
+                    f"{path}.effects",
+                    "At most one COLOR_TONE effect is allowed per clip.",
                 )
 
             if clip.caption is not None:
                 caption_count += 1
                 caption = clip.caption
+                caption_path = f"{path}.caption"
                 if caption.start_ms >= caption.end_ms:
-                    errors.append(f"clip {clip.clip_order}: caption start must be before end")
+                    add(
+                        "CAPTION_RANGE_INVALID",
+                        caption_path,
+                        "Caption start_ms must be before end_ms.",
+                    )
                 if caption.start_ms < clip.timeline_start_ms or caption.end_ms > clip_end + 1:
-                    errors.append(f"clip {clip.clip_order}: caption must stay inside clip timeline")
-                if len(caption.text) > 40:
-                    errors.append(f"clip {clip.clip_order}: caption exceeds 40 characters")
+                    add(
+                        "CAPTION_OUTSIDE_CLIP",
+                        caption_path,
+                        "Caption must stay inside its clip's output timeline.",
+                    )
+                max_chars = int(policies.get("max_caption_chars", 40))
+                if len(caption.text) > max_chars:
+                    add(
+                        "CAPTION_TOO_LONG",
+                        f"{caption_path}.text",
+                        f"Caption exceeds the REALS limit of {max_chars} characters.",
+                        source="REALS_REGISTRY",
+                    )
+                if caption.style_id not in self.registry.caption_style_ids():
+                    add(
+                        "CAPTION_STYLE_UNKNOWN",
+                        f"{caption_path}.style_id",
+                        f"Unknown REALS caption style: {caption.style_id}.",
+                        source="REALS_REGISTRY",
+                    )
+                if caption.scale != 1.0:
+                    add(
+                        "CAPTION_SCALE_UNSUPPORTED",
+                        f"{caption_path}.scale",
+                        "REALS does not accept arbitrary caption scale; use 1.0 and an approved style.",
+                        source="REALS_REGISTRY",
+                    )
 
         if scene_orders != sorted(scene_orders):
-            errors.append("timeline must preserve shooting_scene_order")
-        if caption_count > 8:
-            errors.append("recipe may contain at most 8 captions")
-        if expected_start > max_duration_ms:
-            errors.append(f"output duration exceeds {max_duration_ms}ms")
-        return errors
-
-
-def _validate_effect_params(clip_order: int, effect_id: str, params: dict[str, Any]) -> list[str]:
-    errors: list[str] = []
-    if effect_id in {"PUNCH_ZOOM", "SMOOTH_ZOOM"}:
-        maximum = 1.15 if effect_id == "PUNCH_ZOOM" else 1.2
-        scale = params.get("scale_end")
-        if not isinstance(scale, (int, float)) or not 1.0 <= float(scale) <= maximum:
-            errors.append(
-                f"clip {clip_order}: {effect_id}.scale_end must be between 1.0 and {maximum}"
+            add(
+                "SHOOTING_ORDER_CHANGED",
+                "timeline",
+                "Timeline must preserve shooting_scene_order.",
             )
-    elif effect_id == "COLOR_TONE":
-        if params.get("tone") not in {"NATURAL", "WARM", "COOL", "VIVID"}:
-            errors.append(f"clip {clip_order}: COLOR_TONE.tone is invalid")
-    return errors
+        max_captions = int(policies.get("max_captions_per_video", 8))
+        if caption_count > max_captions:
+            add(
+                "CAPTION_COUNT_EXCEEDED",
+                "timeline",
+                f"Captions including CTA exceed the REALS limit of {max_captions}.",
+                source="REALS_REGISTRY",
+            )
+        max_chars = int(policies.get("max_caption_chars", 40))
+        if len(recipe.cta.text) > max_chars:
+            add(
+                "CTA_TOO_LONG",
+                "cta.text",
+                f"CTA exceeds the REALS limit of {max_chars} characters.",
+                source="REALS_REGISTRY",
+            )
+        if "CTA_BOX" not in self.registry.caption_style_ids():
+            add(
+                "CTA_STYLE_MISSING",
+                "cta",
+                "REALS caption style CTA_BOX is missing.",
+                source="REALS_REGISTRY",
+                repairable=False,
+            )
+        if expected_start > max_duration_ms:
+            add(
+                "OUTPUT_TOO_LONG",
+                "timeline",
+                f"Output duration exceeds the effective limit of {max_duration_ms}ms.",
+                source="REALS_REGISTRY",
+            )
+        return issues
+
+    @staticmethod
+    def _validate_transition(
+        value: str | None,
+        path: str,
+        allowed: set[str | None],
+        add,
+    ) -> None:
+        if value not in allowed:
+            add(
+                "TRANSITION_UNSUPPORTED",
+                path,
+                f"Unsupported transition: {value}.",
+                source="REALS_REGISTRY",
+            )
+
+    def _validate_effect_params(
+        self,
+        effect_id: str,
+        params: dict[str, Any],
+        path: str,
+        add,
+    ) -> None:
+        effect = self.registry.effect_rules(effect_id)
+        if effect is None:
+            return
+        allowed_params = effect.get("allowed_params", {})
+        for name in params:
+            if name not in allowed_params:
+                add(
+                    "EFFECT_PARAM_UNKNOWN",
+                    f"{path}.params.{name}",
+                    f"{effect_id} does not support parameter {name}.",
+                    source="REALS_REGISTRY",
+                )
+        for name, rule in allowed_params.items():
+            value = params.get(name)
+            if value is None:
+                add(
+                    "EFFECT_PARAM_MISSING",
+                    f"{path}.params.{name}",
+                    f"{effect_id}.{name} is required.",
+                    source="REALS_REGISTRY",
+                )
+                continue
+            if "enum" in rule and value not in rule["enum"]:
+                add(
+                    "EFFECT_PARAM_INVALID",
+                    f"{path}.params.{name}",
+                    f"{effect_id}.{name} must be one of {rule['enum']}.",
+                    source="REALS_REGISTRY",
+                )
+            if "min" in rule and not float(rule["min"]) <= float(value) <= float(rule["max"]):
+                add(
+                    "EFFECT_PARAM_OUT_OF_RANGE",
+                    f"{path}.params.{name}",
+                    f"{effect_id}.{name} must be between {rule['min']} and {rule['max']}.",
+                    source="REALS_REGISTRY",
+                )
+
+
+def _normalize_transition(value: str) -> str:
+    return "HARD_CUT" if value == "CUT" else value
