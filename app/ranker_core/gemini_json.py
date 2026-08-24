@@ -69,6 +69,7 @@ def call_gemini_structured(
     schema_name: str,
     schema: dict[str, Any],
     timeout: float = 120.0,
+    file_uris: list[str] | None = None,
 ) -> dict[str, Any]:
     del schema_name
     resolved_model = resolve_gemini_model(api_key, model)
@@ -76,9 +77,13 @@ def call_gemini_structured(
     session.headers.update(_headers(api_key))
     url = f"{GEMINI_BASE}/models/{resolved_model}:generateContent"
 
+    parts: list[dict[str, Any]] = [
+        {"file_data": {"file_uri": uri}} for uri in (file_uris or [])
+    ]
+    parts.append({"text": user_prompt})
     request_body = {
         "systemInstruction": {"parts": [{"text": system_prompt}]},
-        "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+        "contents": [{"role": "user", "parts": parts}],
         "generationConfig": {
             "responseMimeType": "application/json",
             "responseJsonSchema": schema,

@@ -150,9 +150,84 @@ Content-Type: application/json
 
 Apify, Gemini, YouTube, NAVER의 부분 실패는 가능한 경우 HTTP 오류 대신 `COMPLETED` 결과의 `warnings`와 `source_status`에 기록된다.
 
+## 숏폼 Agent
+
+백엔드는 매장·메뉴·상권 context를 포함해 세션을 만들고, 반환된 `session_id`로 사용자 입력을
+한 turn씩 전달한다. 사용자가 brief를 확인한 뒤에만 ACTIVE 영상편집DB 버전 1개가 추천된다.
+
+```http
+POST /api/v1/shortform-sessions
+X-Internal-API-Key: <INTERNAL_API_KEY>
+Content-Type: application/json
+
+{
+  "store_context": {
+    "store": {
+      "store_id": "store_123",
+      "store_name": "사릴스 카페",
+      "category": "카페"
+    },
+    "representative_menus": [
+      {"menu_id": "menu_001", "name": "딸기 크림 라떼", "price": 6500}
+    ],
+    "trade_area": {
+      "characteristics": ["주말 방문 비중이 높음"],
+      "target_age_ranges": ["20대", "30대"]
+    }
+  }
+}
+```
+
+대화 입력은 `TEXT`, `OPTION`, `CONFIRM` 중 하나다.
+
+```http
+POST /api/v1/shortform-sessions/{session_id}/turns
+Content-Type: application/json
+
+{"input":{"type":"TEXT","text":"딸기 크림 라떼를 홍보하고 싶어요"}}
+```
+
+```http
+POST /api/v1/shortform-sessions/{session_id}/turns
+Content-Type: application/json
+
+{"input":{"type":"OPTION","option_id":"option_from_previous_response"}}
+```
+
+```http
+POST /api/v1/shortform-sessions/{session_id}/turns
+Content-Type: application/json
+
+{"input":{"type":"CONFIRM","value":true}}
+```
+
+응답의 `action`은 `ASK`, `SAVE_AND_ASK`, `CLARIFY`, `SUGGEST_SWITCH`,
+`RESOLVE_CONFLICT`, `CONFIRM`, `RECOMMEND` 중 하나다. 추천 응답에는
+`recommendation_id`, `project_title`, `title`, `concept`, `video_editing_db_id`,
+`video_editing_db_version`이 포함된다. 백엔드는 사용자가 추천을 수락하면 이 식별자와 버전을
+프로젝트에 저장한다.
+
+다시 추천받기는 현재 context를 유지하고 이미 노출한 DB를 제외한다.
+
+```http
+POST /api/v1/shortform-sessions/{session_id}/recommendations/next
+```
+
+촬영 가이드는 선택된 정확한 DB 버전으로 조회한다.
+
+```http
+GET /api/v1/video-editing-db/{record_id}/versions/{version}/shooting-guide
+```
+
+새로고침이나 프로젝트 취소로 대화를 폐기할 때는 세션을 삭제한다.
+
+```http
+DELETE /api/v1/shortform-sessions/{session_id}
+```
+
 ## 편집 Agent
 
-편집은 Celery 비동기 run으로 처리한다. 입력 템플릿은 반드시 `ACTIVE`인 정확한 버전이어야 하며 영상은 HTTP(S) 서명 URL로 전달한다.
+편집은 Celery 비동기 run으로 처리한다. 입력 영상편집DB는 반드시 `ACTIVE`인 정확한 버전이어야 하며 영상은 HTTP(S) 서명 URL로 전달한다.
 
 ```http
 POST /api/v1/editing-runs
@@ -171,8 +246,8 @@ Content-Type: application/json
   },
   "selected_shortform": {
     "recommendation_id": "rec_123",
-    "editing_template_id": "edit_template_014",
-    "editing_template_version": 3
+    "video_editing_db_id": "video_editing_db_014",
+    "video_editing_db_version": 3
   },
   "videos": [
     {

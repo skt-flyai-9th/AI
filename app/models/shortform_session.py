@@ -20,7 +20,7 @@ class ShortformSession(Base):
     store_context: Mapped[dict] = mapped_column(JSON, default=dict)
     project_state: Mapped[dict] = mapped_column(JSON, default=dict)
     conversation: Mapped[list] = mapped_column(JSON, default=list)
-    shown_template_ids: Mapped[list] = mapped_column(JSON, default=list)
+    shown_video_editing_db_ids: Mapped[list] = mapped_column(JSON, default=list)
     current_recommendation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(

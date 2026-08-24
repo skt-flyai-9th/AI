@@ -40,7 +40,7 @@ _AGENT_REGISTRY: dict[str, AgentDefinition] = {
         status="AVAILABLE",
         description=(
             "Collects the project brief through conversation and recommends exactly one "
-            "compatible ACTIVE video-editing template at a time."
+            "compatible ACTIVE video-editing DB version at a time."
         ),
         trigger_endpoint="/api/v1/shortform-sessions",
         status_endpoint_template="/api/v1/shortform-sessions/{session_id}/turns",

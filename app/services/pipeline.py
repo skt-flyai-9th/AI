@@ -12,6 +12,7 @@ import yaml
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
+from app.agents.challenge_ranking.trendcluster import write_trendcluster
 from app.core.config import get_settings
 from app.models.challenge import Challenge
 from app.models.pipeline_run import PipelineRun
@@ -91,7 +92,7 @@ def execute_pipeline(db: Session, run_id: str) -> PipelineRun:
         db.commit()
 
         persist_result(db, run, result.ranking, result.source_metrics)
-        export_latest_json(db)
+        export_trendcluster(db)
 
         run.status = "COMPLETED"
         run.stage = "COMPLETED"
@@ -217,7 +218,7 @@ def _effective_record(challenge: Challenge) -> dict[str, Any]:
     }
 
 
-def export_latest_json(db: Session) -> Path:
+def export_trendcluster(db: Session) -> Path:
     from app.services.challenges import effective_rank_expression
     from sqlalchemy import select
 
@@ -236,8 +237,4 @@ def export_latest_json(db: Session) -> Path:
         "count": len(rows),
         "results": [_effective_record(row) for row in rows],
     }
-    path = settings.export_dir / "ranking_latest.json"
-    temp = path.with_suffix(".json.tmp")
-    temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    temp.replace(path)
-    return path
+    return write_trendcluster(payload, settings.export_dir)

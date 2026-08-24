@@ -70,7 +70,7 @@ class EditingGraphState(TypedDict, total=False):
     domain_context: str
     project: dict[str, Any]
     selected_shortform: dict[str, Any]
-    template: dict[str, Any]
+    video_editing_db: dict[str, Any]
     videos: list[dict[str, Any]]
     video_contexts: list[dict[str, Any]]
     parent_recipe: dict[str, Any] | None

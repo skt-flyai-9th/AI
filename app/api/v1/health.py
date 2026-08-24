@@ -21,6 +21,7 @@ def live() -> dict:
 def ready(db: Session = Depends(get_db)) -> dict:
     db.execute(text("SELECT 1"))
     settings = get_settings()
+    database_runtime = settings.database_knowledge_runtime
     editing_runtime = validate_editing_runtime()
     return {
         "status": "ready",
@@ -29,5 +30,9 @@ def ready(db: Session = Depends(get_db)) -> dict:
         "shortform_llm_ready": settings.shortform_llm_ready,
         "editing_runtime_ready": all(editing_runtime.values()),
         "editing_runtime": editing_runtime,
+        "database_knowledge_ready": all(database_runtime.values()),
+        "database_knowledge_runtime": database_runtime,
+        "database_human_approval_required": settings.database_require_human_approval,
+        "database_maintenance_enabled": settings.database_maintenance_enabled,
         "internal_auth_configured": bool(settings.effective_internal_api_key),
     }

@@ -7,8 +7,8 @@ import httpx
 
 from app.agents.shortform.types import (
     ShortformTurnDecision,
-    TemplateCandidate,
-    TemplateSelection,
+    VideoEditingDBCandidate,
+    VideoEditingDBSelection,
 )
 from app.core.config import get_settings
 
@@ -32,15 +32,15 @@ class ShortformLLM(Protocol):
         photo_urls: list[str],
     ) -> ShortformTurnDecision: ...
 
-    def select_template(
+    def select_video_editing_db(
         self,
         *,
         domain_context: str,
         store_context: dict[str, Any],
         project_state: dict[str, Any],
         conversation: list[dict[str, str]],
-        candidates: list[TemplateCandidate],
-    ) -> TemplateSelection: ...
+        candidates: list[VideoEditingDBCandidate],
+    ) -> VideoEditingDBSelection: ...
 
 
 class OpenAIShortformLLM:
@@ -94,20 +94,22 @@ class OpenAIShortformLLM:
             )
         )
 
-    def select_template(
+    def select_video_editing_db(
         self,
         *,
         domain_context: str,
         store_context: dict[str, Any],
         project_state: dict[str, Any],
         conversation: list[dict[str, str]],
-        candidates: list[TemplateCandidate],
-    ) -> TemplateSelection:
+        candidates: list[VideoEditingDBCandidate],
+    ) -> VideoEditingDBSelection:
         if not candidates:
-            raise ShortformLLMError("No candidate templates were provided.", retryable=False)
+            raise ShortformLLMError(
+                "No video-editing DB candidates were provided.", retryable=False
+            )
 
         allowed_keys = [candidate.candidate_key for candidate in candidates]
-        selection_schema = TemplateSelection.model_json_schema()
+        selection_schema = VideoEditingDBSelection.model_json_schema()
         selection_schema["properties"]["candidate_key"] = {
             "type": "string",
             "enum": allowed_keys,
@@ -115,27 +117,29 @@ class OpenAIShortformLLM:
 
         prompt = {
             "task": (
-                "Choose exactly one candidate ACTIVE editing template for the current store/project. "
+                "Choose exactly one candidate ACTIVE video-editing DB version for the current store/project. "
                 "Do not invent a new shortform format."
             ),
             "store_context": store_context,
             "project_state": project_state,
             "recent_conversation": conversation[-20:],
-            "candidate_templates": [candidate.model_dump(mode="json") for candidate in candidates],
+            "video_editing_db_candidates": [
+                candidate.model_dump(mode="json") for candidate in candidates
+            ],
             "requirements": [
-                "Choose only candidate_key from candidate_templates.",
+                "Choose only candidate_key from video_editing_db_candidates.",
                 "Use the whole user conversation and Store Context, not a fixed weighted ranking.",
-                "project_title/title/concept may adapt wording to this store but must preserve the selected template concept.",
+                "project_title/title/concept may adapt wording to this store but must preserve the selected DB concept.",
                 "Keep title and concept concise for UI display.",
                 "internal_reason is for logs only and must explain the contextual selection briefly.",
             ],
         }
 
-        return TemplateSelection.model_validate(
+        return VideoEditingDBSelection.model_validate(
             self._request_json(
                 instructions=domain_context,
                 user_payload=prompt,
-                schema_name="shortform_template_selection",
+                schema_name="shortform_video_editing_db_selection",
                 schema=selection_schema,
                 photo_urls=[],
             )

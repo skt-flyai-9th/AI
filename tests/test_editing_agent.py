@@ -10,7 +10,7 @@ from app.agents.editing.video_context import FFmpegVideoContextBuilder, VideoCon
 from app.core.config import Settings
 from app.db.session import SessionLocal
 from app.models.editing_run import EditingRun
-from app.models.editing_template import EditingTemplate
+from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.schemas.editing import (
     EditRecipe,
     EditingRenderResult,
@@ -37,8 +37,8 @@ def _request() -> EditingRunCreateRequest:
             },
             "selected_shortform": {
                 "recommendation_id": "rec_123",
-                "editing_template_id": "edit_template_014",
-                "editing_template_version": 3,
+                "video_editing_db_id": "video_editing_db_014",
+                "video_editing_db_version": 3,
             },
             "videos": [
                 {
@@ -61,8 +61,8 @@ def _recipe(*, invalid_timeline: bool = False) -> EditRecipe:
     return EditRecipe.model_validate(
         {
             "recipe_version": 1,
-            "editing_template_id": "edit_template_014",
-            "editing_template_version": 3,
+            "video_editing_db_id": "video_editing_db_014",
+            "video_editing_db_version": 3,
             "source_type": "VIDEO_ONLY",
             "timeline": [
                 {
@@ -189,10 +189,10 @@ class FakeRenderer:
         )
 
 
-def _seed_template(db) -> None:
+def _seed_video_editing_db(db) -> None:
     db.add(
-        EditingTemplate(
-            template_id="edit_template_014",
+        VideoEditingDBRecord(
+            template_id="video_editing_db_014",
             version=3,
             status="ACTIVE",
             name="메뉴 공개",
@@ -272,7 +272,7 @@ def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
 
     monkeypatch.setattr(service, "_set_stage", record_stage)
     with SessionLocal() as db:
-        _seed_template(db)
+        _seed_video_editing_db(db)
         run = service.create_run(db, _request())
         completed = service.execute(db, run.id)
 
@@ -328,7 +328,7 @@ def test_editing_pipeline_returns_source_gap_without_rendering():
         renderer=renderer,
     )
     with SessionLocal() as db:
-        _seed_template(db)
+        _seed_video_editing_db(db)
         run = service.create_run(db, _request())
         result = service.execute(db, run.id)
         payload = service.result(result)
@@ -381,7 +381,7 @@ def test_editing_api_contract(client, auth_headers, monkeypatch):
     )
     monkeypatch.setattr(editing_api, "enqueue_editing_pipeline", lambda run_id: _QueuedTask())
     with SessionLocal() as db:
-        _seed_template(db)
+        _seed_video_editing_db(db)
 
     response = client.post(
         "/api/v1/editing-runs",
@@ -420,7 +420,7 @@ def test_editing_api_marks_run_failed_when_enqueue_fails(client, auth_headers, m
 
     monkeypatch.setattr(editing_api, "enqueue_editing_pipeline", fail_enqueue)
     with SessionLocal() as db:
-        _seed_template(db)
+        _seed_video_editing_db(db)
 
     response = client.post(
         "/api/v1/editing-runs",

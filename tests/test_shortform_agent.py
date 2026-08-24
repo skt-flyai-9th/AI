@@ -5,12 +5,12 @@ from app.agents.shortform.types import (
     DecisionPromotionSubject,
     StateUpdates,
     ShortformTurnDecision,
-    TemplateCandidate,
-    TemplateSelection,
+    VideoEditingDBCandidate,
+    VideoEditingDBSelection,
 )
 from app.db.session import SessionLocal
 from app.main import app
-from app.models.editing_template import EditingTemplate
+from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.models.shortform_session import ShortformSession
 from app.schemas.shortform import ShortformAction
 
@@ -44,9 +44,11 @@ class FakeShortformLLM:
             ready_for_confirmation=True,
         )
 
-    def select_template(self, *, candidates: list[TemplateCandidate], **kwargs) -> TemplateSelection:
+    def select_video_editing_db(
+        self, *, candidates: list[VideoEditingDBCandidate], **kwargs
+    ) -> VideoEditingDBSelection:
         candidate = candidates[0]
-        return TemplateSelection(
+        return VideoEditingDBSelection(
             candidate_key=candidate.candidate_key,
             project_title=f"{candidate.name} 프로젝트",
             title=candidate.recommendation_title,
@@ -83,7 +85,7 @@ def _store_context() -> dict:
     }
 
 
-def _seed_template(
+def _seed_video_editing_db(
     template_id: str,
     *,
     title: str,
@@ -91,7 +93,7 @@ def _seed_template(
 ) -> None:
     with SessionLocal() as db:
         db.add(
-            EditingTemplate(
+            VideoEditingDBRecord(
                 template_id=template_id,
                 version=1,
                 status="ACTIVE",
@@ -133,9 +135,9 @@ def _seed_template(
 
 
 def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
-    _seed_template("edit_template_014", title="메뉴 한눈에 보여주기")
-    _seed_template("edit_template_028", title="제조 과정 빠르게 보여주기")
-    _seed_template("face_only", title="사장님 얼굴 인터뷰", requires_face=True)
+    _seed_video_editing_db("video_editing_db_014", title="메뉴 한눈에 보여주기")
+    _seed_video_editing_db("video_editing_db_028", title="제조 과정 빠르게 보여주기")
+    _seed_video_editing_db("face_only", title="사장님 얼굴 인터뷰", requires_face=True)
 
     fake_service = ShortformAgentService(llm=FakeShortformLLM())
     app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
@@ -174,8 +176,8 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
         assert recommend.status_code == 200
         first = recommend.json()["recommendation"]
         assert recommend.json()["action"] == "RECOMMEND"
-        assert first["editing_template_id"] == "edit_template_014"
-        assert first["editing_template_id"] != "face_only"
+        assert first["video_editing_db_id"] == "video_editing_db_014"
+        assert first["video_editing_db_id"] != "face_only"
 
         next_response = client.post(
             f"/api/v1/shortform-sessions/{session_id}/recommendations/next",
@@ -184,18 +186,18 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
         )
         assert next_response.status_code == 200
         second = next_response.json()["recommendation"]
-        assert second["editing_template_id"] == "edit_template_028"
-        assert next_response.json()["shown_template_ids"] == [
-            "edit_template_014",
-            "edit_template_028",
+        assert second["video_editing_db_id"] == "video_editing_db_028"
+        assert next_response.json()["shown_video_editing_db_ids"] == [
+            "video_editing_db_014",
+            "video_editing_db_028",
         ]
 
         guide = client.get(
-            "/api/v1/editing-templates/edit_template_028/versions/1/shooting-guide",
+            "/api/v1/video-editing-db/video_editing_db_028/versions/1/shooting-guide",
             headers=auth_headers,
         )
         assert guide.status_code == 200
-        assert guide.json()["template_id"] == "edit_template_028"
+        assert guide.json()["video_editing_db_id"] == "video_editing_db_028"
         assert guide.json()["scenes"][0]["scene_order"] == 1
 
         deleted = client.delete(
@@ -213,7 +215,7 @@ def test_shortform_session_requires_internal_api_key(client):
 
 
 def test_next_recommendation_keeps_current_when_no_alternative(client, auth_headers):
-    _seed_template("only_template", title="유일한 호환 템플릿")
+    _seed_video_editing_db("only_db_record", title="유일한 호환 DB 버전")
 
     fake_service = ShortformAgentService(llm=FakeShortformLLM())
     app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
@@ -245,7 +247,7 @@ def test_next_recommendation_keeps_current_when_no_alternative(client, auth_head
         assert next_response.status_code == 409
         assert (
             next_response.json()["detail"]["code"]
-            == "NO_COMPATIBLE_ACTIVE_EDITING_TEMPLATE"
+            == "NO_COMPATIBLE_ACTIVE_VIDEO_EDITING_DB"
         )
 
         with SessionLocal() as db:
@@ -253,12 +255,12 @@ def test_next_recommendation_keeps_current_when_no_alternative(client, auth_head
             assert session is not None
             assert session.status == "WAITING_RECOMMENDATION_ACTION"
             assert session.current_recommendation["recommendation_id"] == recommendation_id
-            assert session.shown_template_ids == ["only_template"]
+            assert session.shown_video_editing_db_ids == ["only_db_record"]
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)
 
 
-def test_shortform_recommendation_fails_without_active_template(client, auth_headers):
+def test_shortform_recommendation_fails_without_active_database(client, auth_headers):
     fake_service = ShortformAgentService(llm=FakeShortformLLM())
     app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
     try:
@@ -279,6 +281,9 @@ def test_shortform_recommendation_fails_without_active_template(client, auth_hea
             json={"input": {"type": "CONFIRM", "value": True}},
         )
         assert response.status_code == 409
-        assert response.json()["detail"]["code"] == "NO_COMPATIBLE_ACTIVE_EDITING_TEMPLATE"
+        assert (
+            response.json()["detail"]["code"]
+            == "NO_COMPATIBLE_ACTIVE_VIDEO_EDITING_DB"
+        )
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)

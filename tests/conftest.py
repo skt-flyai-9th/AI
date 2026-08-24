@@ -8,6 +8,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///./runtime-data/test.db")
 os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "true")
 os.environ.setdefault("INTERNAL_API_KEY", "test-token")
 os.environ.setdefault("ADMIN_API_TOKEN", "")
+os.environ.setdefault("EXPORT_DIR", "runtime-data/test-exports")
 
 import pytest
 from fastapi.testclient import TestClient

@@ -1,17 +1,5 @@
-"""Challenge-ranking agent public boundary."""
+"""Challenge-ranking agent package.
 
-from app.agents.challenge_ranking.service import (
-    create_run,
-    execute_pipeline,
-    export_latest_json,
-    get_run_result_payload,
-    validate_runtime_keys,
-)
-
-__all__ = [
-    "create_run",
-    "execute_pipeline",
-    "export_latest_json",
-    "get_run_result_payload",
-    "validate_runtime_keys",
-]
+Import concrete functions from ``service`` or ``trendcluster``. Keeping package
+initialization side-effect free avoids a cycle with the ranking pipeline.
+"""

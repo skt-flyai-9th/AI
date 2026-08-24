@@ -1,8 +1,11 @@
 .env
 .venv/
+build/
+*.egg-info/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-*/
 .ruff_cache/
 .coverage
 htmlcov/
@@ -14,3 +17,4 @@ htmlcov/
 runtime-data/
 exports/*.json
 !exports/.gitkeep
+!exports/trendcluster.json

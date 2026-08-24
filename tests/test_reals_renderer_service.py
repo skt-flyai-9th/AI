@@ -11,7 +11,7 @@ from app.core.config import Settings
 from app.renderer import service as renderer_service_module
 from app.renderer.service import NativeRealsModules, RealsRendererService
 from tests.test_editing_agent import _recipe, _request
-from tests.test_reals_editing_integration import _contexts, _template
+from tests.test_reals_editing_integration import _contexts, _video_editing_db
 
 
 class _MediaRef(BaseModel):
@@ -165,7 +165,7 @@ def test_renderer_service_downloads_assembles_and_invokes_final_render(tmp_path,
         recipe=_recipe(),
         videos=_request().videos,
         video_contexts=_contexts(),
-        template=_template(),
+        video_editing_db=_video_editing_db(),
     )
 
     result = service.render(request)
@@ -196,7 +196,7 @@ def test_renderer_builds_the_native_reals_final_render_contract(tmp_path):
         recipe=_recipe(),
         videos=_request().videos,
         video_contexts=_contexts(),
-        template=_template(),
+        video_editing_db=_video_editing_db(),
     )
     produced_path = tmp_path / "assembled.mp4"
     produced_path.write_bytes(b"contract-only")

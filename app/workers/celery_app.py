@@ -58,5 +58,14 @@ else:
                 ),
                 "args": (),
             },
+            "weekly-database-maintenance": {
+                "task": "app.workers.tasks.run_database_maintenance",
+                "schedule": crontab(
+                    day_of_week=settings.database_maintenance_weekday,
+                    hour=settings.database_maintenance_hour_kst,
+                    minute=settings.database_maintenance_minute_kst,
+                ),
+                "args": (),
+            },
         },
     )

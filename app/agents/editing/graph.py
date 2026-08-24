@@ -19,7 +19,7 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
             domain_context=state["domain_context"],
             project=state["project"],
             selected_shortform=state["selected_shortform"],
-            template=state["template"],
+            video_editing_db=state["video_editing_db"],
             video_contexts=_contexts(state),
             parent_recipe=state.get("parent_recipe"),
             revision_action=state.get("revision_action"),
@@ -34,7 +34,7 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
         errors = validator.validate(
             EditRecipe.model_validate(decision.recipe),
             selected_shortform=SelectedShortform.model_validate(state["selected_shortform"]),
-            template=state["template"],
+            video_editing_db=state["video_editing_db"],
             video_contexts=_contexts(state),
         )
         return {
@@ -55,7 +55,7 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
             domain_context=state["domain_context"],
             project=state["project"],
             selected_shortform=state["selected_shortform"],
-            template=state["template"],
+            video_editing_db=state["video_editing_db"],
             video_contexts=_contexts(state),
             decision=EditingPlanDecision.model_validate(state["decision"]),
             validation_errors=state["validation_errors"],
