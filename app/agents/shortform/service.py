@@ -19,7 +19,6 @@ from app.schemas.shortform import (
     FaceExposure,
     FilmingTime,
     NextRecommendationResponse,
-    PromotionSubject,
     ShortformAction,
     ShortformOption,
     ShortformProjectState,
@@ -114,7 +113,6 @@ class ShortformAgentService:
                 return self._confirm_and_recommend(db, session)
             return self._reject_confirmation(db, session)
 
-        user_input = turn_input.model_dump(mode="json", exclude_none=True)
         graph_result = self._invoke_graph(
             {
                 "mode": "TURN",
@@ -122,14 +120,14 @@ class ShortformAgentService:
                 "store_context": session.store_context,
                 "project_state": session.project_state,
                 "conversation": session.conversation,
-                "user_input": user_input,
+                "user_input": turn_input.model_dump(mode="json", exclude_none=True),
                 "photo_urls": self._photo_urls(session.store_context),
             }
         )
         decision = ShortformTurnDecision.model_validate(graph_result["decision"])
         project_state = self._merge_project_state(session.project_state, decision)
 
-        # Code is authoritative for readiness; the LLM only proposes state updates.
+        # Code, not the LLM, is authoritative for recommendation readiness.
         missing = _missing_required_fields(project_state)
         project_state["missing_required_fields"] = missing
         project_state["store_context_conflicts"] = [
@@ -139,8 +137,11 @@ class ShortformAgentService:
 
         action = decision.action
         if action == ShortformAction.RECOMMEND and not project_state.get("brief_confirmed"):
-            # Recommendation is forbidden before explicit user confirmation.
-            action = ShortformAction.CONFIRM if project_state["ready_for_confirmation"] else ShortformAction.ASK
+            action = (
+                ShortformAction.CONFIRM
+                if project_state["ready_for_confirmation"]
+                else ShortformAction.ASK
+            )
         if action == ShortformAction.CONFIRM and not project_state["ready_for_confirmation"]:
             action = ShortformAction.ASK
 
@@ -160,12 +161,13 @@ class ShortformAgentService:
         if action == ShortformAction.RECOMMEND and project_state.get("brief_confirmed"):
             return self._recommend(db, session)
 
+        options = [ShortformOption(id=item.id, label=item.label) for item in decision.options]
         return ShortformTurnResponse(
             session_id=session.id,
             action=action,
             assistant_message=decision.assistant_message,
             project_state=ShortformProjectState.model_validate(project_state),
-            options=decision.options,
+            options=options,
             recommendation=None,
         )
 
@@ -295,8 +297,8 @@ class ShortformAgentService:
     ) -> ShortformTurnResponse:
         candidates = self._template_candidates(db, session, strict=True)
         if not candidates:
-            # Only soft applicability metadata is relaxed. Hard product/safety/
-            # physical constraints remain enforced.
+            # Relax only soft applicability metadata. Hard product/safety/physical
+            # constraints remain enforced.
             candidates = self._template_candidates(db, session, strict=False)
         if not candidates:
             raise ShortformDomainError(
@@ -411,7 +413,10 @@ class ShortformAgentService:
                 db.scalars(
                     select(Challenge)
                     .where(Challenge.active.is_(True))
-                    .order_by(Challenge.automatic_rank.asc().nullslast(), Challenge.automatic_score.desc())
+                    .order_by(
+                        Challenge.automatic_rank.asc().nullslast(),
+                        Challenge.automatic_score.desc(),
+                    )
                     .limit(5)
                 )
             )
@@ -437,33 +442,46 @@ class ShortformAgentService:
         decision: ShortformTurnDecision,
     ) -> dict[str, Any]:
         state = dict(current or {})
-        updates = decision.state_updates.model_dump(mode="json")
-        for field in (
-            "promotion_category",
-            "promotion_subject",
-            "promotion_objective",
-            "filming_time",
-            "face_exposure",
-        ):
-            value = updates.get(field)
-            if value is not None:
-                state[field] = value
+        updates = decision.state_updates
 
-        for field in ("creative_preferences", "secondary_information"):
+        if updates.promotion_category is not None:
+            state["promotion_category"] = updates.promotion_category
+        if updates.promotion_subject is not None:
+            state["promotion_subject"] = {
+                "type": updates.promotion_subject.type,
+                "name": updates.promotion_subject.name,
+                "menu_id": updates.promotion_subject.menu_id,
+                "details": {item.key: item.value for item in updates.promotion_subject.details},
+            }
+        if updates.promotion_objective is not None:
+            state["promotion_objective"] = updates.promotion_objective.value
+        if updates.filming_time is not None:
+            state["filming_time"] = updates.filming_time.value
+        if updates.face_exposure is not None:
+            state["face_exposure"] = updates.face_exposure.value
+
+        for field, values in (
+            ("creative_preferences", updates.creative_preferences),
+            ("secondary_information", updates.secondary_information),
+        ):
             existing = list(state.get(field) or [])
-            for value in updates.get(field) or []:
+            for value in values:
                 if value and value not in existing:
                     existing.append(value)
             state[field] = existing
 
         facts = dict(state.get("facts_from_user") or {})
-        facts.update(updates.get("facts_from_user") or {})
+        facts.update({item.key: item.value for item in updates.facts_from_user})
         state["facts_from_user"] = facts
         return state
 
     def _photo_urls(self, store_context: dict[str, Any]) -> list[str]:
         photos = ((store_context.get("store") or {}).get("store_photos") or [])
-        urls = [str(item.get("asset_url") or "").strip() for item in photos if isinstance(item, dict)]
+        urls = [
+            str(item.get("asset_url") or "").strip()
+            for item in photos
+            if isinstance(item, dict)
+        ]
         return [url for url in urls if url][: self.settings.shortform_max_photo_inputs]
 
     def _invoke_graph(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -544,7 +562,9 @@ def _passes_soft_constraints(metadata: dict[str, Any], state: dict[str, Any]) ->
 
     subject = state.get("promotion_subject") or {}
     subject_type = str(subject.get("type") or "").upper()
-    supported_subject_types = [str(value).upper() for value in metadata.get("supported_subject_types") or []]
+    supported_subject_types = [
+        str(value).upper() for value in metadata.get("supported_subject_types") or []
+    ]
     if supported_subject_types and subject_type and subject_type not in supported_subject_types:
         return False
 
