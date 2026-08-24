@@ -103,7 +103,7 @@ class HttpEditingRenderer:
                 raise RendererError(
                     str(payload.get("error") or "Renderer QC did not produce a deliverable video."),
                     code=str(payload.get("code") or "REALS_QC_NOT_DELIVERABLE"),
-                    retryable=False,
+                    retryable=bool(payload.get("retryable", False)),
                     details=details,
                 )
             return EditingRenderResult.model_validate(payload.get("render", payload))

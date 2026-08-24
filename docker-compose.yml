@@ -24,6 +24,22 @@ services:
       timeout: 3s
       retries: 20
 
+  renderer:
+    build: .
+    command: uvicorn app.renderer.main:app --host 0.0.0.0 --port 8080
+    env_file: .env
+    environment:
+      RUN_DB_MIGRATIONS: "false"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./runtime-data:/app/runtime-data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   api:
     build: .
     env_file: .env
@@ -37,6 +53,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      renderer:
+        condition: service_healthy
 
   worker:
     build: .
@@ -49,6 +67,8 @@ services:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      renderer:
         condition: service_healthy
 
   beat:

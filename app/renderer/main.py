@@ -1,0 +1,52 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from app.agents.editing.reals import RealsRenderJobRequest
+from app.core.config import get_settings
+from app.core.security import require_internal_api_key
+from app.renderer.service import (
+    RendererServiceError,
+    get_renderer_service,
+)
+
+settings = get_settings()
+output_dir = settings.renderer_output_dir
+if not output_dir.is_absolute():
+    output_dir = (Path.cwd() / output_dir).resolve()
+output_dir.mkdir(parents=True, exist_ok=True)
+
+app = FastAPI(
+    title="REALS Renderer Service",
+    version="1.0.0",
+    description="Remote-asset facade for the bundled REALS video edit engine.",
+)
+app.mount("/files", StaticFiles(directory=output_dir), name="rendered-files")
+
+
+@app.exception_handler(RendererServiceError)
+async def renderer_error_handler(
+    _: Request,
+    exc: RendererServiceError,
+) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.payload())
+
+
+@app.get("/health/live")
+def live() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+def ready() -> JSONResponse:
+    status = get_renderer_service().ready()
+    return JSONResponse(status_code=200 if status["ready"] else 503, content=status)
+
+
+@app.post("/renders", dependencies=[Depends(require_internal_api_key)])
+def render(request: RealsRenderJobRequest) -> dict:
+    return get_renderer_service().render(request)
