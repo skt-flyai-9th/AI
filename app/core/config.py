@@ -81,7 +81,13 @@ class Settings(BaseSettings):
     editing_request_timeout_seconds: int = Field(default=30, ge=5, le=180)
     editing_max_output_tokens: int = Field(default=5000, ge=512, le=20000)
     editing_max_repair_attempts: int = Field(default=2, ge=0, le=5)
-    editing_max_keyframes_per_video: int = Field(default=5, ge=1, le=12)
+    # Defaults are sized for a 2-vCPU/8-GiB CPU-only deployment. They keep the
+    # public request schema compatible while bounding the expensive path.
+    editing_max_keyframes_per_video: int = Field(default=3, ge=1, le=12)
+    editing_max_videos_per_run: int = Field(default=6, ge=1, le=20)
+    editing_max_output_duration_seconds: int = Field(default=15, ge=1, le=60)
+    editing_max_source_duration_seconds: int = Field(default=30, ge=1, le=300)
+    editing_disabled_effect_ids: str = "SMOOTH_ZOOM"
     editing_ffprobe_path: str = "ffprobe"
     editing_ffmpeg_path: str = "ffmpeg"
     editing_probe_timeout_seconds: int = Field(default=45, ge=5, le=300)
@@ -96,7 +102,7 @@ class Settings(BaseSettings):
     renderer_work_dir: Path = Path("runtime-data/renderer/work")
     renderer_output_dir: Path = Path("runtime-data/renderer/output")
     renderer_max_download_bytes: int = Field(
-        default=1_073_741_824, ge=1_048_576, le=10_737_418_240
+        default=268_435_456, ge=1_048_576, le=10_737_418_240
     )
     renderer_download_timeout_seconds: int = Field(default=300, ge=10, le=3600)
     editing_reals_engine_path: Path = Path("reals-video-engine")
@@ -129,6 +135,14 @@ class Settings(BaseSettings):
             "reference_video_analysis": bool(
                 self.gemini_api_key.strip() and self.database_gemini_model.strip()
             ),
+        }
+
+    @property
+    def editing_disabled_effect_ids_set(self) -> set[str]:
+        return {
+            effect_id.strip().upper()
+            for effect_id in self.editing_disabled_effect_ids.split(",")
+            if effect_id.strip()
         }
 
     @property

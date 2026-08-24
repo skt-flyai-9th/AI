@@ -10,6 +10,7 @@ import unicodedata
 from collections.abc import Iterable, Iterator, Sequence
 from datetime import datetime, timezone
 from typing import Any, TypeVar
+from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -20,6 +21,26 @@ T = TypeVar("T")
 _KOREAN_RE = re.compile(r"[가-힣]")
 _HTML_RE = re.compile(r"<[^>]+>")
 _SPACE_RE = re.compile(r"\s+")
+_SENSITIVE_QUERY_RE = re.compile(
+    r"(?i)([?&](?:api[_-]?key|key|token|access[_-]?token|client[_-]?secret|signature)=)"
+    r"[^&#\s\"']+"
+)
+_SENSITIVE_JSON_RE = re.compile(
+    r"(?i)([\"'](?:api[_-]?key|key|token|access[_-]?token|client[_-]?secret|"
+    r"authorization|x-ncp-apigw-api-key)[\"']\s*:\s*[\"'])[^\"']+"
+)
+_BEARER_RE = re.compile(r"(?i)(\bBearer\s+)[A-Za-z0-9._~+/=-]+")
+_SENSITIVE_KEYS = {
+    "api_key",
+    "apikey",
+    "authorization",
+    "client_secret",
+    "secret",
+    "signature",
+    "token",
+    "access_token",
+    "x_ncp_apigw_api_key",
+}
 
 
 def utc_now() -> datetime:
@@ -58,6 +79,33 @@ def normalize_text(value: Any) -> str:
 
 def strip_html(value: Any) -> str:
     return _SPACE_RE.sub(" ", _HTML_RE.sub(" ", str(value or ""))).strip()
+
+
+def redact_sensitive_text(value: Any) -> str:
+    text = str(value or "")
+    text = _SENSITIVE_QUERY_RE.sub(r"\1[REDACTED]", text)
+    text = _SENSITIVE_JSON_RE.sub(r"\1[REDACTED]", text)
+    return _BEARER_RE.sub(r"\1[REDACTED]", text)
+
+
+def redact_sensitive_data(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[Any, Any] = {}
+        for key, item in value.items():
+            normalized_key = re.sub(r"[^a-z0-9]+", "_", str(key).lower()).strip("_")
+            redacted[key] = (
+                "[REDACTED]"
+                if normalized_key in _SENSITIVE_KEYS
+                else redact_sensitive_data(item)
+            )
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive_data(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_sensitive_data(item) for item in value)
+    if isinstance(value, str):
+        return redact_sensitive_text(value)
+    return value
 
 
 def has_korean(value: Any) -> bool:
@@ -225,4 +273,29 @@ def request_json(
             if attempt >= retries:
                 break
             time.sleep(min(8.0, (2**attempt) + random.random()))
-    raise RuntimeError(f"API 요청 실패: {method} {url}: {last_error}") from last_error
+    target = _request_target(url)
+    error_summary = _request_error_summary(last_error)
+    raise RuntimeError(f"API 요청 실패: {method} {target}: {error_summary}") from last_error
+
+
+def _request_target(url: str) -> str:
+    try:
+        parsed = urlsplit(str(url))
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+    except ValueError:
+        return str(url).split("?", 1)[0].split("#", 1)[0]
+
+
+def _request_error_summary(error: Exception | None) -> str:
+    if error is None:
+        return "unknown error"
+    if isinstance(error, requests.HTTPError):
+        response = error.response
+        if response is not None:
+            return f"HTTPError status={response.status_code}"
+        return "HTTPError"
+    if isinstance(error, requests.RequestException):
+        return type(error).__name__
+    if isinstance(error, ValueError):
+        return "invalid JSON response"
+    return type(error).__name__

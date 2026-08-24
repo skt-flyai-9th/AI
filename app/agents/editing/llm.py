@@ -7,7 +7,7 @@ import httpx
 
 from app.agents.editing.types import EditingPlanDecision, VideoContext
 from app.agents.editing.reals import get_reals_registry
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 
 
 class EditingLLMError(RuntimeError):
@@ -200,8 +200,20 @@ def _text_video_contexts(contexts: list[VideoContext]) -> list[dict[str, Any]]:
     ]
 
 
-def _renderer_capabilities() -> dict[str, Any]:
-    return get_reals_registry().llm_capabilities()
+def _renderer_capabilities(settings: Settings | None = None) -> dict[str, Any]:
+    runtime_settings = settings or get_settings()
+    capabilities = get_reals_registry().llm_capabilities()
+    disabled_effects = runtime_settings.editing_disabled_effect_ids_set
+    capabilities["effects"] = [
+        effect_id
+        for effect_id in capabilities["effects"]
+        if effect_id not in disabled_effects
+    ]
+    capabilities["max_output_duration_sec"] = (
+        runtime_settings.editing_max_output_duration_seconds
+    )
+    capabilities["max_input_videos"] = runtime_settings.editing_max_videos_per_run
+    return capabilities
 
 
 def _requirements() -> list[str]:

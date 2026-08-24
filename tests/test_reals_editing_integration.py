@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from app.agents.editing import renderer as renderer_module
+from app.agents.editing.llm import _renderer_capabilities
 from app.agents.editing.reals import (
     RealsRecipeAdapter,
     RealsRegistry,
@@ -17,6 +18,7 @@ from app.agents.editing.reals import (
 from app.agents.editing.renderer import HttpEditingRenderer, RendererError
 from app.agents.editing.types import VideoContext
 from app.agents.editing.validator import EditRecipeValidator
+from app.core.config import Settings
 from app.schemas.editing import RecipeEffect, SelectedShortform
 from tests.test_editing_agent import _recipe, _request
 
@@ -168,6 +170,56 @@ def test_validator_returns_structured_issues_from_reals_registry():
     capabilities = validator.registry.llm_capabilities()
     assert set(capabilities["effects"]) == validator.registry.creative_effect_ids
     assert capabilities["max_caption_chars"] == 40
+
+
+def test_free_tier_profile_limits_duration_and_disables_heavy_effect():
+    recipe = _recipe().model_copy(deep=True)
+    recipe.timeline[0].source_start_ms = 0
+    recipe.timeline[0].source_end_ms = 8000
+    recipe.timeline[1].source_start_ms = 0
+    recipe.timeline[1].source_end_ms = 8000
+    recipe.timeline[1].timeline_start_ms = 8000
+    recipe.timeline[0].effects = [
+        RecipeEffect.model_validate(
+            {"effect_id": "SMOOTH_ZOOM", "params": {"scale_end": 1.08}}
+        )
+    ]
+    video_editing_db = _video_editing_db()
+    video_editing_db["editing_rules"]["allowed_effect_ids"].append("SMOOTH_ZOOM")
+    contexts = [
+        context.model_copy(update={"duration_ms": 20_000}) for context in _contexts()
+    ]
+    settings = Settings(
+        editing_max_output_duration_seconds=15,
+        editing_disabled_effect_ids="SMOOTH_ZOOM",
+    )
+
+    issues = EditRecipeValidator(settings=settings).validate(
+        recipe,
+        selected_shortform=SelectedShortform.model_validate(
+            _request().selected_shortform.model_dump(mode="json")
+        ),
+        video_editing_db=video_editing_db,
+        video_contexts=contexts,
+    )
+
+    assert {"OUTPUT_TOO_LONG", "EFFECT_UNSUPPORTED"} <= {
+        issue.code for issue in issues
+    }
+
+
+def test_llm_capabilities_publish_free_tier_envelope():
+    capabilities = _renderer_capabilities(
+        Settings(
+            editing_max_videos_per_run=6,
+            editing_max_output_duration_seconds=15,
+            editing_disabled_effect_ids="SMOOTH_ZOOM",
+        )
+    )
+
+    assert capabilities["max_input_videos"] == 6
+    assert capabilities["max_output_duration_sec"] == 15
+    assert "SMOOTH_ZOOM" not in capabilities["effects"]
 
 
 def test_registry_rejects_drift_from_manifest():

@@ -4,6 +4,7 @@ from typing import Any
 
 from app.agents.editing.reals import RealsRegistry, get_reals_registry
 from app.agents.editing.types import ValidationIssue, VideoContext
+from app.core.config import Settings, get_settings
 from app.schemas.editing import EditRecipe, SelectedShortform
 
 
@@ -15,8 +16,13 @@ class EditRecipeValidator:
     its native validator again after remote assets have been assembled.
     """
 
-    def __init__(self, registry: RealsRegistry | None = None) -> None:
+    def __init__(
+        self,
+        registry: RealsRegistry | None = None,
+        settings: Settings | None = None,
+    ) -> None:
         self.registry = registry or get_reals_registry()
+        self.settings = settings or get_settings()
 
     def validate(
         self,
@@ -68,6 +74,7 @@ class EditRecipeValidator:
             else set(renderer_effects)
         )
         allowed_effects &= renderer_effects
+        allowed_effects -= self.settings.editing_disabled_effect_ids_set
 
         renderer_transitions = self.registry.transition_ids | {"CUT"}
         configured_transitions = rules.get("allowed_transition_ids")
@@ -96,7 +103,12 @@ class EditRecipeValidator:
         else:
             profile_max_duration_ms = int(float(render_profile["max_duration_sec"]) * 1000)
         database_max_duration_ms = int(float(rules.get("max_duration_sec") or 90) * 1000)
-        max_duration_ms = min(database_max_duration_ms, profile_max_duration_ms)
+        runtime_max_duration_ms = self.settings.editing_max_output_duration_seconds * 1000
+        max_duration_ms = min(
+            database_max_duration_ms,
+            profile_max_duration_ms,
+            runtime_max_duration_ms,
+        )
 
         safe_area_profile_id = str(
             rules.get("safe_area_profile_id") or "INSTAGRAM_REELS_2026_V1"

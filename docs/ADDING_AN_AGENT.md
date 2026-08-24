@@ -1,6 +1,8 @@
 # 새 Agent 추가 방법
 
-이 저장소는 여러 AI 기능을 담을 수 있지만, 현재 구현된 Agent는 `challenge-ranking` 하나다. 새 Agent는 실제 요구사항과 API 계약이 확정된 뒤 추가한다.
+현재 구현된 Agent는 `challenge-ranking`, `shortform`, `editing` 세 개다. 새 Agent는 실제
+요구사항과 API 계약이 확정된 뒤 추가한다. 상권분석DB와 영상편집DB의 수명주기는 Agent가
+아닌 `Database Knowledge Manager`가 담당한다.
 
 ## 권장 디렉터리
 

@@ -6,6 +6,7 @@
   원음 제거(입력 자체를 안 씀) → SFX mix/silent → encode.
 """
 from __future__ import annotations
+import os
 import pathlib
 
 from .contracts import ColorTone, EditRecipe, FinalAudioPolicy
@@ -26,8 +27,9 @@ def video_encode_args(rp: dict) -> list[str]:
             "-g", str(rp["gop"]), "-bf", "3", "-spatial-aq", "1",
             *rp.get("extra_args", []),
         ]
+    preset = os.environ.get("REALS_FFMPEG_PRESET_OVERRIDE", rp["preset"]).strip()
     return [
-        "-c:v", codec, "-crf", str(rp["crf"]), "-preset", rp["preset"],
+        "-c:v", codec, "-crf", str(rp["crf"]), "-preset", preset or rp["preset"],
         "-profile:v", rp["x264_profile"], "-level", rp["level"], "-g", str(rp["gop"]),
     ]
 
