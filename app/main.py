@@ -20,10 +20,11 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.1.0",
+    version="1.2.0",
     description=(
         "Independent AI server called by the main backend. "
-        "The currently available agent provides Korean challenge ranking."
+        "Available agents include Korean trend research (challenge-ranking) "
+        "and the conversational Shortform Agent."
     ),
     default_response_class=ORJSONResponse,
     lifespan=lifespan,
@@ -32,7 +33,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 app.include_router(api_router, prefix=settings.api_v1_prefix)
@@ -47,4 +48,5 @@ def root() -> dict:
         "agents": f"{settings.api_v1_prefix}/agents",
         "health": f"{settings.api_v1_prefix}/health/ready",
         "current_challenge_ranking": f"{settings.api_v1_prefix}/challenges?limit=100",
+        "shortform_sessions": f"{settings.api_v1_prefix}/shortform-sessions",
     }
