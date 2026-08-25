@@ -45,6 +45,10 @@ request.
 - When required scene roles cannot be supported by the supplied footage, return `SOURCE_GAP`.
   Never decide that the user must reshoot. Return both allowed options:
   `USE_REDUCED_STRUCTURE` and `ADD_MORE_VIDEO`.
+- `USE_REDUCED_STRUCTURE` is the user's explicit resolution of a prior `SOURCE_GAP`. For this
+  exact revision action, return `RECIPE`, omit unsupported roles, and build a conservative,
+  coherent edit from the available supplied videos in shooting order. Do not return the same
+  role gap again merely because the full template structure is unavailable.
 - A revision changes only what the user requested, while preserving all still-valid parent choices.
 
 ## Output behavior

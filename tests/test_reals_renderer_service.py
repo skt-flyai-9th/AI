@@ -84,47 +84,14 @@ class _FakeEngineResult:
         }
 
 
-class _StreamResponse:
-    headers = {"content-length": "5"}
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return False
-
-    @staticmethod
-    def raise_for_status() -> None:
-        return None
-
-    @staticmethod
-    def iter_bytes():
-        yield b"video"
-
-
-class _HttpClient:
-    def __init__(self, captured: list[str], **_: Any) -> None:
-        self.captured = captured
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return False
-
-    def stream(self, method: str, url: str):
-        assert method == "GET"
-        self.captured.append(url)
-        return _StreamResponse()
-
-
 def test_renderer_service_downloads_assembles_and_invokes_final_render(tmp_path, monkeypatch):
     captured_downloads: list[str] = []
-    monkeypatch.setattr(
-        renderer_service_module.httpx,
-        "Client",
-        lambda **kwargs: _HttpClient(captured_downloads, **kwargs),
-    )
+
+    def download(url, target, **_kwargs):
+        captured_downloads.append(url)
+        target.write_bytes(b"video")
+
+    monkeypatch.setattr(renderer_service_module, "download_source_asset", download)
 
     def media_ref(file_id: str, path: str | Path) -> _MediaRef:
         duration = 4000 if file_id.endswith("_produced") else 5000
@@ -239,3 +206,14 @@ def test_cpu_encoder_honors_free_tier_preset_override(monkeypatch):
     )
 
     assert args[args.index("-preset") + 1] == "veryfast"
+
+
+def test_native_engine_artifact_key_is_ffmpeg_path_safe():
+    renderer_service_module._load_native_reals(Path("reals-video-engine").resolve())
+    from reals_edit_engine.engine import _artifact_key
+
+    value = _artifact_key("editing:edit_123:recipe/hash with spaces")
+
+    assert len(value) == 32
+    assert value.isalnum()
+    assert value == _artifact_key("editing:edit_123:recipe/hash with spaces")
