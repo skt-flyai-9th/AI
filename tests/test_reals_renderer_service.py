@@ -206,3 +206,14 @@ def test_cpu_encoder_honors_free_tier_preset_override(monkeypatch):
     )
 
     assert args[args.index("-preset") + 1] == "veryfast"
+
+
+def test_native_engine_artifact_key_is_ffmpeg_path_safe():
+    renderer_service_module._load_native_reals(Path("reals-video-engine").resolve())
+    from reals_edit_engine.engine import _artifact_key
+
+    value = _artifact_key("editing:edit_123:recipe/hash with spaces")
+
+    assert len(value) == 32
+    assert value.isalnum()
+    assert value == _artifact_key("editing:edit_123:recipe/hash with spaces")
