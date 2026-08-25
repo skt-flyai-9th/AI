@@ -39,6 +39,19 @@ def test_checked_in_trendcluster_matches_provided_video_editing_db():
     assert checked_in["results"][1]["guide_youtube_url"] == (
         "https://www.youtube.com/shorts/OWnLiuJU8Ks"
     )
+    assert [
+        (
+            item["format_type"],
+            item["expected_duration_sec"],
+            item["shooting_difficulty"],
+            item["face_exposure_level"],
+        )
+        for item in checked_in["results"]
+    ] == [
+        ("밈", 10, "중", "낮음"),
+        ("정보형", 13, "중", "낮음"),
+        ("챌린지", 12, "중", "높음"),
+    ]
     assert not Path("exports/ranking_latest.json").exists()
 
 

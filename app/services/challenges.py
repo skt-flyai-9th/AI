@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
+from app.agents.challenge_ranking.trendcluster import get_video_format_metadata
 from app.models.challenge import Challenge
 from app.schemas.challenge import ChallengeRead, ChallengeUpdate, OverrideImportItem
 
@@ -29,12 +30,14 @@ def to_read(challenge: Challenge) -> ChallengeRead:
         if challenge.guide_video_overridden
         else challenge.automatic_guide_youtube_url
     )
+    format_metadata = get_video_format_metadata(challenge.id)
     return ChallengeRead(
         id=challenge.id,
         rank=rank,
         name=name,
         representative_youtube_url=representative,
         guide_youtube_url=guide,
+        **format_metadata,
         automatic_rank=challenge.automatic_rank,
         automatic_score=challenge.automatic_score,
         lifecycle=challenge.lifecycle,

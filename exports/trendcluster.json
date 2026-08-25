@@ -8,7 +8,11 @@
       "name": "주술회전 트랜지션",
       "category": "meme",
       "representative_youtube_url": "https://www.youtube.com/shorts/Yc7ZjC0n7oY?si=p0vD4OMH9It_RBk_",
-      "guide_youtube_url": "https://www.youtube.com/shorts/Yc7ZjC0n7oY?si=p0vD4OMH9It_RBk_"
+      "guide_youtube_url": "https://www.youtube.com/shorts/Yc7ZjC0n7oY?si=p0vD4OMH9It_RBk_",
+      "format_type": "밈",
+      "expected_duration_sec": 10,
+      "shooting_difficulty": "중",
+      "face_exposure_level": "낮음"
     },
     {
       "id": "cafe_recommendation_reels",
@@ -16,7 +20,11 @@
       "name": "카페 추천 리뷰 릴스",
       "category": "food",
       "representative_youtube_url": "https://www.youtube.com/shorts/OWnLiuJU8Ks",
-      "guide_youtube_url": "https://www.youtube.com/shorts/OWnLiuJU8Ks"
+      "guide_youtube_url": "https://www.youtube.com/shorts/OWnLiuJU8Ks",
+      "format_type": "정보형",
+      "expected_duration_sec": 13,
+      "shooting_difficulty": "중",
+      "face_exposure_level": "낮음"
     },
     {
       "id": "otsukare_summer_challenge",
@@ -24,7 +32,11 @@
       "name": "오츠카레 썸머 챌린지",
       "category": "challenge",
       "representative_youtube_url": "https://www.youtube.com/shorts/e-dU9yQfmik?si=fGCn4wuBsTEm2Q-p",
-      "guide_youtube_url": "https://www.youtube.com/shorts/e-dU9yQfmik?si=fGCn4wuBsTEm2Q-p"
+      "guide_youtube_url": "https://www.youtube.com/shorts/e-dU9yQfmik?si=fGCn4wuBsTEm2Q-p",
+      "format_type": "챌린지",
+      "expected_duration_sec": 12,
+      "shooting_difficulty": "중",
+      "face_exposure_level": "높음"
     }
   ]
 }
