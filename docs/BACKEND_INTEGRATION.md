@@ -154,6 +154,9 @@ Apify, Gemini, YouTube, NAVER의 부분 실패는 가능한 경우 HTTP 오류 �
 
 백엔드는 매장·메뉴·상권 context를 포함해 세션을 만들고, 반환된 `session_id`로 사용자 입력을
 한 turn씩 전달한다. 사용자가 brief를 확인한 뒤에만 ACTIVE 영상편집DB 버전 1개가 추천된다.
+정확히 맞는 후보가 없어도 AI 서버가 조건을 단계적으로 완화하므로 추천 응답은 항상 1개다.
+모든 후보를 이미 보여준 경우에는 새 추천 주기를 시작하며, 추천 선택 LLM 장애 시에도 AI
+서버가 안정적인 후보 하나를 반환한다.
 
 ```http
 POST /api/v1/shortform-sessions

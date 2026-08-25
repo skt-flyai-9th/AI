@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -35,6 +36,7 @@ from app.schemas.shortform import (
     StoreContext,
     TurnInputType,
 )
+from app.template_knowledge.seeds import seed_template_library
 
 
 _REQUIRED_FIELDS = (
@@ -49,6 +51,8 @@ _FILMING_ORDER = {
     FilmingTime.WITHIN_20M.value: 3,
     FilmingTime.PLUS_30M.value: 4,
 }
+_CandidateConstraintMode = Literal["strict", "safe", "any"]
+logger = logging.getLogger(__name__)
 
 
 class ShortformDomainError(RuntimeError):
@@ -73,7 +77,9 @@ class ShortformAgentService:
         self.settings = get_settings()
         self.domain_context = _load_domain_context()
 
-    def create_session(self, db: Session, store_context: StoreContext) -> ShortformSessionCreateResponse:
+    def create_session(
+        self, db: Session, store_context: StoreContext
+    ) -> ShortformSessionCreateResponse:
         session = ShortformSession(
             id=f"sf_{uuid.uuid4().hex}",
             status=ShortformSessionStatus.COLLECTING.value,
@@ -187,13 +193,6 @@ class ShortformAgentService:
                 "Project brief must be confirmed before requesting recommendations.",
                 status_code=409,
             )
-        if not session.current_recommendation:
-            raise ShortformDomainError(
-                "SHORTFORM_RECOMMENDATION_NOT_FOUND",
-                "There is no current recommendation to replace.",
-                status_code=409,
-            )
-
         response = self._recommend(
             db,
             session,
@@ -229,7 +228,8 @@ class ShortformAgentService:
             video_editing_db_id=template.template_id,
             video_editing_db_version=template.version,
             estimated_shooting_sec=guide.get("estimated_shooting_sec"),
-            difficulty=guide.get("difficulty") or template.recommendation_metadata.get("difficulty"),
+            difficulty=guide.get("difficulty")
+            or template.recommendation_metadata.get("difficulty"),
             scenes=list(guide.get("scenes") or []),
             tasks=list(guide.get("tasks") or []),
         )
@@ -298,44 +298,22 @@ class ShortformAgentService:
         *,
         user_event: str | None = None,
     ) -> ShortformTurnResponse:
-        candidates = self._video_editing_db_candidates(db, session, strict=True)
-        if not candidates:
-            # Relax only soft applicability metadata. Hard product/safety/physical
-            # constraints remain enforced.
-            candidates = self._video_editing_db_candidates(db, session, strict=False)
+        candidates = self._recommendation_candidates(db, session)
         if not candidates:
             raise ShortformDomainError(
-                "NO_COMPATIBLE_ACTIVE_VIDEO_EDITING_DB",
-                "No compatible ACTIVE video-editing DB record is available.",
-                status_code=409,
-            )
-
-        graph_result = self._invoke_graph(
-            {
-                "mode": "RECOMMEND",
-                "domain_context": self.domain_context,
-                "store_context": session.store_context,
-                "project_state": session.project_state,
-                "conversation": session.conversation,
-                "video_editing_db_candidates": [
-                    item.model_dump(mode="json") for item in candidates
-                ],
-            }
-        )
-        selection = VideoEditingDBSelection.model_validate(graph_result["recommendation"])
-        by_key = {item.candidate_key: item for item in candidates}
-        selected = by_key.get(selection.candidate_key)
-        if selected is None:
-            raise ShortformDomainError(
-                "INVALID_LLM_VIDEO_EDITING_DB_SELECTION",
-                "The Shortform Agent selected a DB version outside the candidate pool.",
-                status_code=500,
+                "NO_ACTIVE_VIDEO_EDITING_DB",
+                "The packaged video-editing DB could not provide an ACTIVE record.",
+                status_code=503,
                 retryable=True,
             )
 
+        selection, selected = self._select_video_editing_db(session, candidates)
+
         recommendation = ShortformRecommendation(
             recommendation_id=f"rec_{uuid.uuid4().hex}",
-            project_title=(selection.project_title or selected.recommendation_title or selected.name).strip(),
+            project_title=(
+                selection.project_title or selected.recommendation_title or selected.name
+            ).strip(),
             title=(selection.title or selected.recommendation_title or selected.name).strip(),
             concept=(selection.concept or selected.recommendation_concept or selected.name).strip(),
             video_editing_db_id=selected.video_editing_db_id,
@@ -369,23 +347,101 @@ class ShortformAgentService:
             recommendation=recommendation,
         )
 
+    def _recommendation_candidates(
+        self,
+        db: Session,
+        session: ShortformSession,
+    ) -> list[VideoEditingDBCandidate]:
+        """Return a non-empty pool whenever at least one DB record can be activated.
+
+        Relevance is a preference, never an availability gate. We first preserve all
+        user and capability constraints, then keep only safety/capability constraints,
+        and finally expose every unseen ACTIVE record. Once every record has been
+        shown, a new recommendation cycle starts so `next` can always return one item.
+        """
+
+        for mode in ("strict", "safe", "any"):
+            candidates = self._video_editing_db_candidates(
+                db,
+                session,
+                constraint_mode=mode,
+                exclude_shown=True,
+            )
+            if candidates:
+                return candidates
+
+        if session.shown_video_editing_db_ids:
+            session.shown_video_editing_db_ids = []
+            for mode in ("strict", "safe", "any"):
+                candidates = self._video_editing_db_candidates(
+                    db,
+                    session,
+                    constraint_mode=mode,
+                    exclude_shown=False,
+                )
+                if candidates:
+                    return candidates
+        return []
+
+    def _select_video_editing_db(
+        self,
+        session: ShortformSession,
+        candidates: list[VideoEditingDBCandidate],
+    ) -> tuple[VideoEditingDBSelection, VideoEditingDBCandidate]:
+        """Use contextual LLM selection, with a deterministic availability fallback."""
+
+        try:
+            graph_result = self._invoke_graph(
+                {
+                    "mode": "RECOMMEND",
+                    "domain_context": self.domain_context,
+                    "store_context": session.store_context,
+                    "project_state": session.project_state,
+                    "conversation": session.conversation,
+                    "video_editing_db_candidates": [
+                        item.model_dump(mode="json") for item in candidates
+                    ],
+                }
+            )
+            selection = VideoEditingDBSelection.model_validate(graph_result["recommendation"])
+            by_key = {item.candidate_key: item for item in candidates}
+            selected = by_key.get(selection.candidate_key)
+            if selected is None:
+                raise ValueError("selection is outside the candidate pool")
+            return selection, selected
+        except Exception as exc:
+            # Conversation still requires the LLM, but once a brief is confirmed a
+            # recommendation must not disappear because the contextual selector is
+            # temporarily unavailable or returns malformed structured output.
+            selected = candidates[0]
+            logger.warning(
+                "Shortform recommendation selector failed; using stable fallback candidate %s (%s)",
+                selected.candidate_key,
+                type(exc).__name__,
+            )
+            return (
+                VideoEditingDBSelection(
+                    candidate_key=selected.candidate_key,
+                    project_title=f"{selected.recommendation_title or selected.name} 프로젝트",
+                    title=selected.recommendation_title or selected.name,
+                    concept=selected.recommendation_concept or selected.name,
+                    internal_reason=(
+                        "Deterministic availability fallback after contextual "
+                        "recommendation selection failed."
+                    ),
+                ),
+                selected,
+            )
+
     def _video_editing_db_candidates(
         self,
         db: Session,
         session: ShortformSession,
         *,
-        strict: bool,
+        constraint_mode: _CandidateConstraintMode,
+        exclude_shown: bool,
     ) -> list[VideoEditingDBCandidate]:
-        rows = list(
-            db.scalars(
-                select(VideoEditingDBRecord)
-                .where(VideoEditingDBRecord.status == "ACTIVE")
-                .order_by(
-                    VideoEditingDBRecord.template_id.asc(),
-                    VideoEditingDBRecord.version.desc(),
-                )
-            )
-        )
+        rows = self._active_video_editing_db_rows(db)
         latest_by_id: dict[str, VideoEditingDBRecord] = {}
         for row in rows:
             latest_by_id.setdefault(row.template_id, row)
@@ -394,12 +450,14 @@ class ShortformAgentService:
         shown = set(session.shown_video_editing_db_ids or [])
         result: list[VideoEditingDBCandidate] = []
         for template in latest_by_id.values():
-            if template.template_id in shown:
+            if exclude_shown and template.template_id in shown:
                 continue
             metadata = dict(template.recommendation_metadata or {})
-            if not _passes_hard_constraints(metadata, project_state):
+            if constraint_mode != "any" and not _passes_hard_constraints(metadata, project_state):
                 continue
-            if strict and not _passes_soft_constraints(metadata, project_state):
+            if constraint_mode == "strict" and not _passes_soft_constraints(
+                metadata, project_state
+            ):
                 continue
             result.append(
                 VideoEditingDBCandidate(
@@ -414,6 +472,30 @@ class ShortformAgentService:
                 )
             )
         return result
+
+    @staticmethod
+    def _active_video_editing_db_rows(db: Session) -> list[VideoEditingDBRecord]:
+        def load() -> list[VideoEditingDBRecord]:
+            return list(
+                db.scalars(
+                    select(VideoEditingDBRecord)
+                    .where(VideoEditingDBRecord.status == "ACTIVE")
+                    .order_by(
+                        VideoEditingDBRecord.template_id.asc(),
+                        VideoEditingDBRecord.version.desc(),
+                    )
+                )
+            )
+
+        rows = load()
+        if rows:
+            return rows
+
+        # Production startup can legitimately reach the first recommendation before
+        # the explicit bootstrap endpoint is called. Recover from that deployment
+        # ordering by importing the packaged, validated three-record DB idempotently.
+        seed_template_library(db)
+        return load()
 
     def _trend_context(self, db: Session, trend_ids: list[str]) -> list[dict[str, Any]]:
         if trend_ids:
@@ -486,11 +568,9 @@ class ShortformAgentService:
         return state
 
     def _photo_urls(self, store_context: dict[str, Any]) -> list[str]:
-        photos = ((store_context.get("store") or {}).get("store_photos") or [])
+        photos = (store_context.get("store") or {}).get("store_photos") or []
         urls = [
-            str(item.get("asset_url") or "").strip()
-            for item in photos
-            if isinstance(item, dict)
+            str(item.get("asset_url") or "").strip() for item in photos if isinstance(item, dict)
         ]
         return [url for url in urls if url][: self.settings.shortform_max_photo_inputs]
 

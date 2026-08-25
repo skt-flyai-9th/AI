@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.agents.shortform.llm import ShortformLLMError
 from app.agents.shortform.service import ShortformAgentService, get_shortform_agent_service
 from app.agents.shortform.types import (
     DecisionPromotionSubject,
@@ -20,8 +21,7 @@ class FakeShortformLLM:
         return ShortformTurnDecision(
             action=ShortformAction.CONFIRM,
             assistant_message=(
-                "이렇게 이해했어요. 딸기 크림 라떼 판매를 늘리고, "
-                "10분 안에 얼굴 없이 촬영할게요."
+                "이렇게 이해했어요. 딸기 크림 라떼 판매를 늘리고, 10분 안에 얼굴 없이 촬영할게요."
             ),
             state_updates=StateUpdates(
                 promotion_category="MENU",
@@ -54,6 +54,14 @@ class FakeShortformLLM:
             title=candidate.recommendation_title,
             concept=candidate.recommendation_concept,
             internal_reason="fake contextual selection for contract test",
+        )
+
+
+class FailingRecommendationLLM(FakeShortformLLM):
+    def select_video_editing_db(self, **kwargs) -> VideoEditingDBSelection:
+        raise ShortformLLMError(
+            "recommendation selector unavailable",
+            status_code=503,
         )
 
 
@@ -90,8 +98,22 @@ def _seed_video_editing_db(
     *,
     title: str,
     requires_face: bool = False,
+    metadata_overrides: dict | None = None,
 ) -> None:
     with SessionLocal() as db:
+        recommendation_metadata = {
+            "supported_subject_types": ["MENU"],
+            "supported_objectives": ["sales"],
+            "supported_filming_times": ["within_10m"],
+            "supported_face_modes": ["not_allowed", "allowed"],
+            "minimum_filming_time": "within_5m",
+            "requires_face": requires_face,
+            "requires_tts": False,
+            "requires_photo_input": False,
+            "renderer_supported": True,
+            "difficulty": "하",
+        }
+        recommendation_metadata.update(metadata_overrides or {})
         db.add(
             VideoEditingDBRecord(
                 template_id=template_id,
@@ -100,18 +122,7 @@ def _seed_video_editing_db(
                 name=title,
                 recommendation_title=title,
                 recommendation_concept="완성 메뉴를 먼저 보여준 뒤 핵심 제조 장면으로 이어지는 영상",
-                recommendation_metadata={
-                    "supported_subject_types": ["MENU"],
-                    "supported_objectives": ["sales"],
-                    "supported_filming_times": ["within_10m"],
-                    "supported_face_modes": ["not_allowed", "allowed"],
-                    "minimum_filming_time": "within_5m",
-                    "requires_face": requires_face,
-                    "requires_tts": False,
-                    "requires_photo_input": False,
-                    "renderer_supported": True,
-                    "difficulty": "하",
-                },
+                recommendation_metadata=recommendation_metadata,
                 shooting_guide={
                     "estimated_shooting_sec": 480,
                     "difficulty": "하",
@@ -214,7 +225,7 @@ def test_shortform_session_requires_internal_api_key(client):
     assert response.status_code == 401
 
 
-def test_next_recommendation_keeps_current_when_no_alternative(client, auth_headers):
+def test_next_recommendation_recycles_only_record_when_no_alternative(client, auth_headers):
     _seed_video_editing_db("only_db_record", title="유일한 호환 DB 버전")
 
     fake_service = ShortformAgentService(llm=FakeShortformLLM())
@@ -244,23 +255,25 @@ def test_next_recommendation_keeps_current_when_no_alternative(client, auth_head
             headers=auth_headers,
             json={},
         )
-        assert next_response.status_code == 409
-        assert (
-            next_response.json()["detail"]["code"]
-            == "NO_COMPATIBLE_ACTIVE_VIDEO_EDITING_DB"
-        )
+        assert next_response.status_code == 200
+        replacement = next_response.json()["recommendation"]
+        assert replacement["video_editing_db_id"] == "only_db_record"
+        assert replacement["recommendation_id"] != recommendation_id
 
         with SessionLocal() as db:
             session = db.get(ShortformSession, session_id)
             assert session is not None
             assert session.status == "WAITING_RECOMMENDATION_ACTION"
-            assert session.current_recommendation["recommendation_id"] == recommendation_id
+            assert (
+                session.current_recommendation["recommendation_id"]
+                == replacement["recommendation_id"]
+            )
             assert session.shown_video_editing_db_ids == ["only_db_record"]
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)
 
 
-def test_shortform_recommendation_fails_without_active_database(client, auth_headers):
+def test_shortform_recommendation_bootstraps_packaged_database(client, auth_headers):
     fake_service = ShortformAgentService(llm=FakeShortformLLM())
     app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
     try:
@@ -280,10 +293,87 @@ def test_shortform_recommendation_fails_without_active_database(client, auth_hea
             headers=auth_headers,
             json={"input": {"type": "CONFIRM", "value": True}},
         )
-        assert response.status_code == 409
-        assert (
-            response.json()["detail"]["code"]
-            == "NO_COMPATIBLE_ACTIVE_VIDEO_EDITING_DB"
+        assert response.status_code == 200
+        assert response.json()["action"] == "RECOMMEND"
+        assert response.json()["recommendation"]["video_editing_db_id"] in {
+            "gt_cafe_recommendation_reels",
+            "gt_jujutsu_transition",
+            "gt_otsukare_summer",
+        }
+    finally:
+        app.dependency_overrides.pop(get_shortform_agent_service, None)
+
+
+def test_shortform_recommends_even_when_every_constraint_mismatches(client, auth_headers):
+    _seed_video_editing_db(
+        "face_required_long_template",
+        title="조건과 맞지 않지만 사용할 수 있는 영상",
+        requires_face=True,
+        metadata_overrides={
+            "supported_subject_types": ["STORE"],
+            "supported_objectives": ["trust"],
+            "supported_filming_times": ["30m_plus"],
+            "supported_face_modes": ["allowed"],
+            "minimum_filming_time": "30m_plus",
+        },
+    )
+
+    fake_service = ShortformAgentService(llm=FakeShortformLLM())
+    app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
+    try:
+        created = client.post(
+            "/api/v1/shortform-sessions",
+            headers=auth_headers,
+            json=_store_context(),
         )
+        session_id = created.json()["session_id"]
+        client.post(
+            f"/api/v1/shortform-sessions/{session_id}/turns",
+            headers=auth_headers,
+            json={"input": {"type": "TEXT", "text": "얼굴 없이 빠르게 메뉴 홍보"}},
+        )
+        response = client.post(
+            f"/api/v1/shortform-sessions/{session_id}/turns",
+            headers=auth_headers,
+            json={"input": {"type": "CONFIRM", "value": True}},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["action"] == "RECOMMEND"
+        assert (
+            response.json()["recommendation"]["video_editing_db_id"]
+            == "face_required_long_template"
+        )
+    finally:
+        app.dependency_overrides.pop(get_shortform_agent_service, None)
+
+
+def test_shortform_recommendation_uses_stable_fallback_when_selector_fails(client, auth_headers):
+    _seed_video_editing_db("fallback_template", title="항상 반환되는 추천")
+
+    fake_service = ShortformAgentService(llm=FailingRecommendationLLM())
+    app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
+    try:
+        created = client.post(
+            "/api/v1/shortform-sessions",
+            headers=auth_headers,
+            json=_store_context(),
+        )
+        session_id = created.json()["session_id"]
+        client.post(
+            f"/api/v1/shortform-sessions/{session_id}/turns",
+            headers=auth_headers,
+            json={"input": {"type": "TEXT", "text": "메뉴를 홍보하고 싶어요"}},
+        )
+        response = client.post(
+            f"/api/v1/shortform-sessions/{session_id}/turns",
+            headers=auth_headers,
+            json={"input": {"type": "CONFIRM", "value": True}},
+        )
+
+        assert response.status_code == 200
+        recommendation = response.json()["recommendation"]
+        assert recommendation["video_editing_db_id"] == "fallback_template"
+        assert recommendation["title"] == "항상 반환되는 추천"
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)
