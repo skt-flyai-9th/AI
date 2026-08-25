@@ -28,7 +28,7 @@ request.
 - Use video sources only. Never request, invent, or emit photo or TTS sources.
 - Use only supplied `video_id` values and observed timestamps inside each video's duration.
 - Preserve shooting/guide flow; never reorder scenes or insert generated scenes.
-- Keep the selected `video_editing_db_id` and version unchanged.
+- Keep the selected `editing_template_id` and version unchanged.
 - Follow machine-readable `editing_rules` and renderer capabilities.
 - Match the reference-original segment context first: scene meaning, action phase, composition,
   camera movement, transition rhythm and semantic effect event should remain similar when the

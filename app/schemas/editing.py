@@ -39,8 +39,8 @@ class SelectedShortform(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     recommendation_id: str
-    video_editing_db_id: str
-    video_editing_db_version: int = Field(ge=1)
+    editing_template_id: str
+    editing_template_version: int = Field(ge=1)
 
 
 class EditingVideoInput(BaseModel):
@@ -167,8 +167,8 @@ class EditRecipe(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     recipe_version: int = Field(default=1, ge=1)
-    video_editing_db_id: str
-    video_editing_db_version: int = Field(ge=1)
+    editing_template_id: str
+    editing_template_version: int = Field(ge=1)
     source_type: Literal["VIDEO_ONLY"] = "VIDEO_ONLY"
     timeline: list[RecipeClip] = Field(min_length=1)
     cta: RecipeCta

@@ -206,8 +206,8 @@ Content-Type: application/json
 
 응답의 `action`은 `ASK`, `SAVE_AND_ASK`, `CLARIFY`, `SUGGEST_SWITCH`,
 `RESOLVE_CONFLICT`, `CONFIRM`, `RECOMMEND` 중 하나다. 추천 응답에는
-`recommendation_id`, `project_title`, `title`, `concept`, `video_editing_db_id`,
-`video_editing_db_version`이 포함된다. 백엔드는 사용자가 추천을 수락하면 이 식별자와 버전을
+`recommendation_id`, `project_title`, `title`, `concept`, `editing_template_id`,
+`editing_template_version`이 포함된다. 백엔드는 사용자가 추천을 수락하면 이 식별자와 버전을
 프로젝트에 저장한다.
 
 다시 추천받기는 현재 context를 유지하고 이미 노출한 DB를 제외한다.
@@ -219,7 +219,7 @@ POST /api/v1/shortform-sessions/{session_id}/recommendations/next
 촬영 가이드는 선택된 정확한 DB 버전으로 조회한다.
 
 ```http
-GET /api/v1/video-editing-db/{record_id}/versions/{version}/shooting-guide
+GET /api/v1/editing-templates/{template_id}/versions/{version}/shooting-guide
 ```
 
 새로고침이나 프로젝트 취소로 대화를 폐기할 때는 세션을 삭제한다.
@@ -249,8 +249,8 @@ Content-Type: application/json
   },
   "selected_shortform": {
     "recommendation_id": "rec_123",
-    "video_editing_db_id": "video_editing_db_014",
-    "video_editing_db_version": 3
+    "editing_template_id": "video_editing_db_014",
+    "editing_template_version": 3
   },
   "videos": [
     {

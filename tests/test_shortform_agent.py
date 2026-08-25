@@ -187,8 +187,8 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
         assert recommend.status_code == 200
         first = recommend.json()["recommendation"]
         assert recommend.json()["action"] == "RECOMMEND"
-        assert first["video_editing_db_id"] == "video_editing_db_014"
-        assert first["video_editing_db_id"] != "face_only"
+        assert first["editing_template_id"] == "video_editing_db_014"
+        assert first["editing_template_id"] != "face_only"
 
         next_response = client.post(
             f"/api/v1/shortform-sessions/{session_id}/recommendations/next",
@@ -197,18 +197,18 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
         )
         assert next_response.status_code == 200
         second = next_response.json()["recommendation"]
-        assert second["video_editing_db_id"] == "video_editing_db_028"
-        assert next_response.json()["shown_video_editing_db_ids"] == [
+        assert second["editing_template_id"] == "video_editing_db_028"
+        assert next_response.json()["shown_template_ids"] == [
             "video_editing_db_014",
             "video_editing_db_028",
         ]
 
         guide = client.get(
-            "/api/v1/video-editing-db/video_editing_db_028/versions/1/shooting-guide",
+            "/api/v1/editing-templates/video_editing_db_028/versions/1/shooting-guide",
             headers=auth_headers,
         )
         assert guide.status_code == 200
-        assert guide.json()["video_editing_db_id"] == "video_editing_db_028"
+        assert guide.json()["template_id"] == "video_editing_db_028"
         assert guide.json()["scenes"][0]["scene_order"] == 1
 
         deleted = client.delete(
@@ -223,6 +223,21 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
 def test_shortform_session_requires_internal_api_key(client):
     response = client.post("/api/v1/shortform-sessions", json=_store_context())
     assert response.status_code == 401
+
+
+def test_openapi_preserves_live_legacy_backend_contract(client):
+    schema = client.get("/openapi.json").json()
+    paths = schema["paths"]
+    assert "/api/v1/editing-templates/{template_id}/versions/{version}/shooting-guide" in paths
+    assert not any(path.startswith("/api/v1/video-editing-db/") for path in paths)
+
+    components = schema["components"]["schemas"]
+    for name in ("ShortformRecommendation", "SelectedShortform", "EditRecipe"):
+        properties = components[name]["properties"]
+        assert "editing_template_id" in properties
+        assert "editing_template_version" in properties
+        assert "video_editing_db_id" not in properties
+        assert "video_editing_db_version" not in properties
 
 
 def test_next_recommendation_recycles_only_record_when_no_alternative(client, auth_headers):
@@ -257,7 +272,7 @@ def test_next_recommendation_recycles_only_record_when_no_alternative(client, au
         )
         assert next_response.status_code == 200
         replacement = next_response.json()["recommendation"]
-        assert replacement["video_editing_db_id"] == "only_db_record"
+        assert replacement["editing_template_id"] == "only_db_record"
         assert replacement["recommendation_id"] != recommendation_id
 
         with SessionLocal() as db:
@@ -295,7 +310,7 @@ def test_shortform_recommendation_bootstraps_packaged_database(client, auth_head
         )
         assert response.status_code == 200
         assert response.json()["action"] == "RECOMMEND"
-        assert response.json()["recommendation"]["video_editing_db_id"] in {
+        assert response.json()["recommendation"]["editing_template_id"] in {
             "gt_cafe_recommendation_reels",
             "gt_jujutsu_transition",
             "gt_otsukare_summer",
@@ -341,7 +356,7 @@ def test_shortform_recommends_even_when_every_constraint_mismatches(client, auth
         assert response.status_code == 200
         assert response.json()["action"] == "RECOMMEND"
         assert (
-            response.json()["recommendation"]["video_editing_db_id"]
+            response.json()["recommendation"]["editing_template_id"]
             == "face_required_long_template"
         )
     finally:
@@ -373,7 +388,7 @@ def test_shortform_recommendation_uses_stable_fallback_when_selector_fails(clien
 
         assert response.status_code == 200
         recommendation = response.json()["recommendation"]
-        assert recommendation["video_editing_db_id"] == "fallback_template"
+        assert recommendation["editing_template_id"] == "fallback_template"
         assert recommendation["title"] == "항상 반환되는 추천"
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)

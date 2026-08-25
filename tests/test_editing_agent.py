@@ -37,8 +37,8 @@ def _request() -> EditingRunCreateRequest:
             },
             "selected_shortform": {
                 "recommendation_id": "rec_123",
-                "video_editing_db_id": "video_editing_db_014",
-                "video_editing_db_version": 3,
+                "editing_template_id": "video_editing_db_014",
+                "editing_template_version": 3,
             },
             "videos": [
                 {
@@ -61,8 +61,8 @@ def _recipe(*, invalid_timeline: bool = False) -> EditRecipe:
     return EditRecipe.model_validate(
         {
             "recipe_version": 1,
-            "video_editing_db_id": "video_editing_db_014",
-            "video_editing_db_version": 3,
+            "editing_template_id": "video_editing_db_014",
+            "editing_template_version": 3,
             "source_type": "VIDEO_ONLY",
             "timeline": [
                 {

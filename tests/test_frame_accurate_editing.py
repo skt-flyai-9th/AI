@@ -233,8 +233,8 @@ def test_multi_cut_analysis_is_reused_on_produced_timeline():
 def test_source_preparation_overrides_llm_cut_boundaries():
     recipe = EditRecipe.model_validate(
         {
-            "video_editing_db_id": "db",
-            "video_editing_db_version": 1,
+            "editing_template_id": "db",
+            "editing_template_version": 1,
             "timeline": [
                 {
                     "clip_order": 2,
@@ -290,8 +290,8 @@ def test_one_take_source_preparation_keeps_full_source():
     context = _context("one", 1, count=10)
     recipe = EditRecipe.model_validate(
         {
-            "video_editing_db_id": "db",
-            "video_editing_db_version": 1,
+            "editing_template_id": "db",
+            "editing_template_version": 1,
             "timeline": [
                 {
                     "clip_order": 1,

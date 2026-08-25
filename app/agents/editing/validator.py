@@ -52,17 +52,17 @@ class EditRecipeValidator:
                 )
             )
 
-        if recipe.video_editing_db_id != selected_shortform.video_editing_db_id:
+        if recipe.editing_template_id != selected_shortform.editing_template_id:
             add(
-                "VIDEO_EDITING_DB_ID_MISMATCH",
-                "video_editing_db_id",
-                "video_editing_db_id must match selected_shortform.",
+                "EDITING_TEMPLATE_ID_MISMATCH",
+                "editing_template_id",
+                "editing_template_id must match selected_shortform.",
             )
-        if recipe.video_editing_db_version != selected_shortform.video_editing_db_version:
+        if recipe.editing_template_version != selected_shortform.editing_template_version:
             add(
-                "VIDEO_EDITING_DB_VERSION_MISMATCH",
-                "video_editing_db_version",
-                "video_editing_db_version must match selected_shortform.",
+                "EDITING_TEMPLATE_VERSION_MISMATCH",
+                "editing_template_version",
+                "editing_template_version must match selected_shortform.",
             )
 
         rules = video_editing_db.get("editing_rules") or {}
