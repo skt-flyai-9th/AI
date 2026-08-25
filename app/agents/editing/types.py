@@ -30,11 +30,7 @@ class VideoContext(BaseModel):
 
 
 class FrameObservation(BaseModel):
-    """One-frame semantic observation produced by the editing VLM.
-
-    Coordinates and percentages are normalized so the same schema can be used
-    for Gemini reference evidence and user-video evidence.
-    """
+    """One-frame semantic/geometry observation used to match Gemini evidence."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -53,6 +49,11 @@ class FrameObservation(BaseModel):
     motion_direction: str = ""
     motion_strength: float = Field(default=0.0, ge=0, le=1)
     observed_rotation_deg: float = Field(default=0.0, ge=-45, le=45)
+    observed_zoom_scale: float | None = Field(default=None, ge=0.5, le=2.0)
+    observed_translate_x_pct: float = Field(default=0.0, ge=-1.0, le=1.0)
+    observed_translate_y_pct: float = Field(default=0.0, ge=-1.0, le=1.0)
+    flash_level: float = Field(default=0.0, ge=0, le=1)
+    color_tone: Literal["NATURAL", "WARM", "COOL", "VIVID", "UNKNOWN"] = "UNKNOWN"
     cut_transition_candidate: bool = False
     cut_transition_score: float = Field(default=0.0, ge=0, le=1)
     quality_flags: list[str] = Field(default_factory=list, max_length=10)
