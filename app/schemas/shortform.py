@@ -192,7 +192,9 @@ class ShootingGuideResponse(BaseModel):
 
     template_id: str
     version: int
-    estimated_shooting_sec: int | None = None
-    difficulty: str | None = None
+    estimated_shooting_sec: int = Field(ge=1)
+    required_people: int = Field(ge=1)
+    props: list[str] = Field(default_factory=list)
+    difficulty: str
     scenes: list[dict[str, Any]] = Field(default_factory=list)
     tasks: list[dict[str, Any]] = Field(default_factory=list)

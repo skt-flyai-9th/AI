@@ -72,7 +72,9 @@ class ShortformAgentService:
         self.settings = get_settings()
         self.domain_context = _load_domain_context()
 
-    def create_session(self, db: Session, store_context: StoreContext) -> ShortformSessionCreateResponse:
+    def create_session(
+        self, db: Session, store_context: StoreContext
+    ) -> ShortformSessionCreateResponse:
         session = ShortformSession(
             id=f"sf_{uuid.uuid4().hex}",
             status=ShortformSessionStatus.COLLECTING.value,
@@ -224,12 +226,35 @@ class ShortformAgentService:
                 status_code=404,
             )
         guide = dict(template.shooting_guide or {})
+        scenes = []
+        for item in guide.get("scenes") or []:
+            scene = dict(item)
+            # The mobile client edits both fields and calls `.length` directly.
+            # Keep the internal template optional, but never expose JSON null at
+            # this HTTP boundary.
+            scene["scene_dialogue"] = str(scene.get("scene_dialogue") or "")
+            scene["scene_subtitle"] = str(scene.get("scene_subtitle") or "")
+            scenes.append(scene)
+
+        estimated_shooting_sec = guide.get("estimated_shooting_sec")
+        if not estimated_shooting_sec:
+            final_duration = sum(
+                max(int(scene.get("target_duration_sec") or 0), 0) for scene in scenes
+            )
+            estimated_shooting_sec = max(final_duration * 10, 60)
+
         return ShootingGuideResponse(
             template_id=template.template_id,
             version=template.version,
-            estimated_shooting_sec=guide.get("estimated_shooting_sec"),
-            difficulty=guide.get("difficulty") or template.recommendation_metadata.get("difficulty"),
-            scenes=list(guide.get("scenes") or []),
+            estimated_shooting_sec=int(estimated_shooting_sec),
+            required_people=max(int(guide.get("required_people") or 1), 1),
+            props=[str(item) for item in (guide.get("props") or []) if str(item).strip()],
+            difficulty=str(
+                guide.get("difficulty")
+                or template.recommendation_metadata.get("difficulty")
+                or "중"
+            ),
+            scenes=scenes,
             tasks=list(guide.get("tasks") or []),
         )
 
@@ -309,7 +334,9 @@ class ShortformAgentService:
 
         recommendation = ShortformRecommendation(
             recommendation_id=f"rec_{uuid.uuid4().hex}",
-            project_title=(selection.project_title or selected.recommendation_title or selected.name).strip(),
+            project_title=(
+                selection.project_title or selected.recommendation_title or selected.name
+            ).strip(),
             title=(selection.title or selected.recommendation_title or selected.name).strip(),
             concept=(selection.concept or selected.recommendation_concept or selected.name).strip(),
             editing_template_id=selected.editing_template_id,
@@ -383,9 +410,7 @@ class ShortformAgentService:
                     "store_context": session.store_context,
                     "project_state": session.project_state,
                     "conversation": session.conversation,
-                    "candidate_templates": [
-                        item.model_dump(mode="json") for item in candidates
-                    ],
+                    "candidate_templates": [item.model_dump(mode="json") for item in candidates],
                 }
             )
             selection = TemplateSelection.model_validate(graph_result["recommendation"])
@@ -544,11 +569,9 @@ class ShortformAgentService:
         return state
 
     def _photo_urls(self, store_context: dict[str, Any]) -> list[str]:
-        photos = ((store_context.get("store") or {}).get("store_photos") or [])
+        photos = (store_context.get("store") or {}).get("store_photos") or []
         urls = [
-            str(item.get("asset_url") or "").strip()
-            for item in photos
-            if isinstance(item, dict)
+            str(item.get("asset_url") or "").strip() for item in photos if isinstance(item, dict)
         ]
         return [url for url in urls if url][: self.settings.shortform_max_photo_inputs]
 

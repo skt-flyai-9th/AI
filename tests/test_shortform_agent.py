@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.agents.shortform.llm import ShortformLLMError
+from app.agents.shortform.seeds import seed_packaged_editing_templates
 from app.agents.shortform.service import ShortformAgentService, get_shortform_agent_service
 from app.agents.shortform.types import (
     DecisionPromotionSubject,
@@ -21,8 +22,7 @@ class FakeShortformLLM:
         return ShortformTurnDecision(
             action=ShortformAction.CONFIRM,
             assistant_message=(
-                "이렇게 이해했어요. 딸기 크림 라떼 판매를 늘리고, "
-                "10분 안에 얼굴 없이 촬영할게요."
+                "이렇게 이해했어요. 딸기 크림 라떼 판매를 늘리고, 10분 안에 얼굴 없이 촬영할게요."
             ),
             state_updates=StateUpdates(
                 promotion_category="MENU",
@@ -45,7 +45,9 @@ class FakeShortformLLM:
             ready_for_confirmation=True,
         )
 
-    def select_template(self, *, candidates: list[TemplateCandidate], **kwargs) -> TemplateSelection:
+    def select_template(
+        self, *, candidates: list[TemplateCandidate], **kwargs
+    ) -> TemplateSelection:
         candidate = candidates[0]
         return TemplateSelection(
             candidate_key=candidate.candidate_key,
@@ -264,9 +266,10 @@ def test_next_recommendation_recycles_only_compatible_template(client, auth_head
             session = db.get(ShortformSession, session_id)
             assert session is not None
             assert session.status == "WAITING_RECOMMENDATION_ACTION"
-            assert session.current_recommendation["recommendation_id"] == replacement[
-                "recommendation_id"
-            ]
+            assert (
+                session.current_recommendation["recommendation_id"]
+                == replacement["recommendation_id"]
+            )
             assert session.shown_template_ids == ["only_template"]
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)
@@ -303,10 +306,41 @@ def test_shortform_recommendation_bootstraps_packaged_templates(client, auth_hea
             headers=auth_headers,
         )
         assert guide.status_code == 200
-        assert len(guide.json()["scenes"]) == 3
-        assert len(guide.json()["tasks"]) == 3
+        payload = guide.json()
+        assert payload["estimated_shooting_sec"] > 0
+        assert payload["required_people"] >= 1
+        assert isinstance(payload["props"], list)
+        assert payload["difficulty"] in {"상", "중", "하"}
+        assert len(payload["scenes"]) == 3
+        assert len(payload["tasks"]) == 3
+        assert all(isinstance(scene["scene_dialogue"], str) for scene in payload["scenes"])
+        assert all(isinstance(scene["scene_subtitle"], str) for scene in payload["scenes"])
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)
+
+
+def test_packaged_template_seed_repairs_existing_nullable_mobile_fields():
+    with SessionLocal() as db:
+        assert seed_packaged_editing_templates(db) == 3
+        template = db.get(EditingTemplate, ("gt_otsukare_summer", 2))
+        assert template is not None
+        guide = dict(template.shooting_guide)
+        guide.pop("required_people", None)
+        guide.pop("props", None)
+        scenes = [dict(item) for item in guide["scenes"]]
+        scenes[0]["scene_dialogue"] = None
+        scenes[1]["scene_subtitle"] = None
+        guide["scenes"] = scenes
+        template.shooting_guide = guide
+        db.commit()
+
+        assert seed_packaged_editing_templates(db) == 0
+        db.refresh(template)
+        repaired = template.shooting_guide
+        assert repaired["required_people"] == 1
+        assert repaired["props"] == ["삼각대"]
+        assert repaired["scenes"][0]["scene_dialogue"] == ""
+        assert repaired["scenes"][1]["scene_subtitle"] == ""
 
 
 def test_shortform_recommendation_falls_back_when_selector_fails(client, auth_headers):
@@ -332,8 +366,6 @@ def test_shortform_recommendation_falls_back_when_selector_fails(client, auth_he
 
         assert response.status_code == 200
         assert response.json()["action"] == "RECOMMEND"
-        assert response.json()["recommendation"]["editing_template_id"] == (
-            "gt_jujutsu_transition"
-        )
+        assert response.json()["recommendation"]["editing_template_id"] == ("gt_jujutsu_transition")
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)

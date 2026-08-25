@@ -30,6 +30,8 @@ _PACKAGED_TEMPLATE_SPECS: tuple[dict[str, Any], ...] = (
             "difficulty": "상",
         },
         "estimated_shooting_sec": 1800,
+        "required_people": 1,
+        "props": ["삼각대"],
         "max_duration_sec": 9.3,
         "segments": (
             (
@@ -77,6 +79,8 @@ _PACKAGED_TEMPLATE_SPECS: tuple[dict[str, Any], ...] = (
             "difficulty": "중",
         },
         "estimated_shooting_sec": 600,
+        "required_people": 1,
+        "props": ["삼각대"],
         "max_duration_sec": 11.5,
         "segments": (
             (
@@ -140,13 +144,14 @@ _PACKAGED_TEMPLATE_SPECS: tuple[dict[str, Any], ...] = (
             "difficulty": "상",
         },
         "estimated_shooting_sec": 1800,
+        "required_people": 1,
+        "props": ["삼각대"],
         "max_duration_sec": 12.583,
         "segments": (
             (
                 "PERSONAL_HOOK",
                 "애정 카페 선언 · 제조 플래시 → 대표 메뉴",
-                "짧은 제조·서빙 동작을 보여준 뒤 대표 메뉴 Hero로 전환해 "
-                "1인칭 애정 추천으로 시작",
+                "짧은 제조·서빙 동작을 보여준 뒤 대표 메뉴 Hero로 전환해 1인칭 애정 추천으로 시작",
                 "{{caption.hook_personal}} → {{caption.hook_invite}}",
                 1,
             ),
@@ -206,8 +211,10 @@ def _template_payload(spec: dict[str, Any]) -> dict[str, Any]:
                 "scene_order": order,
                 "scene_role": role,
                 "scene_description": f"{summary} — {instruction}",
-                "scene_dialogue": None,
-                "scene_subtitle": subtitle,
+                # The current mobile contract treats these as strings and calls
+                # `.length` without a nullable guard.
+                "scene_dialogue": "",
+                "scene_subtitle": subtitle or "",
                 "shot_type": "가이드 구간 재현",
                 "target_duration_sec": duration,
             }
@@ -236,6 +243,8 @@ def _template_payload(spec: dict[str, Any]) -> dict[str, Any]:
         "recommendation_metadata": spec["recommendation_metadata"],
         "shooting_guide": {
             "estimated_shooting_sec": spec["estimated_shooting_sec"],
+            "required_people": spec["required_people"],
+            "props": spec["props"],
             "difficulty": spec["recommendation_metadata"]["difficulty"],
             "scenes": scenes,
             "tasks": tasks,
@@ -271,7 +280,9 @@ def seed_packaged_editing_templates(db: Session) -> int:
     added = 0
     for payload in PACKAGED_EDITING_TEMPLATES:
         key = (payload["template_id"], payload["version"])
-        if db.get(EditingTemplate, key) is not None:
+        existing = db.get(EditingTemplate, key)
+        if existing is not None:
+            _backfill_mobile_guide_fields(existing, payload["shooting_guide"])
             continue
         try:
             with db.begin_nested():
@@ -283,3 +294,36 @@ def seed_packaged_editing_templates(db: Session) -> int:
         added += 1
     db.commit()
     return added
+
+
+def _backfill_mobile_guide_fields(
+    template: EditingTemplate,
+    packaged_guide: dict[str, Any],
+) -> None:
+    """Repair only missing frontend-required fields on packaged versions.
+
+    Operators may deliberately change other template data, so existing values
+    are preserved.  A new dictionary is assigned so SQLAlchemy detects the JSON
+    mutation on PostgreSQL as well as SQLite.
+    """
+
+    guide = dict(template.shooting_guide or {})
+    changed = False
+    for field in ("required_people", "props"):
+        if guide.get(field) is None:
+            guide[field] = packaged_guide[field]
+            changed = True
+
+    scenes = []
+    for item in guide.get("scenes") or []:
+        scene = dict(item)
+        for field in ("scene_dialogue", "scene_subtitle"):
+            if scene.get(field) is None:
+                scene[field] = ""
+                changed = True
+        scenes.append(scene)
+    if scenes:
+        guide["scenes"] = scenes
+
+    if changed:
+        template.shooting_guide = guide
