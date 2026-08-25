@@ -202,7 +202,7 @@ class ShortformAgentService:
         return NextRecommendationResponse(
             session_id=session.id,
             recommendation=response.recommendation,
-            shown_video_editing_db_ids=list(session.shown_video_editing_db_ids or []),
+            shown_template_ids=list(session.shown_video_editing_db_ids or []),
         )
 
     def delete_session(self, db: Session, session_id: str) -> None:
@@ -219,18 +219,37 @@ class ShortformAgentService:
         template = db.get(VideoEditingDBRecord, (template_id, version))
         if template is None:
             raise ShortformDomainError(
-                "VIDEO_EDITING_DB_NOT_FOUND",
-                "Video-editing DB record was not found.",
+                "EDITING_TEMPLATE_NOT_FOUND",
+                "Editing template was not found.",
                 status_code=404,
             )
         guide = dict(template.shooting_guide or {})
+        scenes = []
+        for item in guide.get("scenes") or []:
+            scene = dict(item)
+            scene["scene_dialogue"] = str(scene.get("scene_dialogue") or "")
+            scene["scene_subtitle"] = str(scene.get("scene_subtitle") or "")
+            scenes.append(scene)
+
+        estimated_shooting_sec = guide.get("estimated_shooting_sec")
+        if not estimated_shooting_sec:
+            final_duration = sum(
+                max(int(scene.get("target_duration_sec") or 0), 0) for scene in scenes
+            )
+            estimated_shooting_sec = max(final_duration * 10, 60)
+
         return ShootingGuideResponse(
-            video_editing_db_id=template.template_id,
-            video_editing_db_version=template.version,
-            estimated_shooting_sec=guide.get("estimated_shooting_sec"),
-            difficulty=guide.get("difficulty")
-            or template.recommendation_metadata.get("difficulty"),
-            scenes=list(guide.get("scenes") or []),
+            template_id=template.template_id,
+            version=template.version,
+            estimated_shooting_sec=int(estimated_shooting_sec),
+            required_people=max(int(guide.get("required_people") or 1), 1),
+            props=[str(item) for item in (guide.get("props") or []) if str(item).strip()],
+            difficulty=str(
+                guide.get("difficulty")
+                or template.recommendation_metadata.get("difficulty")
+                or "중"
+            ),
+            scenes=scenes,
             tasks=list(guide.get("tasks") or []),
         )
 
@@ -316,8 +335,8 @@ class ShortformAgentService:
             ).strip(),
             title=(selection.title or selected.recommendation_title or selected.name).strip(),
             concept=(selection.concept or selected.recommendation_concept or selected.name).strip(),
-            video_editing_db_id=selected.video_editing_db_id,
-            video_editing_db_version=selected.video_editing_db_version,
+            editing_template_id=selected.video_editing_db_id,
+            editing_template_version=selected.video_editing_db_version,
         )
         stored = recommendation.model_dump(mode="json")
         stored["internal_reason"] = selection.internal_reason

@@ -237,8 +237,8 @@ LLM 판단 전에 코드는 우선 조건 적합도를 기준으로 후보군을
 - `project_title`
 - `title`
 - `concept`
-- `video_editing_db_id`
-- `video_editing_db_version`
+- `editing_template_id`
+- `editing_template_version`
 
 사용자 UI에는 상세 추천 reasoning을 필수 노출하지 않는다. 내부 로그에는 선택 이유를 남길 수 있다.
 

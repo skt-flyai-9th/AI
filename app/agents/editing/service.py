@@ -287,7 +287,7 @@ class EditingAgentService:
     ) -> VideoEditingDBRecord:
         database_record = db.get(
             VideoEditingDBRecord,
-            (selected.video_editing_db_id, selected.video_editing_db_version),
+            (selected.editing_template_id, selected.editing_template_version),
         )
         if database_record is None:
             raise EditingDomainError(
@@ -348,8 +348,8 @@ def _reals_registry_ready() -> bool:
 
 def _database_payload(database_record: VideoEditingDBRecord) -> dict[str, Any]:
     return {
-        "video_editing_db_id": database_record.template_id,
-        "video_editing_db_version": database_record.version,
+        "editing_template_id": database_record.template_id,
+        "editing_template_version": database_record.version,
         "name": database_record.name,
         "recommendation_title": database_record.recommendation_title,
         "recommendation_concept": database_record.recommendation_concept,

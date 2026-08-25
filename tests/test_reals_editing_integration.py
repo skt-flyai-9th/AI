@@ -40,8 +40,8 @@ def _contexts() -> list[VideoContext]:
 
 def _video_editing_db() -> dict:
     return {
-        "video_editing_db_id": "video_editing_db_014",
-        "video_editing_db_version": 3,
+        "editing_template_id": "video_editing_db_014",
+        "editing_template_version": 3,
         "editing_rules": {
             "min_cut_duration_ms": 300,
             "max_duration_sec": 30,
