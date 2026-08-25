@@ -123,22 +123,41 @@ class OpenAITemplateCandidateGenerator:
             instructions=(
                 "You maintain the SARILS video-editing DB. Generate one version candidate "
                 "grounded only in the supplied trendcluster records and Gemini video insights. "
-                "The product accepts user-recorded video only. TTS, narration synthesis, still "
-                "photos on the timeline, and photo-to-video are forbidden. Use only renderer "
-                "capabilities included in the payload."
+                "The video-editing DB schema is fixed: never add fields or columns. Preserve the "
+                "reference-original segment context and reusable effect guidance inside existing "
+                "shooting-guide scene descriptions/tasks and existing editing rules only. The "
+                "product accepts user-recorded video only. TTS, narration synthesis, still photos "
+                "on the timeline, and photo-to-video are forbidden. Use only renderer capabilities "
+                "included in the payload."
             ),
             payload={
-                "task": "Create a new version candidate; never mutate the base version.",
+                "task": "Create a new version candidate; never mutate the base version or schema.",
                 "database_id": template_id,
                 "base_database": base_payload,
                 "trend_context": trend_context,
                 "gemini_video_insights": [item.model_dump(mode="json") for item in insights],
+                "guide_authoring_rules": [
+                    "Use Gemini's reference-original shot order and segment context as the target editing grammar.",
+                    "When Gemini observes SHAKE, VIBRATION, ROTATION/TILT, ZOOM, POSITION_MOVE, FLASH, or COLOR, summarize when and why it occurs in existing scene_description/tasks; do not add schema fields.",
+                    "Keep measurable effect values such as angle, amplitude, duration frames, scale, direction and damping in concise existing text fields when supported by evidence.",
+                    "Do not copy reference caption wording; preserve only caption role/style/placement/timing grammar.",
+                ],
                 "renderer_contract": {
                     "source_type": "VIDEO_ONLY",
                     "render_profile_id": "INSTAGRAM_REELS_V1",
                     "assembly_profile_id": "INTERMEDIATE_VERTICAL_V1",
                     "safe_area_profile_id": "INSTAGRAM_REELS_2026_V1",
-                    "allowed_effect_ids": ["PUNCH_ZOOM", "COLOR_TONE", "SMOOTH_ZOOM"],
+                    "allowed_effect_ids": [
+                        "PUNCH_ZOOM",
+                        "SMOOTH_ZOOM",
+                        "SHAKE",
+                        "VIBRATION",
+                        "ROTATION",
+                        "POSITION_MOVE",
+                        "FLASH",
+                        "COLOR",
+                        "COLOR_TONE",
+                    ],
                     "allowed_transition_ids": ["CUT", "HARD_CUT", "FLASH_WHITE"],
                     "audio_policy": "SILENT_V1",
                     "max_duration_sec": 60,
@@ -271,15 +290,28 @@ class GeminiYouTubeVideoAnalyzer:
         prompt = json.dumps(
             {
                 "task": (
-                    "Analyze the supplied public YouTube video as editing evidence for a Korean "
-                    "small-business short-form video-editing database. Describe observable hooks, shot order, "
-                    "pacing, captions, camera, transitions, and reusable editing rules with "
-                    "timestamps in evidence_notes where possible. Do not recommend TTS, generated "
-                    "narration, still-photo scenes, or unobserved content."
+                    "Analyze the supplied public YouTube video as reference-original editing evidence "
+                    "for a Korean small-business short-form video-editing database. Preserve the "
+                    "original shot/segment order and describe the meaning of every segment. Analyze "
+                    "observable hooks, pacing, captions, composition, camera motion, cut-transition "
+                    "points and effects. For SHAKE, VIBRATION, ROTATION/TILT, ZOOM, POSITION_MOVE, "
+                    "FLASH and COLOR, estimate measurable parameters when visually supportable: "
+                    "timestamp/frame window, duration frames, direction, translation as frame %, "
+                    "rotation degrees, scale, frequency, damping and color/tone. Put compact numeric "
+                    "observations into camera_patterns, transition_patterns, reusable_editing_rules "
+                    "and evidence_notes; the output schema must not be expanded. Describe when an "
+                    "effect happens semantically (for example PRODUCT_REVEAL or IMPACT), not only "
+                    "its appearance. Do not recommend TTS, generated narration, still-photo scenes, "
+                    "platform UI reproduction, or unobserved content."
                 ),
                 "trend_id": trend_id,
                 "youtube_url": youtube_url,
                 "trend_context": trend_context,
+                "effect_analysis_format_examples": [
+                    "SEGMENT|id=seg_02|role=PROCESS|start=2.10s|end=4.80s|subject=drink|composition=close-up",
+                    "EFFECT|segment=seg_03|event=PRODUCT_REVEAL|type=SHAKE|start=5.40s|duration=4f|x=1.8%|y=0.7%|rotation=0.5deg|scale=1.018|damping=true",
+                    "EFFECT|segment=seg_01|event=HOOK|type=ROTATION|start=0.20s|duration=8f|rotation=-1.2deg",
+                ],
                 "allowed_audio_roles": ["PLATFORM_MUSIC", "ORIGINAL_AMBIENCE", "NONE"],
             },
             ensure_ascii=False,
@@ -289,8 +321,10 @@ class GeminiYouTubeVideoAnalyzer:
                 api_key=self.api_key,
                 model=self.model_name,
                 system_prompt=(
-                    "You are SARILS's evidence-only reference-video analyst. "
-                    "Visual observations must be conservative and reusable as editing rules."
+                    "You are SARILS's evidence-only reference-video analyst. Treat the original "
+                    "video's segment context as the editing target that later user footage will be "
+                    "matched against. Visual and effect measurements must be conservative, timestamped, "
+                    "and reusable. Never invent a value that the video does not support."
                 ),
                 user_prompt=prompt,
                 schema_name="editing_video_insight",
