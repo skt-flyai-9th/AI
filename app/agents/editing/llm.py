@@ -66,7 +66,14 @@ class OpenAIEditingLLM:
         parent_recipe: dict[str, Any] | None,
         revision_action: str | None,
     ) -> EditingPlanDecision:
-        task = "Revise the parent EditRecipe" if revision_action else "Create an EditRecipe"
+        reduced_structure = _is_reduced_structure_revision(revision_action)
+        if reduced_structure:
+            task = (
+                "Create a complete reduced-structure EditRecipe from the available supplied "
+                "videos. The user explicitly accepted omitting unsupported scene roles."
+            )
+        else:
+            task = "Revise the parent EditRecipe" if revision_action else "Create an EditRecipe"
         payload = {
             "task": task,
             "project": project,
@@ -75,8 +82,20 @@ class OpenAIEditingLLM:
             "video_contexts": _text_video_contexts(video_contexts),
             "parent_recipe": parent_recipe,
             "revision_action": revision_action,
+            "source_gap_policy": (
+                {
+                    "mode": "USE_REDUCED_STRUCTURE",
+                    "must_return_recipe": True,
+                    "instruction": (
+                        "Use a coherent subset of the supplied footage in shooting order. "
+                        "Do not return SOURCE_GAP again for roles the user chose to omit."
+                    ),
+                }
+                if reduced_structure
+                else {"mode": "DETECT_REQUIRED_ROLE_GAPS"}
+            ),
             "renderer_capabilities": _renderer_capabilities(),
-            "requirements": _requirements(),
+            "requirements": _requirements(reduced_structure=reduced_structure),
         }
         return self._request(domain_context, payload, video_contexts, "editing_plan")
 
@@ -216,8 +235,8 @@ def _renderer_capabilities(settings: Settings | None = None) -> dict[str, Any]:
     return capabilities
 
 
-def _requirements() -> list[str]:
-    return [
+def _requirements(*, reduced_structure: bool = False) -> list[str]:
+    requirements = [
         "clip_order must be consecutive from 1 and timeline_start_ms must be gapless from 0.",
         "Preserve ascending shooting_scene_order and use only supplied video ids.",
         "Every source timestamp must be inside that video's duration.",
@@ -227,6 +246,16 @@ def _requirements() -> list[str]:
         "Keep captions at most 40 characters each and at most 8 captions total.",
         "Publishing post_note must tell the user to add music in the platform.",
     ]
+    if reduced_structure:
+        requirements.append(
+            "The user selected USE_REDUCED_STRUCTURE: return RECIPE, omit unsupported roles, "
+            "and use the available videos conservatively in shooting order."
+        )
+    return requirements
+
+
+def _is_reduced_structure_revision(revision_action: str | None) -> bool:
+    return (revision_action or "").strip().upper() == "USE_REDUCED_STRUCTURE"
 
 
 def _make_strict_schema(value: Any) -> Any:
