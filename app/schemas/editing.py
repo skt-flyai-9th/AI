@@ -57,7 +57,6 @@ class EditingRunCreateRequest(BaseModel):
     project: EditingProject
     selected_shortform: SelectedShortform
     videos: list[EditingVideoInput] = Field(min_length=1, max_length=20)
-    shoot_mode: Literal["MULTI_CUT", "ONE_TAKE"] | None = None
     revision: str | None = None
 
     @model_validator(mode="after")
@@ -68,10 +67,6 @@ class EditingRunCreateRequest(BaseModel):
         orders = [video.shooting_scene_order for video in self.videos]
         if len(orders) != len(set(orders)):
             raise ValueError("shooting_scene_order must be unique")
-        if self.shoot_mode is None:
-            self.shoot_mode = "ONE_TAKE" if len(self.videos) == 1 else "MULTI_CUT"
-        if self.shoot_mode == "ONE_TAKE" and len(self.videos) != 1:
-            raise ValueError("ONE_TAKE requires exactly one video")
         return self
 
 
@@ -99,12 +94,7 @@ class EditingRunRead(BaseModel):
 
 
 class RecipeEffectParams(BaseModel):
-    """Renderer-safe effect parameters.
-
-    start_ms/end_ms are relative to the clip's output timeline after speed is
-    applied. The editing VLM derives them from frame-accurate user-video
-    evidence and the Gemini reference effect guide.
-    """
+    """Renderer-safe parameters for frame-timed transform effects."""
 
     model_config = ConfigDict(extra="forbid")
 
