@@ -5,8 +5,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
 from app.api.v1.router import api_router
+from app.agents.shortform.seeds import seed_packaged_editing_templates
 from app.core.config import get_settings
 from app.db.init_db import init_db
+from app.db.session import SessionLocal
 
 settings = get_settings()
 
@@ -15,6 +17,8 @@ settings = get_settings()
 async def lifespan(_: FastAPI):
     if settings.app_env.lower() in {"local", "test"}:
         init_db()
+    with SessionLocal() as db:
+        seed_packaged_editing_templates(db)
     yield
 
 

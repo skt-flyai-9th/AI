@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.agents.shortform.llm import ShortformLLMError
 from app.agents.shortform.service import ShortformAgentService, get_shortform_agent_service
 from app.agents.shortform.types import (
     DecisionPromotionSubject,
@@ -53,6 +54,11 @@ class FakeShortformLLM:
             concept=candidate.recommendation_concept,
             internal_reason="fake contextual selection for contract test",
         )
+
+
+class FailingRecommendationLLM(FakeShortformLLM):
+    def select_template(self, **kwargs) -> TemplateSelection:
+        raise ShortformLLMError("recommendation selector unavailable", status_code=503)
 
 
 def _store_context() -> dict:
@@ -129,6 +135,12 @@ def _seed_template(
                 trend_ids=[],
             )
         )
+        db.commit()
+
+
+def _delete_all_templates() -> None:
+    with SessionLocal() as db:
+        db.query(EditingTemplate).delete()
         db.commit()
 
 
@@ -212,7 +224,8 @@ def test_shortform_session_requires_internal_api_key(client):
     assert response.status_code == 401
 
 
-def test_next_recommendation_keeps_current_when_no_alternative(client, auth_headers):
+def test_next_recommendation_recycles_only_compatible_template(client, auth_headers):
+    _delete_all_templates()
     _seed_template("only_template", title="유일한 호환 템플릿")
 
     fake_service = ShortformAgentService(llm=FakeShortformLLM())
@@ -242,23 +255,25 @@ def test_next_recommendation_keeps_current_when_no_alternative(client, auth_head
             headers=auth_headers,
             json={},
         )
-        assert next_response.status_code == 409
-        assert (
-            next_response.json()["detail"]["code"]
-            == "NO_COMPATIBLE_ACTIVE_EDITING_TEMPLATE"
-        )
+        assert next_response.status_code == 200
+        replacement = next_response.json()["recommendation"]
+        assert replacement["editing_template_id"] == "only_template"
+        assert replacement["recommendation_id"] != recommendation_id
 
         with SessionLocal() as db:
             session = db.get(ShortformSession, session_id)
             assert session is not None
             assert session.status == "WAITING_RECOMMENDATION_ACTION"
-            assert session.current_recommendation["recommendation_id"] == recommendation_id
+            assert session.current_recommendation["recommendation_id"] == replacement[
+                "recommendation_id"
+            ]
             assert session.shown_template_ids == ["only_template"]
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)
 
 
-def test_shortform_recommendation_fails_without_active_template(client, auth_headers):
+def test_shortform_recommendation_bootstraps_packaged_templates(client, auth_headers):
+    _delete_all_templates()
     fake_service = ShortformAgentService(llm=FakeShortformLLM())
     app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
     try:
@@ -278,7 +293,47 @@ def test_shortform_recommendation_fails_without_active_template(client, auth_hea
             headers=auth_headers,
             json={"input": {"type": "CONFIRM", "value": True}},
         )
-        assert response.status_code == 409
-        assert response.json()["detail"]["code"] == "NO_COMPATIBLE_ACTIVE_EDITING_TEMPLATE"
+        assert response.status_code == 200
+        recommendation = response.json()["recommendation"]
+        assert response.json()["action"] == "RECOMMEND"
+        assert recommendation["editing_template_id"] == "gt_jujutsu_transition"
+
+        guide = client.get(
+            "/api/v1/editing-templates/gt_jujutsu_transition/versions/2/shooting-guide",
+            headers=auth_headers,
+        )
+        assert guide.status_code == 200
+        assert len(guide.json()["scenes"]) == 3
+        assert len(guide.json()["tasks"]) == 3
+    finally:
+        app.dependency_overrides.pop(get_shortform_agent_service, None)
+
+
+def test_shortform_recommendation_falls_back_when_selector_fails(client, auth_headers):
+    failing_service = ShortformAgentService(llm=FailingRecommendationLLM())
+    app.dependency_overrides[get_shortform_agent_service] = lambda: failing_service
+    try:
+        created = client.post(
+            "/api/v1/shortform-sessions",
+            headers=auth_headers,
+            json=_store_context(),
+        )
+        session_id = created.json()["session_id"]
+        client.post(
+            f"/api/v1/shortform-sessions/{session_id}/turns",
+            headers=auth_headers,
+            json={"input": {"type": "TEXT", "text": "메뉴를 10분 안에 얼굴 없이 홍보"}},
+        )
+        response = client.post(
+            f"/api/v1/shortform-sessions/{session_id}/turns",
+            headers=auth_headers,
+            json={"input": {"type": "CONFIRM", "value": True}},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["action"] == "RECOMMEND"
+        assert response.json()["recommendation"]["editing_template_id"] == (
+            "gt_jujutsu_transition"
+        )
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)

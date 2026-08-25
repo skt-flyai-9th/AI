@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from functools import lru_cache
 from pathlib import Path
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.shortform.graph import build_shortform_graph
 from app.agents.shortform.llm import OpenAIShortformLLM, ShortformLLM, ShortformLLMError
+from app.agents.shortform.seeds import seed_packaged_editing_templates
 from app.agents.shortform.types import ShortformTurnDecision, TemplateCandidate, TemplateSelection
 from app.core.config import get_settings
 from app.models.challenge import Challenge
@@ -45,6 +47,7 @@ _FILMING_ORDER = {
     FilmingTime.WITHIN_20M.value: 3,
     FilmingTime.PLUS_30M.value: 4,
 }
+logger = logging.getLogger(__name__)
 
 
 class ShortformDomainError(RuntimeError):
@@ -294,11 +297,7 @@ class ShortformAgentService:
         *,
         user_event: str | None = None,
     ) -> ShortformTurnResponse:
-        candidates = self._template_candidates(db, session, strict=True)
-        if not candidates:
-            # Relax only soft applicability metadata. Hard product/safety/physical
-            # constraints remain enforced.
-            candidates = self._template_candidates(db, session, strict=False)
+        candidates = self._recommendation_candidates(db, session)
         if not candidates:
             raise ShortformDomainError(
                 "NO_COMPATIBLE_ACTIVE_EDITING_TEMPLATE",
@@ -306,26 +305,7 @@ class ShortformAgentService:
                 status_code=409,
             )
 
-        graph_result = self._invoke_graph(
-            {
-                "mode": "RECOMMEND",
-                "domain_context": self.domain_context,
-                "store_context": session.store_context,
-                "project_state": session.project_state,
-                "conversation": session.conversation,
-                "candidate_templates": [item.model_dump(mode="json") for item in candidates],
-            }
-        )
-        selection = TemplateSelection.model_validate(graph_result["recommendation"])
-        by_key = {item.candidate_key: item for item in candidates}
-        selected = by_key.get(selection.candidate_key)
-        if selected is None:
-            raise ShortformDomainError(
-                "INVALID_LLM_TEMPLATE_SELECTION",
-                "The Shortform Agent selected a template outside the candidate pool.",
-                status_code=500,
-                retryable=True,
-            )
+        selection, selected = self._select_template(session, candidates)
 
         recommendation = ShortformRecommendation(
             recommendation_id=f"rec_{uuid.uuid4().hex}",
@@ -363,6 +343,79 @@ class ShortformAgentService:
             recommendation=recommendation,
         )
 
+    def _recommendation_candidates(
+        self,
+        db: Session,
+        session: ShortformSession,
+    ) -> list[TemplateCandidate]:
+        """Return compatible unseen candidates, starting a new cycle if needed."""
+
+        for strict in (True, False):
+            candidates = self._template_candidates(db, session, strict=strict)
+            if candidates:
+                return candidates
+
+        # `다시 추천` must not permanently exhaust a small, valid catalogue.
+        # Recycle only after every compatible template has already been shown;
+        # hard safety and physical constraints are still applied below.
+        if session.shown_template_ids:
+            original = list(session.shown_template_ids)
+            session.shown_template_ids = []
+            for strict in (True, False):
+                candidates = self._template_candidates(db, session, strict=strict)
+                if candidates:
+                    return candidates
+            session.shown_template_ids = original
+        return []
+
+    def _select_template(
+        self,
+        session: ShortformSession,
+        candidates: list[TemplateCandidate],
+    ) -> tuple[TemplateSelection, TemplateCandidate]:
+        """Prefer contextual selection and preserve availability on selector failure."""
+
+        try:
+            graph_result = self._invoke_graph(
+                {
+                    "mode": "RECOMMEND",
+                    "domain_context": self.domain_context,
+                    "store_context": session.store_context,
+                    "project_state": session.project_state,
+                    "conversation": session.conversation,
+                    "candidate_templates": [
+                        item.model_dump(mode="json") for item in candidates
+                    ],
+                }
+            )
+            selection = TemplateSelection.model_validate(graph_result["recommendation"])
+            selected = {item.candidate_key: item for item in candidates}.get(
+                selection.candidate_key
+            )
+            if selected is None:
+                raise ValueError("selection is outside the candidate pool")
+            return selection, selected
+        except Exception as exc:
+            # Conversation collection still depends on the LLM. Once the brief is
+            # confirmed, however, a selector outage must not erase an already-safe
+            # deterministic candidate pool.
+            selected = candidates[0]
+            logger.warning(
+                "Shortform recommendation selector failed; using %s (%s)",
+                selected.candidate_key,
+                type(exc).__name__,
+            )
+            return (
+                TemplateSelection(
+                    candidate_key=selected.candidate_key,
+                    project_title=f"{selected.recommendation_title or selected.name} 프로젝트",
+                    title=selected.recommendation_title or selected.name,
+                    concept=selected.recommendation_concept or selected.name,
+                    internal_reason="Deterministic fallback after selector failure.",
+                ),
+                selected,
+            )
+
     def _template_candidates(
         self,
         db: Session,
@@ -370,13 +423,7 @@ class ShortformAgentService:
         *,
         strict: bool,
     ) -> list[TemplateCandidate]:
-        rows = list(
-            db.scalars(
-                select(EditingTemplate)
-                .where(EditingTemplate.status == "ACTIVE")
-                .order_by(EditingTemplate.template_id.asc(), EditingTemplate.version.desc())
-            )
-        )
+        rows = self._active_template_rows(db)
         latest_by_id: dict[str, EditingTemplate] = {}
         for row in rows:
             latest_by_id.setdefault(row.template_id, row)
@@ -405,6 +452,26 @@ class ShortformAgentService:
                 )
             )
         return result
+
+    @staticmethod
+    def _active_template_rows(db: Session) -> list[EditingTemplate]:
+        def load() -> list[EditingTemplate]:
+            return list(
+                db.scalars(
+                    select(EditingTemplate)
+                    .where(EditingTemplate.status == "ACTIVE")
+                    .order_by(
+                        EditingTemplate.template_id.asc(),
+                        EditingTemplate.version.desc(),
+                    )
+                )
+            )
+
+        rows = load()
+        if rows:
+            return rows
+        seed_packaged_editing_templates(db)
+        return load()
 
     def _trend_context(self, db: Session, trend_ids: list[str]) -> list[dict[str, Any]]:
         if trend_ids:
