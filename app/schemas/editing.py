@@ -57,6 +57,7 @@ class EditingRunCreateRequest(BaseModel):
     project: EditingProject
     selected_shortform: SelectedShortform
     videos: list[EditingVideoInput] = Field(min_length=1, max_length=20)
+    shoot_mode: Literal["MULTI_CUT", "ONE_TAKE"] | None = None
     revision: str | None = None
 
     @model_validator(mode="after")
@@ -67,6 +68,10 @@ class EditingRunCreateRequest(BaseModel):
         orders = [video.shooting_scene_order for video in self.videos]
         if len(orders) != len(set(orders)):
             raise ValueError("shooting_scene_order must be unique")
+        if self.shoot_mode is None:
+            self.shoot_mode = "ONE_TAKE" if len(self.videos) == 1 else "MULTI_CUT"
+        if self.shoot_mode == "ONE_TAKE" and len(self.videos) != 1:
+            raise ValueError("ONE_TAKE requires exactly one video")
         return self
 
 
@@ -94,10 +99,37 @@ class EditingRunRead(BaseModel):
 
 
 class RecipeEffectParams(BaseModel):
+    """Renderer-safe effect parameters.
+
+    start_ms/end_ms are relative to the clip's output timeline after speed is
+    applied. The editing VLM derives them from frame-accurate user-video
+    evidence and the Gemini reference effect guide.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
-    scale_end: float | None = None
+    start_ms: int | None = Field(default=None, ge=0, le=60_000)
+    end_ms: int | None = Field(default=None, ge=0, le=60_000)
+    scale_start: float | None = Field(default=None, ge=1.0, le=1.2)
+    scale_end: float | None = Field(default=None, ge=1.0, le=1.2)
+    scale: float | None = Field(default=None, ge=1.0, le=1.05)
+    amplitude_x_pct: float | None = Field(default=None, ge=0.0, le=0.03)
+    amplitude_y_pct: float | None = Field(default=None, ge=0.0, le=0.03)
+    rotation_deg: float | None = Field(default=None, ge=-3.0, le=3.0)
+    translate_x_pct: float | None = Field(default=None, ge=-0.08, le=0.08)
+    translate_y_pct: float | None = Field(default=None, ge=-0.08, le=0.08)
+    frequency_hz: float | None = Field(default=None, ge=1.0, le=30.0)
+    damping: bool | None = None
+    opacity: float | None = Field(default=None, ge=0.0, le=1.0)
     tone: Literal["NATURAL", "WARM", "COOL", "VIVID"] | None = None
+
+    @model_validator(mode="after")
+    def validate_window(self) -> RecipeEffectParams:
+        if (self.start_ms is None) != (self.end_ms is None):
+            raise ValueError("effect start_ms and end_ms must be supplied together")
+        if self.start_ms is not None and self.end_ms is not None and self.start_ms >= self.end_ms:
+            raise ValueError("effect start_ms must be before end_ms")
+        return self
 
 
 class RecipeEffect(BaseModel):
