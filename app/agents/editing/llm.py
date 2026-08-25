@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import hashlib
 import json
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 import httpx
+from pydantic import BaseModel
 
-from app.agents.editing.types import EditingPlanDecision, VideoContext
+from app.agents.editing.types import (
+    EditingPlanDecision,
+    FrameBatchAnalysis,
+    FrameObservation,
+    SourceCutPlan,
+    VideoContext,
+)
 from app.agents.editing.reals import get_reals_registry
 from app.core.config import Settings, get_settings
+from app.db.session import SessionLocal
+from app.models.video_editing_db_record import VideoEditingDBRecord
 
 
 class EditingLLMError(RuntimeError):
@@ -45,7 +55,20 @@ class EditingLLM(Protocol):
 
 
 class OpenAIEditingLLM:
-    """Editing-specific Responses API application with strict structured output."""
+    """Frame-accurate editing planner on top of the Responses API.
+
+    MULTI_CUT:
+      1. Analyze every raw frame.
+      2. Match each raw cut to the reference-original segment context and choose
+         exact frame-boundary trims.
+      3. Re-map the already analyzed frames onto the produced timeline. The
+         assembled video is not redundantly re-read.
+
+    ONE_TAKE:
+      1. Read every third frame once for global context.
+      2. Read every frame before the final editing decision, because there was
+         no cut-edit stage that already provided frame-exact evidence.
+    """
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -54,6 +77,8 @@ class OpenAIEditingLLM:
         self.model = settings.editing_openai_model.strip()
         self.timeout = settings.editing_request_timeout_seconds
         self.max_output_tokens = settings.editing_max_output_tokens
+        self.analysis_batch_frames = int(getattr(settings, "editing_analysis_batch_frames", 24))
+        self._analysis_cache: dict[str, dict[str, Any]] = {}
 
     def plan_recipe(
         self,
@@ -67,18 +92,35 @@ class OpenAIEditingLLM:
         revision_action: str | None,
     ) -> EditingPlanDecision:
         task = "Revise the parent EditRecipe" if revision_action else "Create an EditRecipe"
+        reference_context = _load_reference_context(selected_shortform)
+        cache_key = _analysis_cache_key(selected_shortform, video_contexts)
+        prepared = self._prepare_frame_analysis(
+            video_contexts=video_contexts,
+            video_editing_db=video_editing_db,
+            reference_context=reference_context,
+            revision_action=revision_action,
+        )
+        self._analysis_cache[cache_key] = prepared
         payload = {
             "task": task,
             "project": project,
             "selected_shortform": selected_shortform,
             "video_editing_db": video_editing_db,
-            "video_contexts": _text_video_contexts(video_contexts),
+            "reference_original_context": reference_context,
+            "source_preparation": prepared["source_preparation"],
+            "one_take_overview": prepared.get("one_take_overview"),
+            "produced_frame_context": prepared["produced_frame_context"],
             "parent_recipe": parent_recipe,
             "revision_action": revision_action,
             "renderer_capabilities": _renderer_capabilities(),
-            "requirements": _requirements(),
+            "requirements": _requirements(prepared["source_preparation"]),
         }
-        return self._request(domain_context, payload, video_contexts, "editing_plan")
+        return self._request_model(
+            schema_model=EditingPlanDecision,
+            instructions=domain_context,
+            user_payload=payload,
+            schema_name="editing_plan",
+        )
 
     def repair_recipe(
         self,
@@ -93,52 +135,281 @@ class OpenAIEditingLLM:
         parent_recipe: dict[str, Any] | None,
         revision_action: str | None,
     ) -> EditingPlanDecision:
+        cache_key = _analysis_cache_key(selected_shortform, video_contexts)
+        prepared = self._analysis_cache.get(cache_key)
+        if prepared is None:
+            prepared = self._prepare_frame_analysis(
+                video_contexts=video_contexts,
+                video_editing_db=video_editing_db,
+                reference_context=_load_reference_context(selected_shortform),
+                revision_action=revision_action,
+            )
+            self._analysis_cache[cache_key] = prepared
         payload = {
             "task": "Repair the EditRecipe so every deterministic validation error is fixed.",
             "project": project,
             "selected_shortform": selected_shortform,
             "video_editing_db": video_editing_db,
-            "video_contexts": _text_video_contexts(video_contexts),
+            "reference_original_context": prepared["reference_context"],
+            "source_preparation": prepared["source_preparation"],
+            "one_take_overview": prepared.get("one_take_overview"),
+            "produced_frame_context": prepared["produced_frame_context"],
             "invalid_decision": decision.model_dump(mode="json"),
             "validation_errors": validation_errors,
             "parent_recipe": parent_recipe,
             "revision_action": revision_action,
             "renderer_capabilities": _renderer_capabilities(),
-            "requirements": _requirements(),
+            "requirements": _requirements(prepared["source_preparation"]),
         }
-        return self._request(domain_context, payload, video_contexts, "editing_plan_repair")
+        return self._request_model(
+            schema_model=EditingPlanDecision,
+            instructions=domain_context,
+            user_payload=payload,
+            schema_name="editing_plan_repair",
+        )
 
-    def _request(
+    def _prepare_frame_analysis(
         self,
-        instructions: str,
-        user_payload: dict[str, Any],
+        *,
         video_contexts: list[VideoContext],
-        schema_name: str,
-    ) -> EditingPlanDecision:
-        if not self.api_key or not self.model:
-            raise EditingLLMError(
-                "OPENAI_API_KEY or EDITING_OPENAI_MODEL is not configured.", retryable=False
+        video_editing_db: dict[str, Any],
+        reference_context: dict[str, Any],
+        revision_action: str | None,
+    ) -> dict[str, Any]:
+        multi_cut = len(video_contexts) > 1
+        if multi_cut:
+            analyzed = [
+                self._analyze_video_frames(
+                    context=context,
+                    frames=context.keyframes,
+                    purpose="MULTI_CUT_SOURCE_FRAME_EXACT",
+                    reference_context=reference_context,
+                    video_editing_db=video_editing_db,
+                )
+                for context in video_contexts
+            ]
+            source_plan = self._plan_source_cuts(
+                video_contexts=video_contexts,
+                analyzed=analyzed,
+                video_editing_db=video_editing_db,
+                reference_context=reference_context,
+                revision_action=revision_action,
             )
-
-        content: list[dict[str, Any]] = [
-            {
-                "type": "input_text",
-                "text": json.dumps(user_payload, ensure_ascii=False, default=str),
+            produced = _map_cut_analysis_to_produced(analyzed, source_plan)
+            return {
+                "reference_context": reference_context,
+                "source_preparation": source_plan.model_dump(mode="json"),
+                "produced_frame_context": produced,
             }
-        ]
-        for context in video_contexts:
-            for frame in context.keyframes:
+
+        context = video_contexts[0]
+        overview = self._analyze_video_frames(
+            context=context,
+            frames=context.keyframes[::3] or context.keyframes[:1],
+            purpose="ONE_TAKE_GLOBAL_EVERY_3_FRAMES",
+            reference_context=reference_context,
+            video_editing_db=video_editing_db,
+        )
+        detailed = self._analyze_video_frames(
+            context=context,
+            frames=context.keyframes,
+            purpose="ONE_TAKE_FINAL_FRAME_EXACT",
+            reference_context=reference_context,
+            video_editing_db=video_editing_db,
+            prior_summary=overview["summary"],
+        )
+        produced_observations = []
+        for observation in detailed["observations"]:
+            item = dict(observation)
+            item["produced_timestamp_ms"] = item["timestamp_ms"]
+            produced_observations.append(item)
+        return {
+            "reference_context": reference_context,
+            "source_preparation": {
+                "mode": "ONE_TAKE_PASSTHROUGH",
+                "video_id": context.video_id,
+                "trim_in_ms": 0,
+                "trim_out_ms": context.duration_ms,
+            },
+            "one_take_overview": overview,
+            "produced_frame_context": {
+                "mode": "ONE_TAKE",
+                "duration_ms": context.duration_ms,
+                "summary": detailed["summary"],
+                "observations": produced_observations,
+            },
+        }
+
+    def _analyze_video_frames(
+        self,
+        *,
+        context: VideoContext,
+        frames: list[Any],
+        purpose: str,
+        reference_context: dict[str, Any],
+        video_editing_db: dict[str, Any],
+        prior_summary: str | None = None,
+    ) -> dict[str, Any]:
+        if not frames:
+            raise EditingLLMError(f"No frame evidence for video_id={context.video_id}.", retryable=False)
+        observations: list[dict[str, Any]] = []
+        summaries: list[str] = []
+        batch_size = max(1, min(self.analysis_batch_frames, 40))
+        for start in range(0, len(frames), batch_size):
+            batch = frames[start : start + batch_size]
+            payload = {
+                "task": (
+                    "Analyze every supplied frame independently and in temporal context. "
+                    "Return one observation for every input frame. Identify action phase, subject "
+                    "position/scale, composition, camera/motion, rotation, quality, semantic event, "
+                    "and whether this exact frame is a natural cut-transition boundary."
+                ),
+                "purpose": purpose,
+                "video": {
+                    "video_id": context.video_id,
+                    "duration_ms": context.duration_ms,
+                    "width": context.width,
+                    "height": context.height,
+                    "fps": context.fps,
+                    "shooting_scene_order": context.shooting_scene_order,
+                },
+                "reference_original_context": reference_context,
+                "video_editing_db": {
+                    "shooting_guide": video_editing_db.get("shooting_guide") or {},
+                    "editing_rules": video_editing_db.get("editing_rules") or {},
+                },
+                "prior_summary": prior_summary,
+                "frame_manifest": [
+                    {"frame_index": item.frame_index, "timestamp_ms": item.timestamp_ms}
+                    for item in batch
+                ],
+                "coordinate_rules": {
+                    "subject_x_y": "normalized 0..1 from top-left",
+                    "subject_scale": "fraction of frame occupied by primary subject, 0..1",
+                    "rotation_deg": "observed visual/camera tilt, clockwise positive",
+                    "cut_transition_score": "0..1 confidence this exact frame is a natural boundary",
+                },
+            }
+            content: list[dict[str, Any]] = [
+                {
+                    "type": "input_text",
+                    "text": json.dumps(payload, ensure_ascii=False, default=str),
+                }
+            ]
+            for frame in batch:
                 content.append(
                     {
                         "type": "input_text",
-                        "text": f"video_id={context.video_id}, timestamp_ms={frame.timestamp_ms}",
+                        "text": (
+                            f"video_id={context.video_id}, frame_index={frame.frame_index}, "
+                            f"timestamp_ms={frame.timestamp_ms}"
+                        ),
                     }
                 )
                 content.append(
                     {"type": "input_image", "image_url": frame.image_url, "detail": "low"}
                 )
+            result = self._request_model(
+                schema_model=FrameBatchAnalysis,
+                instructions=(
+                    "You are the frame-accurate vision stage of SARILS Editing Agent. "
+                    "Use the reference-original context as the target editing grammar, but never "
+                    "invent content absent from the user frame. A cut boundary must be grounded in "
+                    "the observed action/state transition. Use the same semantic-event and framing "
+                    "concepts used by the reference analysis so later effects can be matched."
+                ),
+                user_payload=None,
+                schema_name="editing_frame_batch",
+                content_override=content,
+            )
+            summaries.append(result.summary)
+            by_index = {item.frame_index: item for item in result.observations}
+            for frame in batch:
+                observed = by_index.get(frame.frame_index)
+                if observed is None:
+                    observed = FrameObservation(
+                        video_id=context.video_id,
+                        frame_index=frame.frame_index,
+                        timestamp_ms=frame.timestamp_ms,
+                    )
+                else:
+                    observed = observed.model_copy(
+                        update={
+                            "video_id": context.video_id,
+                            "frame_index": frame.frame_index,
+                            "timestamp_ms": frame.timestamp_ms,
+                        }
+                    )
+                observations.append(observed.model_dump(mode="json"))
+        return {
+            "video_id": context.video_id,
+            "shooting_scene_order": context.shooting_scene_order,
+            "duration_ms": context.duration_ms,
+            "fps": context.fps,
+            "summary": " ".join(value for value in summaries if value)[:8000],
+            "observations": observations,
+        }
 
-        schema = _make_strict_schema(EditingPlanDecision.model_json_schema())
+    def _plan_source_cuts(
+        self,
+        *,
+        video_contexts: list[VideoContext],
+        analyzed: list[dict[str, Any]],
+        video_editing_db: dict[str, Any],
+        reference_context: dict[str, Any],
+        revision_action: str | None,
+    ) -> SourceCutPlan:
+        payload = {
+            "task": (
+                "Create the MULTI_CUT source-preparation plan before creative editing. "
+                "Map each user raw cut to the most corresponding reference-original segment. "
+                "Choose trim boundaries only on supplied exact-frame timestamps, preferring frames "
+                "marked as natural cut-transition candidates. Preserve capture order. The reference "
+                "segment context is the target structure; actual user footage is the hard evidence constraint."
+            ),
+            "reference_original_context": reference_context,
+            "video_editing_db": video_editing_db,
+            "revision_action": revision_action,
+            "raw_frame_analysis": analyzed,
+            "hard_rules": [
+                "Do not reorder raw cuts.",
+                "Do not invent a reference segment that is not present in reference context/guide.",
+                "trim_in_ms and trim_out_ms must exactly equal observed frame timestamps.",
+                "Prefer action/state boundaries and transition-candidate frames over arbitrary times.",
+                "Keep the selected user content as similar as possible to the corresponding reference segment.",
+            ],
+        }
+        return self._request_model(
+            schema_model=SourceCutPlan,
+            instructions=(
+                "You plan only source cuts. Do not choose captions, effects, color, zoom, or publishing copy."
+            ),
+            user_payload=payload,
+            schema_name="editing_source_cut_plan",
+        )
+
+    def _request_model(
+        self,
+        *,
+        schema_model: type[_ModelT],
+        instructions: str,
+        user_payload: dict[str, Any] | None,
+        schema_name: str,
+        content_override: list[dict[str, Any]] | None = None,
+    ) -> _ModelT:
+        if not self.api_key or not self.model:
+            raise EditingLLMError(
+                "OPENAI_API_KEY or EDITING_OPENAI_MODEL is not configured.", retryable=False
+            )
+        content = content_override
+        if content is None:
+            content = [
+                {
+                    "type": "input_text",
+                    "text": json.dumps(user_payload or {}, ensure_ascii=False, default=str),
+                }
+            ]
+        schema = _make_strict_schema(schema_model.model_json_schema())
         request_payload = {
             "model": self.model,
             "instructions": instructions,
@@ -156,7 +427,7 @@ class OpenAIEditingLLM:
             "store": False,
         }
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx.Client(timeout=max(self.timeout, 60)) as client:
                 response = client.post(
                     f"{self.base_url}/responses",
                     headers={
@@ -169,7 +440,6 @@ class OpenAIEditingLLM:
             raise EditingLLMError("Editing GPT request timed out.") from exc
         except httpx.HTTPError as exc:
             raise EditingLLMError("Editing GPT request failed.") from exc
-
         if response.status_code >= 400:
             retryable = response.status_code == 429 or response.status_code >= 500
             raise EditingLLMError(
@@ -177,27 +447,89 @@ class OpenAIEditingLLM:
                 retryable=retryable,
             )
         try:
-            data = response.json()
-            output_text = _extract_output_text(data)
-            parsed = json.loads(output_text)
-            return EditingPlanDecision.model_validate(parsed)
+            parsed = json.loads(_extract_output_text(response.json()))
+            return schema_model.model_validate(parsed)
         except (ValueError, TypeError) as exc:
             raise EditingLLMError("Editing GPT returned invalid structured output.") from exc
 
 
-def _text_video_contexts(contexts: list[VideoContext]) -> list[dict[str, Any]]:
-    return [
-        {
-            "video_id": item.video_id,
-            "shooting_scene_order": item.shooting_scene_order,
-            "duration_ms": item.duration_ms,
-            "width": item.width,
-            "height": item.height,
-            "fps": item.fps,
-            "keyframe_timestamps_ms": [frame.timestamp_ms for frame in item.keyframes],
-        }
-        for item in contexts
-    ]
+def _map_cut_analysis_to_produced(
+    analyzed: list[dict[str, Any]],
+    source_plan: SourceCutPlan,
+) -> dict[str, Any]:
+    by_video = {item["video_id"]: item for item in analyzed}
+    cursor = 0
+    output: list[dict[str, Any]] = []
+    for cut in source_plan.cuts:
+        source = by_video.get(cut.video_id)
+        if source is None:
+            continue
+        for observation in source["observations"]:
+            timestamp = int(observation["timestamp_ms"])
+            if timestamp < cut.trim_in_ms or timestamp > cut.trim_out_ms:
+                continue
+            item = dict(observation)
+            item["mapped_reference_segment_id"] = cut.mapped_reference_segment_id
+            item["produced_timestamp_ms"] = cursor + timestamp - cut.trim_in_ms
+            output.append(item)
+        cursor += cut.trim_out_ms - cut.trim_in_ms
+    return {
+        "mode": "MULTI_CUT",
+        "duration_ms": cursor,
+        "summary": source_plan.rationale,
+        "observations": output,
+    }
+
+
+def _load_reference_context(selected_shortform: dict[str, Any]) -> dict[str, Any]:
+    template_id = str(selected_shortform.get("video_editing_db_id") or "")
+    version = int(selected_shortform.get("video_editing_db_version") or 0)
+    if not template_id or version <= 0:
+        return {}
+    try:
+        with SessionLocal() as db:
+            row = db.get(VideoEditingDBRecord, (template_id, version))
+            if row is None:
+                return {}
+            return {
+                "template_id": row.template_id,
+                "version": row.version,
+                "evidence_summary": row.evidence_summary or {},
+                "shooting_guide": row.shooting_guide or {},
+                "editing_rules": row.editing_rules or {},
+            }
+    except Exception:
+        return {}
+
+
+def _analysis_cache_key(
+    selected_shortform: dict[str, Any], contexts: list[VideoContext]
+) -> str:
+    payload = {
+        "template": selected_shortform,
+        "videos": [
+            {
+                "video_id": item.video_id,
+                "duration_ms": item.duration_ms,
+                "fps": item.fps,
+                "frame_count": len(item.keyframes),
+                "first": (
+                    hashlib.sha256(item.keyframes[0].image_url.encode()).hexdigest()[:16]
+                    if item.keyframes
+                    else ""
+                ),
+                "last": (
+                    hashlib.sha256(item.keyframes[-1].image_url.encode()).hexdigest()[:16]
+                    if item.keyframes
+                    else ""
+                ),
+            }
+            for item in contexts
+        ],
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
 
 
 def _renderer_capabilities(settings: Settings | None = None) -> dict[str, Any]:
@@ -213,11 +545,12 @@ def _renderer_capabilities(settings: Settings | None = None) -> dict[str, Any]:
         runtime_settings.editing_max_output_duration_seconds
     )
     capabilities["max_input_videos"] = runtime_settings.editing_max_videos_per_run
+    capabilities["timed_effect_window"] = "clip-relative start_ms/end_ms"
     return capabilities
 
 
-def _requirements() -> list[str]:
-    return [
+def _requirements(source_preparation: dict[str, Any]) -> list[str]:
+    requirements = [
         "clip_order must be consecutive from 1 and timeline_start_ms must be gapless from 0.",
         "Preserve ascending shooting_scene_order and use only supplied video ids.",
         "Every source timestamp must be inside that video's duration.",
@@ -226,7 +559,16 @@ def _requirements() -> list[str]:
         "Use only renderer capabilities and the video-editing DB editing_rules.",
         "Keep captions at most 40 characters each and at most 8 captions total.",
         "Publishing post_note must tell the user to add music in the platform.",
+        "Match reference-original composition/effect grammar using the frame-exact user evidence; do not copy unsupported content.",
+        "Timed effect params start_ms/end_ms are relative to the host clip after speed and must align to analyzed semantic events.",
     ]
+    if source_preparation.get("mode") == "MULTI_CUT":
+        requirements.append(
+            "The final recipe must preserve the source-preparation video order and exact trim_in_ms/trim_out_ms boundaries."
+        )
+    else:
+        requirements.append("ONE_TAKE is passthrough for source preparation; do not invent multi-cut assembly.")
+    return requirements
 
 
 def _make_strict_schema(value: Any) -> Any:
@@ -257,3 +599,6 @@ def _extract_output_text(payload: dict[str, Any]) -> str:
                     return text
     value = payload.get("output_text")
     return value if isinstance(value, str) else ""
+
+
+_ModelT = TypeVar("_ModelT", bound=BaseModel)
