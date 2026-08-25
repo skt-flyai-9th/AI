@@ -109,8 +109,8 @@ def test_one_take_reads_stride_three_then_every_frame():
 
 def test_multi_cut_reads_each_raw_cut_every_frame_without_reread():
     planner = _ProbePlanner()
-    first = _context("cut_1", 1, count=8)
-    second = _context("cut_2", 2, count=7)
+    first = _context("cut_1", 1, count=12)
+    second = _context("cut_2", 2, count=12)
 
     result = OpenAIEditingLLM._prepare_frame_analysis(
         planner,
@@ -122,8 +122,8 @@ def test_multi_cut_reads_each_raw_cut_every_frame_without_reread():
     )
 
     assert planner.calls == [
-        ("MULTI_CUT_SOURCE_FRAME_EXACT", list(range(8))),
-        ("MULTI_CUT_SOURCE_FRAME_EXACT", list(range(7))),
+        ("MULTI_CUT_SOURCE_FRAME_EXACT", list(range(12))),
+        ("MULTI_CUT_SOURCE_FRAME_EXACT", list(range(12))),
     ]
     assert result["source_preparation"]["mode"] == "MULTI_CUT"
     assert result["produced_frame_context"]["mode"] == "MULTI_CUT"
@@ -172,7 +172,12 @@ def test_cut_plan_is_snapped_to_real_frames_and_capture_order():
         rationale="test",
     )
 
-    normalized = _normalize_source_cut_plan(plan, [first, second], analyzed)
+    normalized = _normalize_source_cut_plan(
+        plan,
+        [first, second],
+        analyzed,
+        min_cut_ms=100,
+    )
 
     assert [item.video_id for item in normalized.cuts] == ["cut_1", "cut_2"]
     valid_first = {item.timestamp_ms for item in first.keyframes}
