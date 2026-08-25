@@ -12,7 +12,7 @@
       "format_type": "밈",
       "expected_duration_sec": 10,
       "shooting_difficulty": "중",
-      "face_exposure_level": "낮음"
+      "requires_face": false
     },
     {
       "id": "cafe_recommendation_reels",
@@ -24,7 +24,7 @@
       "format_type": "정보형",
       "expected_duration_sec": 13,
       "shooting_difficulty": "중",
-      "face_exposure_level": "낮음"
+      "requires_face": false
     },
     {
       "id": "otsukare_summer_challenge",
@@ -36,7 +36,7 @@
       "format_type": "챌린지",
       "expected_duration_sec": 12,
       "shooting_difficulty": "중",
-      "face_exposure_level": "높음"
+      "requires_face": true
     }
   ]
 }

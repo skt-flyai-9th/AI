@@ -42,9 +42,7 @@ def _difficulty_label(source_lines: list[dict[str, Any]], challenge_id: str) -> 
     return None
 
 
-def _video_format_metadata(
-    source: dict[str, Any], challenge_id: str
-) -> dict[str, Any]:
+def _video_format_metadata(source: dict[str, Any], challenge_id: str) -> dict[str, Any]:
     segments = [
         row
         for row in source["datasets"]["03_GUIDE_TEMPLATES"]["records"]
@@ -59,17 +57,15 @@ def _video_format_metadata(
         # API 5.1 defines this as the completed video's duration, not filming time.
         "expected_duration_sec": math.ceil(end_ms / 1000) if end_ms else None,
         "shooting_difficulty": _difficulty_label(source_lines, challenge_id),
-        # The app renders 낮음 as "얼굴노출없음".  This is about whether the
-        # format requires a face, not whether the reference happens to show one.
-        "face_exposure_level": "높음" if requires_face else "낮음",
+        # Preserve the AI template's native boolean contract. Presentation
+        # labels belong to downstream services and clients.
+        "requires_face": requires_face,
     }
 
 
 @lru_cache(maxsize=1)
 def _video_format_metadata_by_challenge() -> dict[str, dict[str, Any]]:
-    source_path = resources.files("app.template_knowledge.sources").joinpath(
-        "video_editing.json"
-    )
+    source_path = resources.files("app.template_knowledge.sources").joinpath("video_editing.json")
     source = json.loads(source_path.read_text(encoding="utf-8"))
     return {
         challenge_id: _video_format_metadata(source, challenge_id)
@@ -85,9 +81,7 @@ def get_video_format_metadata(challenge_id: str) -> dict[str, Any]:
 def build_video_editing_db_trendcluster() -> dict[str, Any]:
     """Build the initial trendcluster from the provided video-editing DB."""
 
-    source_path = resources.files("app.template_knowledge.sources").joinpath(
-        "video_editing.json"
-    )
+    source_path = resources.files("app.template_knowledge.sources").joinpath("video_editing.json")
     source = json.loads(source_path.read_text(encoding="utf-8"))
     rows = list(source["datasets"]["02_INPUT_GUIDES"]["records"])
     results: list[dict[str, Any]] = []

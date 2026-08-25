@@ -16,7 +16,7 @@ class ChallengeRead(BaseModel):
     format_type: str | None = None
     expected_duration_sec: int | None = None
     shooting_difficulty: str | None = None
-    face_exposure_level: str | None = None
+    requires_face: bool | None = None
     automatic_rank: int | None
     automatic_score: float
     lifecycle: str
