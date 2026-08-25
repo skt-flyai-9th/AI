@@ -231,6 +231,44 @@ class ShortformAgentService:
             scene["scene_subtitle"] = str(scene.get("scene_subtitle") or "")
             scenes.append(scene)
 
+        tasks = []
+        for index, item in enumerate(guide.get("tasks") or [], start=1):
+            task = dict(item)
+            display_order = int(task.get("display_order") or task.get("task_order") or index)
+            scene_index = task.get("scene_index")
+            if scene_index is None and task.get("shooting_scene_order") is not None:
+                scene_index = int(task["shooting_scene_order"]) - 1
+            if scene_index is None:
+                scene_index = display_order - 1
+
+            task_title = str(
+                task.get("task_title")
+                or task.get("title")
+                or task.get("description")
+                or "촬영 태스크"
+            ).strip()[:200] or "촬영 태스크"
+            raw_guide = task.get("guide") if isinstance(task.get("guide"), dict) else {}
+            raw_instructions = raw_guide.get("instructions") or []
+            if isinstance(raw_instructions, str):
+                raw_instructions = [raw_instructions]
+            instructions = [
+                str(value).strip()[:500]
+                for value in raw_instructions
+                if str(value).strip()
+            ]
+            legacy_description = str(task.get("description") or "").strip()
+            if not instructions and legacy_description:
+                instructions = [legacy_description[:500]]
+
+            tasks.append(
+                {
+                    "display_order": display_order,
+                    "task_title": task_title,
+                    "scene_index": int(scene_index),
+                    "guide": {"instructions": instructions},
+                }
+            )
+
         estimated_shooting_sec = guide.get("estimated_shooting_sec")
         if not estimated_shooting_sec:
             final_duration = sum(
@@ -250,7 +288,7 @@ class ShortformAgentService:
                 or "중"
             ),
             scenes=scenes,
-            tasks=list(guide.get("tasks") or []),
+            tasks=tasks,
         )
 
     def _confirm_and_recommend(

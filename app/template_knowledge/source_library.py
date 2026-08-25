@@ -428,8 +428,12 @@ def _editing_content(
         )
         tasks.append(
             {
-                "task_order": order,
-                "description": _bounded(str(row["action_pattern"]), 500),
+                "display_order": order,
+                "task_title": _bounded(str(row["scene_summary"]), 200),
+                "scene_index": order - 1,
+                "guide": {
+                    "instructions": [_bounded(str(row["action_pattern"]), 500)],
+                },
             }
         )
     concept = _bounded(

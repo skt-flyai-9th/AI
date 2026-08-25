@@ -128,6 +128,19 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
             is None
         )
         assert len(list(db.scalars(select(VideoEditingDBRecord)))) == 3
+        imported_editing = db.scalar(
+            select(VideoEditingDBRecord).where(
+                VideoEditingDBRecord.template_id == "gt_jujutsu_transition"
+            )
+        )
+        assert imported_editing is not None
+        first_task = imported_editing.shooting_guide["tasks"][0]
+        assert first_task["display_order"] == 1
+        assert first_task["scene_index"] == 0
+        assert first_task["task_title"]
+        assert first_task["guide"]["instructions"]
+        assert "task_type" not in first_task
+        assert "guide_type" not in first_task["guide"]
         assert len(list(db.scalars(select(TemplateSourceBundle)))) == 2
         assert db.scalar(select(TemplateSourceRecord)) is not None
         assert result["trade_area"]["status"] == "ACTIVE"

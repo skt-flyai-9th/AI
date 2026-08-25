@@ -136,7 +136,12 @@ def _seed_video_editing_db(
                             "target_duration_sec": 3,
                         }
                     ],
-                    "tasks": [],
+                    "tasks": [
+                        {
+                            "task_order": 1,
+                            "description": "완성된 메뉴를 화면 중앙에 촬영합니다.",
+                        }
+                    ],
                 },
                 editing_rules={},
                 trend_ids=[],
@@ -210,6 +215,16 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
         assert guide.status_code == 200
         assert guide.json()["template_id"] == "video_editing_db_028"
         assert guide.json()["scenes"][0]["scene_order"] == 1
+        assert guide.json()["tasks"] == [
+            {
+                "display_order": 1,
+                "task_title": "완성된 메뉴를 화면 중앙에 촬영합니다.",
+                "scene_index": 0,
+                "guide": {"instructions": ["완성된 메뉴를 화면 중앙에 촬영합니다."]},
+            }
+        ]
+        assert "task_type" not in guide.json()["tasks"][0]
+        assert "guide_type" not in guide.json()["tasks"][0]["guide"]
 
         deleted = client.delete(
             f"/api/v1/shortform-sessions/{session_id}",

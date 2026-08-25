@@ -222,6 +222,20 @@ POST /api/v1/shortform-sessions/{session_id}/recommendations/next
 GET /api/v1/editing-templates/{template_id}/versions/{version}/shooting-guide
 ```
 
+`tasks`는 장면 순서와 촬영 안내만 반환한다. `scene_index`는 `scenes`의 0-based
+인덱스이며, `task_type`과 `guide_type`은 계약에 포함하지 않는다.
+
+```json
+{
+  "display_order": 1,
+  "task_title": "첫 번째 손짓 변환 촬영",
+  "scene_index": 0,
+  "guide": {
+    "instructions": ["손짓 직후 메뉴가 등장하도록 촬영하세요."]
+  }
+}
+```
+
 새로고침이나 프로젝트 취소로 대화를 폐기할 때는 세션을 삭제한다.
 
 ```http

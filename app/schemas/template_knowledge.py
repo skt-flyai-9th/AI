@@ -139,11 +139,19 @@ class ShootingGuideScene(BaseModel):
     target_duration_sec: float = Field(gt=0, le=30)
 
 
+class ShootingGuideTaskGuide(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instructions: list[str] = Field(default_factory=list, max_length=20)
+
+
 class ShootingGuideTask(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    task_order: int = Field(ge=1)
-    description: str = Field(min_length=1, max_length=500)
+    display_order: int = Field(ge=1)
+    task_title: str = Field(min_length=1, max_length=200)
+    scene_index: int = Field(ge=0)
+    guide: ShootingGuideTaskGuide
 
 
 class EditingRecommendationMetadata(BaseModel):
