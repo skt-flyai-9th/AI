@@ -200,7 +200,12 @@ class OpenAIEditingLLM:
                 reference_context=reference_context,
                 revision_action=revision_action,
             )
-            source_plan = _normalize_source_cut_plan(source_plan, video_contexts, analyzed)
+            source_plan = _normalize_source_cut_plan(
+                source_plan,
+                video_contexts,
+                analyzed,
+                min_cut_ms=_source_min_cut_ms(video_editing_db),
+            )
             produced = _map_cut_analysis_to_produced(analyzed, source_plan)
             return {
                 "reference_context": reference_context,
@@ -372,6 +377,7 @@ class OpenAIEditingLLM:
         reference_context: dict[str, Any],
         revision_action: str | None,
     ) -> SourceCutPlan:
+        min_cut_ms = _source_min_cut_ms(video_editing_db)
         payload = {
             "task": (
                 "Create the MULTI_CUT source-preparation plan before creative editing. "
@@ -388,6 +394,7 @@ class OpenAIEditingLLM:
                 "Do not reorder raw cuts.",
                 "Do not invent a reference segment that is not present in reference context/guide.",
                 "trim_in_ms and trim_out_ms must exactly equal observed frame timestamps.",
+                f"Every selected source cut must span at least {min_cut_ms}ms before creative speed changes.",
                 "Prefer action/state boundaries and transition-candidate frames over arbitrary times.",
                 "Keep the selected user content as similar as possible to the corresponding reference segment.",
             ],
@@ -482,12 +489,57 @@ def _nearest_timestamp(value: int, timestamps: list[int]) -> int:
     return min(timestamps, key=lambda item: abs(item - value))
 
 
+def _source_min_cut_ms(video_editing_db: dict[str, Any]) -> int:
+    rules = video_editing_db.get("editing_rules") or {}
+    registry_min = int(get_reals_registry().edit_policies.get("min_cut_duration_ms", 300))
+    try:
+        database_min = int(rules.get("min_cut_duration_ms") or 0)
+    except (TypeError, ValueError):
+        database_min = 0
+    return max(registry_min, database_min, 1)
+
+
+def _expand_frame_exact_window(
+    trim_in: int,
+    trim_out: int,
+    timestamps: list[int],
+    min_cut_ms: int,
+) -> tuple[int, int]:
+    if trim_out - trim_in >= min_cut_ms:
+        return trim_in, trim_out
+
+    best: tuple[int, int] | None = None
+    best_cost: tuple[int, int] | None = None
+    for start in timestamps:
+        if start > trim_in:
+            break
+        minimum_end = max(trim_out, start + min_cut_ms)
+        end = next((item for item in timestamps if item >= minimum_end), None)
+        if end is None:
+            continue
+        cost = (end - start, abs(start - trim_in) + abs(end - trim_out))
+        if best_cost is None or cost < best_cost:
+            best = (start, end)
+            best_cost = cost
+    if best is not None:
+        return best
+
+    if timestamps[-1] - timestamps[0] >= min_cut_ms:
+        return timestamps[0], timestamps[-1]
+    raise EditingLLMError(
+        "Frame-exact source evidence cannot satisfy the minimum cut duration.",
+        retryable=False,
+    )
+
+
 def _normalize_source_cut_plan(
     plan: SourceCutPlan,
     contexts: list[VideoContext],
     analyzed: list[dict[str, Any]],
+    *,
+    min_cut_ms: int = 300,
 ) -> SourceCutPlan:
-    """Snap GPT cut decisions to real frames and restore capture order."""
+    """Snap GPT cuts to real frames, preserve order, and prevent repair deadlocks."""
     analyzed_by_video = {item["video_id"]: item for item in analyzed}
     plan_by_video = {item.video_id: item for item in plan.cuts}
     normalized = []
@@ -515,6 +567,18 @@ def _normalize_source_cut_plan(
         trim_out = _nearest_timestamp(cut.trim_out_ms, timestamps)
         if trim_out <= trim_in:
             trim_in, trim_out = timestamps[0], timestamps[-1]
+        try:
+            trim_in, trim_out = _expand_frame_exact_window(
+                trim_in,
+                trim_out,
+                timestamps,
+                min_cut_ms,
+            )
+        except EditingLLMError as exc:
+            raise EditingLLMError(
+                f"{exc} video_id={context.video_id}, min_cut_ms={min_cut_ms}.",
+                retryable=False,
+            ) from exc
         normalized.append(
             cut.model_copy(
                 update={
