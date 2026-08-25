@@ -24,6 +24,11 @@ def test_checked_in_trendcluster_matches_provided_video_editing_db():
         "카페 추천 리뷰 릴스",
         "오츠카레 썸머 챌린지",
     ]
+    assert [item["category"] for item in checked_in["results"]] == [
+        "meme",
+        "food",
+        "challenge",
+    ]
     assert all(
         item["representative_youtube_url"] == item["guide_youtube_url"]
         for item in checked_in["results"]

@@ -7,6 +7,12 @@ from typing import Any
 
 TRENDCLUSTER_FILENAME = "trendcluster.json"
 
+_SEED_CATEGORIES = {
+    "jujutsu_transition": "meme",
+    "cafe_recommendation_reels": "food",
+    "otsukare_summer_challenge": "challenge",
+}
+
 
 def build_video_editing_db_trendcluster() -> dict[str, Any]:
     """Build the initial trendcluster from the provided video-editing DB."""
@@ -24,15 +30,19 @@ def build_video_editing_db_trendcluster() -> dict[str, Any]:
         rank = row.get("rank")
         if rank is None:
             continue
+        challenge_id = str(row["id"])
+        if challenge_id not in _SEED_CATEGORIES:
+            raise ValueError(f"Missing seed category for trendcluster entry: {challenge_id}")
         guide_url = str(row.get("guide_youtube_url") or "").strip() or None
         generated = str(row.get("generated_at") or "").strip()
         if generated:
             generated_at.append(generated)
         results.append(
             {
-                "id": str(row["id"]),
+                "id": challenge_id,
                 "rank": int(rank),
                 "name": str(row["name"]),
+                "category": _SEED_CATEGORIES[challenge_id],
                 "representative_youtube_url": guide_url,
                 "guide_youtube_url": guide_url,
             }
