@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 from typing_extensions import TypedDict
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.editing import EditRecipe, PublishingResult
 
@@ -12,7 +12,8 @@ from app.schemas.editing import EditRecipe, PublishingResult
 class VideoKeyframe(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    timestamp_ms: int
+    frame_index: int = Field(default=0, ge=0)
+    timestamp_ms: int = Field(ge=0)
     image_url: str
 
 
@@ -26,6 +27,71 @@ class VideoContext(BaseModel):
     height: int
     fps: float
     keyframes: list[VideoKeyframe]
+
+
+class FrameObservation(BaseModel):
+    """One-frame semantic/geometry observation used to match Gemini evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    video_id: str
+    frame_index: int = Field(ge=0)
+    timestamp_ms: int = Field(ge=0)
+    semantic_event: str = "NONE"
+    subject: str = ""
+    subject_x: float | None = Field(default=None, ge=0, le=1)
+    subject_y: float | None = Field(default=None, ge=0, le=1)
+    subject_scale: float | None = Field(default=None, ge=0, le=1)
+    action: str = ""
+    action_phase: Literal["NONE", "START", "MIDDLE", "END", "HOLD"] = "NONE"
+    composition: str = ""
+    camera_motion: str = ""
+    motion_direction: str = ""
+    motion_strength: float = Field(default=0.0, ge=0, le=1)
+    observed_rotation_deg: float = Field(default=0.0, ge=-45, le=45)
+    observed_zoom_scale: float | None = Field(default=None, ge=0.5, le=2.0)
+    observed_translate_x_pct: float = Field(default=0.0, ge=-1.0, le=1.0)
+    observed_translate_y_pct: float = Field(default=0.0, ge=-1.0, le=1.0)
+    flash_level: float = Field(default=0.0, ge=0, le=1)
+    color_tone: Literal["NATURAL", "WARM", "COOL", "VIVID", "UNKNOWN"] = "UNKNOWN"
+    cut_transition_candidate: bool = False
+    cut_transition_score: float = Field(default=0.0, ge=0, le=1)
+    quality_flags: list[str] = Field(default_factory=list, max_length=10)
+    mapped_reference_segment_id: str | None = None
+    produced_timestamp_ms: int | None = Field(default=None, ge=0)
+
+
+class FrameBatchAnalysis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str = Field(max_length=2000)
+    observations: list[FrameObservation] = Field(min_length=1)
+
+
+class SourceCutDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    video_id: str
+    trim_in_ms: int = Field(ge=0)
+    trim_out_ms: int = Field(gt=0)
+    mapped_reference_segment_id: str
+    cut_in_reason: str = Field(max_length=500)
+    cut_out_reason: str = Field(max_length=500)
+    decision_reason: str = Field(max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> SourceCutDecision:
+        if self.trim_in_ms >= self.trim_out_ms:
+            raise ValueError("trim_in_ms must be before trim_out_ms")
+        return self
+
+
+class SourceCutPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["MULTI_CUT"] = "MULTI_CUT"
+    cuts: list[SourceCutDecision] = Field(min_length=1)
+    rationale: str = Field(max_length=2000)
 
 
 class ValidationIssue(BaseModel):
@@ -85,9 +151,13 @@ class EditingGraphState(TypedDict, total=False):
 
 
 def persistable_video_context(context: VideoContext) -> dict[str, Any]:
-    """Drop base64 images before DB persistence while retaining timestamp evidence."""
+    """Drop base64 images before DB persistence while retaining frame evidence."""
     data = context.model_dump(mode="json")
     data["keyframes"] = [
-        {"timestamp_ms": item["timestamp_ms"]} for item in data.get("keyframes", [])
+        {
+            "frame_index": item["frame_index"],
+            "timestamp_ms": item["timestamp_ms"],
+        }
+        for item in data.get("keyframes", [])
     ]
     return data

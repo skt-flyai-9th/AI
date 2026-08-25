@@ -355,6 +355,10 @@ def _database_payload(database_record: VideoEditingDBRecord) -> dict[str, Any]:
         "recommendation_concept": database_record.recommendation_concept,
         "shooting_guide": database_record.shooting_guide or {},
         "editing_rules": database_record.editing_rules or {},
+        # Existing DB column only: Gemini reference-video evidence is preserved
+        # here, so the Editing Agent can match user frames to the original-video
+        # segment/effect context without extending the video-editing DB schema.
+        "reference_evidence": database_record.evidence_summary or {},
     }
 
 

@@ -94,10 +94,32 @@ class EditingRunRead(BaseModel):
 
 
 class RecipeEffectParams(BaseModel):
+    """Renderer-safe parameters for frame-timed transform effects."""
+
     model_config = ConfigDict(extra="forbid")
 
-    scale_end: float | None = None
+    start_ms: int | None = Field(default=None, ge=0, le=60_000)
+    end_ms: int | None = Field(default=None, ge=0, le=60_000)
+    scale_start: float | None = Field(default=None, ge=1.0, le=1.2)
+    scale_end: float | None = Field(default=None, ge=1.0, le=1.2)
+    scale: float | None = Field(default=None, ge=1.0, le=1.05)
+    amplitude_x_pct: float | None = Field(default=None, ge=0.0, le=0.03)
+    amplitude_y_pct: float | None = Field(default=None, ge=0.0, le=0.03)
+    rotation_deg: float | None = Field(default=None, ge=-3.0, le=3.0)
+    translate_x_pct: float | None = Field(default=None, ge=-0.08, le=0.08)
+    translate_y_pct: float | None = Field(default=None, ge=-0.08, le=0.08)
+    frequency_hz: float | None = Field(default=None, ge=1.0, le=30.0)
+    damping: bool | None = None
+    opacity: float | None = Field(default=None, ge=0.0, le=1.0)
     tone: Literal["NATURAL", "WARM", "COOL", "VIVID"] | None = None
+
+    @model_validator(mode="after")
+    def validate_window(self) -> RecipeEffectParams:
+        if (self.start_ms is None) != (self.end_ms is None):
+            raise ValueError("effect start_ms and end_ms must be supplied together")
+        if self.start_ms is not None and self.end_ms is not None and self.start_ms >= self.end_ms:
+            raise ValueError("effect start_ms must be before end_ms")
+        return self
 
 
 class RecipeEffect(BaseModel):
