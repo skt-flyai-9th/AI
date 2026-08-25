@@ -174,8 +174,10 @@ class EditingShootingGuide(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     estimated_shooting_sec: int = Field(gt=0, le=7200)
+    required_people: int = Field(default=1, ge=1)
+    props: list[str] = Field(default_factory=list, max_length=30)
     difficulty: str
-    scenes: list[ShootingGuideScene] = Field(min_length=1, max_length=20)
+    scenes: list[ShootingGuideScene] = Field(min_length=1, max_length=30)
     tasks: list[ShootingGuideTask] = Field(max_length=30)
 
 

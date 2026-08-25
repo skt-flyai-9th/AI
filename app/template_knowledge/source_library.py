@@ -327,6 +327,7 @@ def _import_video_editing_db(
     guide_rows = payload["datasets"]["03_GUIDE_TEMPLATES"]["records"]
     challenge_rows = payload["datasets"]["02_INPUT_GUIDES"]["records"]
     challenge_names = {row["id"]: row["name"] for row in challenge_rows}
+    challenges_by_id = {row["id"]: row for row in challenge_rows}
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in guide_rows:
         if row["validation_status"] != "PASS":
@@ -337,6 +338,9 @@ def _import_video_editing_db(
     skipped: list[str] = []
     for source_template_id, rows in groups.items():
         rows.sort(key=lambda item: int(item["guide_sequence_index"]))
+        active_rows = [row for row in rows if row["template_status"] == "ACTIVE"]
+        if not active_rows:
+            continue
         source_version = int(rows[0]["template_version"])
         template_id = re.sub(r"_v\d+$", "", source_template_id)
         marker = f"VIDEO_EDITING:{template_id}:v{source_version}"
@@ -383,7 +387,9 @@ def _import_video_editing_db(
                         "source_template_id": source_template_id,
                         "source_template_version": source_version,
                         "source_rows": [row["_source_row_number"] for row in rows],
-                    }
+                    },
+                    "input_guide": challenges_by_id.get(rows[0]["challenge_id"]),
+                    "reference_segments": active_rows,
                 },
                 activated_at=datetime.now(timezone.utc),
             )
@@ -456,6 +462,8 @@ def _editing_content(
             },
             "shooting_guide": {
                 "estimated_shooting_sec": production_minutes * 60,
+                "required_people": 1,
+                "props": [],
                 "difficulty": "중" if production_minutes <= 10 else "상",
                 "scenes": scenes,
                 "tasks": tasks,

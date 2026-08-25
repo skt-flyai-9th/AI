@@ -134,6 +134,9 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
             )
         )
         assert imported_editing is not None
+        assert imported_editing.version == 4
+        assert len(imported_editing.shooting_guide["tasks"]) == 17
+        assert len(imported_editing.evidence_summary["reference_segments"]) == 17
         first_task = imported_editing.shooting_guide["tasks"][0]
         assert first_task["display_order"] == 1
         assert first_task["scene_index"] == 0
