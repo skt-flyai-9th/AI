@@ -84,12 +84,14 @@ class OpenAIEditingLLM:
     ) -> EditingPlanDecision:
         task = "Revise the parent EditRecipe" if revision_action else "Create an EditRecipe"
         reference_context = video_editing_db.get("reference_evidence") or {}
-        cache_key = _analysis_cache_key(selected_shortform, video_contexts)
+        shoot_mode = _resolve_shoot_mode(project, video_contexts)
+        cache_key = _analysis_cache_key(selected_shortform, video_contexts, shoot_mode)
         prepared = self._prepare_frame_analysis(
             video_contexts=video_contexts,
             video_editing_db=video_editing_db,
             reference_context=reference_context,
             revision_action=revision_action,
+            shoot_mode=shoot_mode,
         )
         self._analysis_cache[cache_key] = prepared
         payload = {
@@ -106,11 +108,16 @@ class OpenAIEditingLLM:
             "renderer_capabilities": _renderer_capabilities(),
             "requirements": _requirements(prepared["source_preparation"]),
         }
-        return self._request_model(
+        decision = self._request_model(
             schema_model=EditingPlanDecision,
             instructions=domain_context,
             user_payload=payload,
             schema_name="editing_plan",
+        )
+        return _apply_source_preparation(
+            decision,
+            prepared["source_preparation"],
+            video_contexts,
         )
 
     def repair_recipe(
@@ -126,7 +133,8 @@ class OpenAIEditingLLM:
         parent_recipe: dict[str, Any] | None,
         revision_action: str | None,
     ) -> EditingPlanDecision:
-        cache_key = _analysis_cache_key(selected_shortform, video_contexts)
+        shoot_mode = _resolve_shoot_mode(project, video_contexts)
+        cache_key = _analysis_cache_key(selected_shortform, video_contexts, shoot_mode)
         prepared = self._analysis_cache.get(cache_key)
         if prepared is None:
             prepared = self._prepare_frame_analysis(
@@ -134,6 +142,7 @@ class OpenAIEditingLLM:
                 video_editing_db=video_editing_db,
                 reference_context=video_editing_db.get("reference_evidence") or {},
                 revision_action=revision_action,
+                shoot_mode=shoot_mode,
             )
             self._analysis_cache[cache_key] = prepared
         payload = {
@@ -152,11 +161,16 @@ class OpenAIEditingLLM:
             "renderer_capabilities": _renderer_capabilities(),
             "requirements": _requirements(prepared["source_preparation"]),
         }
-        return self._request_model(
+        repaired = self._request_model(
             schema_model=EditingPlanDecision,
             instructions=domain_context,
             user_payload=payload,
             schema_name="editing_plan_repair",
+        )
+        return _apply_source_preparation(
+            repaired,
+            prepared["source_preparation"],
+            video_contexts,
         )
 
     def _prepare_frame_analysis(
@@ -166,9 +180,9 @@ class OpenAIEditingLLM:
         video_editing_db: dict[str, Any],
         reference_context: dict[str, Any],
         revision_action: str | None,
+        shoot_mode: str,
     ) -> dict[str, Any]:
-        multi_cut = len(video_contexts) > 1
-        if multi_cut:
+        if shoot_mode == "MULTI_CUT":
             analyzed = [
                 self._analyze_video_frames(
                     context=context,
@@ -186,6 +200,7 @@ class OpenAIEditingLLM:
                 reference_context=reference_context,
                 revision_action=revision_action,
             )
+            source_plan = _normalize_source_cut_plan(source_plan, video_contexts, analyzed)
             produced = _map_cut_analysis_to_produced(analyzed, source_plan)
             return {
                 "reference_context": reference_context,
@@ -193,6 +208,10 @@ class OpenAIEditingLLM:
                 "produced_frame_context": produced,
             }
 
+        if len(video_contexts) != 1:
+            raise EditingLLMError(
+                "ONE_TAKE requires exactly one source video.", retryable=False
+            )
         context = video_contexts[0]
         overview = self._analyze_video_frames(
             context=context,
@@ -242,7 +261,9 @@ class OpenAIEditingLLM:
         prior_summary: str | None = None,
     ) -> dict[str, Any]:
         if not frames:
-            raise EditingLLMError(f"No frame evidence for video_id={context.video_id}.", retryable=False)
+            raise EditingLLMError(
+                f"No frame evidence for video_id={context.video_id}.", retryable=False
+            )
         observations: list[dict[str, Any]] = []
         summaries: list[str] = []
         batch_size = max(1, min(self.analysis_batch_frames, 40))
@@ -391,7 +412,8 @@ class OpenAIEditingLLM:
     ) -> _ModelT:
         if not self.api_key or not self.model:
             raise EditingLLMError(
-                "OPENAI_API_KEY or EDITING_OPENAI_MODEL is not configured.", retryable=False
+                "OPENAI_API_KEY or EDITING_OPENAI_MODEL is not configured.",
+                retryable=False,
             )
         content = content_override
         if content is None:
@@ -445,6 +467,138 @@ class OpenAIEditingLLM:
             raise EditingLLMError("Editing GPT returned invalid structured output.") from exc
 
 
+def _resolve_shoot_mode(project: dict[str, Any], contexts: list[VideoContext]) -> str:
+    explicit = str(project.get("shoot_mode") or "").strip().upper()
+    if explicit in {"MULTI_CUT", "CUT"}:
+        return "MULTI_CUT"
+    if explicit in {"ONE_TAKE", "ONETAKE"}:
+        return "ONE_TAKE"
+    return "ONE_TAKE" if len(contexts) == 1 else "MULTI_CUT"
+
+
+def _nearest_timestamp(value: int, timestamps: list[int]) -> int:
+    if not timestamps:
+        return value
+    return min(timestamps, key=lambda item: abs(item - value))
+
+
+def _normalize_source_cut_plan(
+    plan: SourceCutPlan,
+    contexts: list[VideoContext],
+    analyzed: list[dict[str, Any]],
+) -> SourceCutPlan:
+    """Snap GPT cut decisions to real frames and restore capture order."""
+    analyzed_by_video = {item["video_id"]: item for item in analyzed}
+    plan_by_video = {item.video_id: item for item in plan.cuts}
+    normalized = []
+    for context in sorted(contexts, key=lambda item: item.shooting_scene_order):
+        cut = plan_by_video.get(context.video_id)
+        if cut is None:
+            raise EditingLLMError(
+                f"Source-cut plan omitted video_id={context.video_id}.",
+                retryable=False,
+            )
+        source = analyzed_by_video.get(context.video_id) or {}
+        timestamps = sorted(
+            {
+                int(item["timestamp_ms"])
+                for item in source.get("observations", [])
+                if int(item["timestamp_ms"]) >= 0
+            }
+        )
+        if len(timestamps) < 2:
+            raise EditingLLMError(
+                f"Frame-exact source evidence is incomplete for video_id={context.video_id}.",
+                retryable=False,
+            )
+        trim_in = _nearest_timestamp(cut.trim_in_ms, timestamps)
+        trim_out = _nearest_timestamp(cut.trim_out_ms, timestamps)
+        if trim_out <= trim_in:
+            trim_in, trim_out = timestamps[0], timestamps[-1]
+        normalized.append(
+            cut.model_copy(
+                update={
+                    "trim_in_ms": trim_in,
+                    "trim_out_ms": trim_out,
+                }
+            )
+        )
+    return SourceCutPlan(
+        cuts=normalized,
+        rationale=plan.rationale,
+    )
+
+
+def _apply_source_preparation(
+    decision: EditingPlanDecision,
+    source_preparation: dict[str, Any],
+    contexts: list[VideoContext],
+) -> EditingPlanDecision:
+    """Make source-preparation boundaries deterministic before validation/render."""
+    if decision.outcome != "RECIPE" or decision.recipe is None:
+        return decision
+
+    recipe = decision.recipe.model_copy(deep=True)
+    mode = source_preparation.get("mode")
+    if mode == "MULTI_CUT":
+        cuts = list(source_preparation.get("cuts") or [])
+        by_video: dict[str, Any] = {}
+        for clip in recipe.timeline:
+            if clip.video_id in by_video:
+                raise EditingLLMError(
+                    "MULTI_CUT final recipe must contain one clip per source cut.",
+                    retryable=False,
+                )
+            by_video[clip.video_id] = clip
+        cursor = 0.0
+        normalized_timeline = []
+        for index, cut in enumerate(cuts, start=1):
+            video_id = str(cut["video_id"])
+            clip = by_video.get(video_id)
+            if clip is None:
+                raise EditingLLMError(
+                    f"Final recipe omitted prepared source cut {video_id}.",
+                    retryable=False,
+                )
+            trim_in = int(cut["trim_in_ms"])
+            trim_out = int(cut["trim_out_ms"])
+            clip = clip.model_copy(
+                update={
+                    "clip_order": index,
+                    "source_start_ms": trim_in,
+                    "source_end_ms": trim_out,
+                    "timeline_start_ms": int(round(cursor)),
+                }
+            )
+            normalized_timeline.append(clip)
+            cursor += (trim_out - trim_in) / clip.speed
+        recipe.timeline = normalized_timeline
+    else:
+        if len(recipe.timeline) != 1 or len(contexts) != 1:
+            raise EditingLLMError(
+                "ONE_TAKE final recipe must contain exactly one source clip.",
+                retryable=False,
+            )
+        context = contexts[0]
+        clip = recipe.timeline[0]
+        if clip.video_id != context.video_id:
+            raise EditingLLMError(
+                "ONE_TAKE final recipe references the wrong video.",
+                retryable=False,
+            )
+        recipe.timeline = [
+            clip.model_copy(
+                update={
+                    "clip_order": 1,
+                    "source_start_ms": 0,
+                    "source_end_ms": context.duration_ms,
+                    "timeline_start_ms": 0,
+                }
+            )
+        ]
+    return decision.model_copy(update={"recipe": recipe})
+
+
 def _map_cut_analysis_to_produced(
     analyzed: list[dict[str, Any]],
     source_plan: SourceCutPlan,
@@ -474,10 +628,13 @@ def _map_cut_analysis_to_produced(
 
 
 def _analysis_cache_key(
-    selected_shortform: dict[str, Any], contexts: list[VideoContext]
+    selected_shortform: dict[str, Any],
+    contexts: list[VideoContext],
+    shoot_mode: str,
 ) -> str:
     payload = {
         "template": selected_shortform,
+        "shoot_mode": shoot_mode,
         "videos": [
             {
                 "video_id": item.video_id,
@@ -538,7 +695,9 @@ def _requirements(source_preparation: dict[str, Any]) -> list[str]:
             "The final recipe must preserve source-preparation video order and exact trim_in_ms/trim_out_ms boundaries."
         )
     else:
-        requirements.append("ONE_TAKE is passthrough for source preparation; do not invent multi-cut assembly.")
+        requirements.append(
+            "ONE_TAKE is passthrough for source preparation and must keep the full source duration."
+        )
     return requirements
 
 
