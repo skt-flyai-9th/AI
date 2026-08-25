@@ -16,8 +16,6 @@ from app.agents.editing.types import (
 )
 from app.agents.editing.reals import get_reals_registry
 from app.core.config import Settings, get_settings
-from app.db.session import SessionLocal
-from app.models.video_editing_db_record import VideoEditingDBRecord
 
 
 class EditingLLMError(RuntimeError):
@@ -57,17 +55,10 @@ class EditingLLM(Protocol):
 class OpenAIEditingLLM:
     """Frame-accurate editing planner on top of the Responses API.
 
-    MULTI_CUT:
-      1. Analyze every raw frame.
-      2. Match each raw cut to the reference-original segment context and choose
-         exact frame-boundary trims.
-      3. Re-map the already analyzed frames onto the produced timeline. The
-         assembled video is not redundantly re-read.
-
-    ONE_TAKE:
-      1. Read every third frame once for global context.
-      2. Read every frame before the final editing decision, because there was
-         no cut-edit stage that already provided frame-exact evidence.
+    MULTI_CUT analyzes every raw frame before source trimming, maps each cut to
+    the Gemini reference-original segment context, and reuses the analyzed
+    frames on the produced timeline. ONE_TAKE first gets a 3-frame-stride global
+    overview, then a full one-frame pass before final creative editing.
     """
 
     def __init__(self) -> None:
@@ -92,7 +83,7 @@ class OpenAIEditingLLM:
         revision_action: str | None,
     ) -> EditingPlanDecision:
         task = "Revise the parent EditRecipe" if revision_action else "Create an EditRecipe"
-        reference_context = _load_reference_context(selected_shortform)
+        reference_context = video_editing_db.get("reference_evidence") or {}
         cache_key = _analysis_cache_key(selected_shortform, video_contexts)
         prepared = self._prepare_frame_analysis(
             video_contexts=video_contexts,
@@ -141,7 +132,7 @@ class OpenAIEditingLLM:
             prepared = self._prepare_frame_analysis(
                 video_contexts=video_contexts,
                 video_editing_db=video_editing_db,
-                reference_context=_load_reference_context(selected_shortform),
+                reference_context=video_editing_db.get("reference_evidence") or {},
                 revision_action=revision_action,
             )
             self._analysis_cache[cache_key] = prepared
@@ -315,8 +306,9 @@ class OpenAIEditingLLM:
                     "You are the frame-accurate vision stage of SARILS Editing Agent. "
                     "Use the reference-original context as the target editing grammar, but never "
                     "invent content absent from the user frame. A cut boundary must be grounded in "
-                    "the observed action/state transition. Use the same semantic-event and framing "
-                    "concepts used by the reference analysis so later effects can be matched."
+                    "the observed action/state transition. Use the same semantic-event, composition, "
+                    "camera and transform concepts present in Gemini reference evidence so later "
+                    "effects can reproduce the original-video grammar."
                 ),
                 user_payload=None,
                 schema_name="editing_frame_batch",
@@ -481,27 +473,6 @@ def _map_cut_analysis_to_produced(
     }
 
 
-def _load_reference_context(selected_shortform: dict[str, Any]) -> dict[str, Any]:
-    template_id = str(selected_shortform.get("video_editing_db_id") or "")
-    version = int(selected_shortform.get("video_editing_db_version") or 0)
-    if not template_id or version <= 0:
-        return {}
-    try:
-        with SessionLocal() as db:
-            row = db.get(VideoEditingDBRecord, (template_id, version))
-            if row is None:
-                return {}
-            return {
-                "template_id": row.template_id,
-                "version": row.version,
-                "evidence_summary": row.evidence_summary or {},
-                "shooting_guide": row.shooting_guide or {},
-                "editing_rules": row.editing_rules or {},
-            }
-    except Exception:
-        return {}
-
-
 def _analysis_cache_key(
     selected_shortform: dict[str, Any], contexts: list[VideoContext]
 ) -> str:
@@ -564,7 +535,7 @@ def _requirements(source_preparation: dict[str, Any]) -> list[str]:
     ]
     if source_preparation.get("mode") == "MULTI_CUT":
         requirements.append(
-            "The final recipe must preserve the source-preparation video order and exact trim_in_ms/trim_out_ms boundaries."
+            "The final recipe must preserve source-preparation video order and exact trim_in_ms/trim_out_ms boundaries."
         )
     else:
         requirements.append("ONE_TAKE is passthrough for source preparation; do not invent multi-cut assembly.")
