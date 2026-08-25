@@ -13,6 +13,10 @@ class ChallengeRead(BaseModel):
     name: str
     representative_youtube_url: str | None
     guide_youtube_url: str | None
+    format_type: str | None = None
+    expected_duration_sec: int | None = None
+    shooting_difficulty: str | None = None
+    requires_face: bool | None = None
     automatic_rank: int | None
     automatic_score: float
     lifecycle: str

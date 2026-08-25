@@ -12,9 +12,7 @@ from app.agents.challenge_ranking.trendcluster import (
 
 def test_checked_in_trendcluster_matches_provided_video_editing_db():
     expected = build_video_editing_db_trendcluster()
-    checked_in = json.loads(
-        Path("exports/trendcluster.json").read_text(encoding="utf-8")
-    )
+    checked_in = json.loads(Path("exports/trendcluster.json").read_text(encoding="utf-8"))
 
     assert checked_in == expected
     assert checked_in["count"] == 3
@@ -39,6 +37,19 @@ def test_checked_in_trendcluster_matches_provided_video_editing_db():
     assert checked_in["results"][1]["guide_youtube_url"] == (
         "https://www.youtube.com/shorts/OWnLiuJU8Ks"
     )
+    assert [
+        (
+            item["format_type"],
+            item["expected_duration_sec"],
+            item["shooting_difficulty"],
+            item["requires_face"],
+        )
+        for item in checked_in["results"]
+    ] == [
+        ("밈", 10, "중", False),
+        ("정보형", 13, "중", False),
+        ("챌린지", 12, "중", True),
+    ]
     assert not Path("exports/ranking_latest.json").exists()
 
 
@@ -46,7 +57,5 @@ def test_sync_video_editing_db_trendcluster_is_atomic_and_deterministic(tmp_path
     path = sync_video_editing_db_trendcluster(tmp_path)
 
     assert path.name == TRENDCLUSTER_FILENAME
-    assert json.loads(path.read_text(encoding="utf-8")) == (
-        build_video_editing_db_trendcluster()
-    )
+    assert json.loads(path.read_text(encoding="utf-8")) == (build_video_editing_db_trendcluster())
     assert not path.with_suffix(".json.tmp").exists()
