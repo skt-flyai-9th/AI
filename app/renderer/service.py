@@ -10,10 +10,13 @@ from tempfile import TemporaryDirectory
 from typing import Any, Callable
 from urllib.parse import quote, urlparse
 
-import httpx
-
 from app.agents.editing.reals import RealsRenderJobRequest
 from app.core.config import Settings, get_settings
+from app.services.source_assets import (
+    SourceAssetDownloadError,
+    SourceAssetTooLargeError,
+    download_source_asset,
+)
 
 
 class RendererServiceError(RuntimeError):
@@ -166,60 +169,48 @@ class RealsRendererService:
         job_dir: Path,
     ) -> dict[str, Any]:
         sources: dict[str, Any] = {}
-        timeout = httpx.Timeout(self.settings.renderer_download_timeout_seconds)
-        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            for asset in request.source_assets:
-                parsed = urlparse(asset.asset_url)
-                if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                    raise RendererServiceError(
-                        f"Invalid source asset URL for {asset.file_id}.",
-                        code="REALS_ASSET_URL_INVALID",
-                        status_code=422,
-                    )
-                target = job_dir / (
-                    hashlib.sha256(asset.file_id.encode()).hexdigest()[:24] + ".mp4"
+        for asset in request.source_assets:
+            parsed = urlparse(asset.asset_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise RendererServiceError(
+                    f"Invalid source asset URL for {asset.file_id}.",
+                    code="REALS_ASSET_URL_INVALID",
+                    status_code=422,
                 )
-                try:
-                    with client.stream("GET", asset.asset_url) as response:
-                        response.raise_for_status()
-                        declared = int(response.headers.get("content-length") or 0)
-                        if declared > self.settings.renderer_max_download_bytes:
-                            raise RendererServiceError(
-                                f"Source asset {asset.file_id} exceeds the download limit.",
-                                code="REALS_ASSET_TOO_LARGE",
-                                status_code=413,
-                            )
-                        size = 0
-                        with target.open("wb") as output:
-                            for chunk in response.iter_bytes():
-                                size += len(chunk)
-                                if size > self.settings.renderer_max_download_bytes:
-                                    raise RendererServiceError(
-                                        f"Source asset {asset.file_id} exceeds the download limit.",
-                                        code="REALS_ASSET_TOO_LARGE",
-                                        status_code=413,
-                                    )
-                                output.write(chunk)
-                except RendererServiceError:
-                    raise
-                except (httpx.HTTPError, OSError) as exc:
-                    raise RendererServiceError(
-                        f"Could not download source asset {asset.file_id}.",
-                        code="REALS_ASSET_DOWNLOAD_FAILED",
-                        status_code=502,
-                        retryable=True,
-                    ) from exc
+            target = job_dir / (
+                hashlib.sha256(asset.file_id.encode()).hexdigest()[:24] + ".mp4"
+            )
+            try:
+                download_source_asset(
+                    asset.asset_url,
+                    target,
+                    max_bytes=self.settings.renderer_max_download_bytes,
+                    timeout_seconds=self.settings.renderer_download_timeout_seconds,
+                )
+            except SourceAssetTooLargeError as exc:
+                raise RendererServiceError(
+                    f"Source asset {asset.file_id} exceeds the download limit.",
+                    code="REALS_ASSET_TOO_LARGE",
+                    status_code=413,
+                ) from exc
+            except (SourceAssetDownloadError, OSError) as exc:
+                raise RendererServiceError(
+                    f"Could not download source asset {asset.file_id}.",
+                    code="REALS_ASSET_DOWNLOAD_FAILED",
+                    status_code=502,
+                    retryable=True,
+                ) from exc
 
-                try:
-                    media = self.native.media_ref(asset.file_id, target)
-                except Exception as exc:
-                    raise RendererServiceError(
-                        f"Source asset {asset.file_id} is not a readable video.",
-                        code="REALS_ASSET_INVALID",
-                        status_code=422,
-                    ) from exc
-                _verify_media_metadata(asset, media)
-                sources[asset.file_id] = media
+            try:
+                media = self.native.media_ref(asset.file_id, target)
+            except Exception as exc:
+                raise RendererServiceError(
+                    f"Source asset {asset.file_id} is not a readable video.",
+                    code="REALS_ASSET_INVALID",
+                    status_code=422,
+                ) from exc
+            _verify_media_metadata(asset, media)
+            sources[asset.file_id] = media
         return sources
 
     def _prepare_produced_video(

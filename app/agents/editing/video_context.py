@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from app.agents.editing.types import VideoContext, VideoKeyframe
 from app.core.config import get_settings
 from app.schemas.editing import EditingVideoInput
+from app.services.source_assets import SourceAssetDownloadError, download_source_asset
 
 
 class VideoContextError(RuntimeError):
@@ -31,21 +32,36 @@ class FFmpegVideoContextBuilder:
         self.timeout = settings.editing_probe_timeout_seconds
         self.max_keyframes = settings.editing_max_keyframes_per_video
         self.max_source_duration_ms = settings.editing_max_source_duration_seconds * 1000
+        self.max_download_bytes = settings.renderer_max_download_bytes
+        self.download_timeout = settings.renderer_download_timeout_seconds
 
     def build(self, videos: list[EditingVideoInput]) -> list[VideoContext]:
         return [self._build_one(video) for video in sorted(videos, key=lambda item: item.shooting_scene_order)]
 
     def _build_one(self, video: EditingVideoInput) -> VideoContext:
         self._validate_url(video.footage_url)
-        metadata = self._probe(video.footage_url, video.video_id)
-        duration_ms = metadata["duration_ms"]
-        if duration_ms > self.max_source_duration_ms:
-            raise VideoContextError(
-                f"Video duration exceeds the {self.max_source_duration_ms}ms limit "
-                f"for video_id={video.video_id}."
-            )
-        timestamps = _sample_timestamps(duration_ms, self.max_keyframes)
-        keyframes = self._extract_keyframes(video.footage_url, video.video_id, timestamps)
+        with tempfile.TemporaryDirectory(prefix="editing-source-") as temp_dir:
+            source_path = Path(temp_dir) / "source.mp4"
+            try:
+                download_source_asset(
+                    video.footage_url,
+                    source_path,
+                    max_bytes=self.max_download_bytes,
+                    timeout_seconds=self.download_timeout,
+                )
+            except SourceAssetDownloadError as exc:
+                raise VideoContextError(
+                    f"Video download failed for video_id={video.video_id}."
+                ) from exc
+            metadata = self._probe(str(source_path), video.video_id)
+            duration_ms = metadata["duration_ms"]
+            if duration_ms > self.max_source_duration_ms:
+                raise VideoContextError(
+                    f"Video duration exceeds the {self.max_source_duration_ms}ms limit "
+                    f"for video_id={video.video_id}."
+                )
+            timestamps = _sample_timestamps(duration_ms, self.max_keyframes)
+            keyframes = self._extract_keyframes(str(source_path), video.video_id, timestamps)
         if not keyframes:
             raise VideoContextError(f"No keyframes could be extracted for video_id={video.video_id}.")
         return VideoContext(

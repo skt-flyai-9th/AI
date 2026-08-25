@@ -241,6 +241,10 @@ def test_video_context_rejects_source_over_cpu_profile_limit(monkeypatch):
     builder = FFmpegVideoContextBuilder()
     builder.max_source_duration_ms = 30_000
     monkeypatch.setattr(
+        "app.agents.editing.video_context.download_source_asset",
+        lambda _url, target, **_kwargs: target.write_bytes(b"video"),
+    )
+    monkeypatch.setattr(
         builder,
         "_probe",
         lambda *_: {"duration_ms": 30_001, "width": 1080, "height": 1920, "fps": 30.0},
