@@ -14,6 +14,7 @@ class ShortformAction(StrEnum):
     RESOLVE_CONFLICT = "RESOLVE_CONFLICT"
     CONFIRM = "CONFIRM"
     RECOMMEND = "RECOMMEND"
+    OUT_OF_SCOPE = "OUT_OF_SCOPE"
 
 
 class ShortformSessionStatus(StrEnum):
@@ -28,6 +29,17 @@ class TurnInputType(StrEnum):
     TEXT = "TEXT"
     OPTION = "OPTION"
     CONFIRM = "CONFIRM"
+
+
+class ShortformEntryMode(StrEnum):
+    PROMOTION_GUIDE = "promotion_guide"
+    FREE_INPUT = "free_input"
+
+
+class PromotionCategory(StrEnum):
+    MENU = "menu"
+    SPACE = "space"
+    EVENT = "event"
 
 
 class PromotionObjective(StrEnum):
@@ -120,7 +132,8 @@ class ShortformOption(BaseModel):
 
 
 class ShortformProjectState(BaseModel):
-    promotion_category: str | None = None
+    entry_mode: ShortformEntryMode | None = None
+    promotion_category: PromotionCategory | None = None
     promotion_subject: PromotionSubject | None = None
     promotion_objective: PromotionObjective | None = None
     filming_time: FilmingTime | None = None
@@ -130,7 +143,9 @@ class ShortformProjectState(BaseModel):
     facts_from_user: dict[str, str] = Field(default_factory=dict)
     store_context_conflicts: list[dict[str, Any]] = Field(default_factory=list)
     missing_required_fields: list[str] = Field(default_factory=list)
+    current_question: str | None = None
     ready_for_confirmation: bool = False
+    ready_for_recommendation: bool = False
     brief_confirmed: bool = False
 
 

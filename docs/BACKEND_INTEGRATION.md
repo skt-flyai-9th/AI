@@ -158,6 +158,16 @@ Apify, Gemini, YouTube, NAVER의 부분 실패는 가능한 경우 HTTP 오류 �
 모든 후보를 이미 보여준 경우에는 새 추천 주기를 시작하며, 추천 선택 LLM 장애 시에도 AI
 서버가 안정적인 후보 하나를 반환한다.
 
+첫 화면의 진입 선택지는 `PROMOTION_GUIDE`, `FREE_INPUT` 두 개다.
+`PROMOTION_GUIDE`를 선택하면 AI 서버가 LLM을 거치지 않고 아래 세 카테고리만 반환한다.
+
+- `MENU`: 메뉴
+- `SPACE`: 가게 공간·분위기
+- `EVENT`: 이벤트·혜택·할인
+
+사람·브랜드 이야기, 이용 정보, 후기·신뢰·전문성은 구조화 카테고리로 반환하지 않는다.
+자유 입력에서 관련 내용을 말하는 것은 허용되지만 새 구조화 카테고리로 만들지는 않는다.
+
 ```http
 POST /api/v1/shortform-sessions
 X-Internal-API-Key: <INTERNAL_API_KEY>
@@ -205,7 +215,9 @@ Content-Type: application/json
 ```
 
 응답의 `action`은 `ASK`, `SAVE_AND_ASK`, `CLARIFY`, `SUGGEST_SWITCH`,
-`RESOLVE_CONFLICT`, `CONFIRM`, `RECOMMEND` 중 하나다. 추천 응답에는
+`RESOLVE_CONFLICT`, `CONFIRM`, `RECOMMEND`, `OUT_OF_SCOPE` 중 하나다. 질문형 응답은
+한 turn에 질문 하나만 포함하며 `project_state.current_question`에서 현재 질문을 확인할 수 있다.
+`project_state.ready_for_recommendation`은 최종 확인이 끝난 뒤에만 `true`가 된다. 추천 응답에는
 `recommendation_id`, `project_title`, `title`, `concept`, `editing_template_id`,
 `editing_template_version`이 포함된다. 백엔드는 사용자가 추천을 수락하면 이 식별자와 버전을
 프로젝트에 저장한다.

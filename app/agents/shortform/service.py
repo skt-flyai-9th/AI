@@ -25,7 +25,9 @@ from app.schemas.shortform import (
     FaceExposure,
     FilmingTime,
     NextRecommendationResponse,
+    PromotionCategory,
     ShortformAction,
+    ShortformEntryMode,
     ShortformOption,
     ShortformProjectState,
     ShortformRecommendation,
@@ -52,8 +54,24 @@ _FILMING_ORDER = {
     FilmingTime.WITHIN_20M.value: 3,
     FilmingTime.PLUS_30M.value: 4,
 }
-_CandidateConstraintMode = Literal["strict", "safe"]
+_CandidateConstraintMode = Literal["strict", "safe", "any"]
 logger = logging.getLogger(__name__)
+_QUESTION_ACTIONS = {
+    ShortformAction.ASK,
+    ShortformAction.SAVE_AND_ASK,
+    ShortformAction.CLARIFY,
+    ShortformAction.SUGGEST_SWITCH,
+    ShortformAction.RESOLVE_CONFLICT,
+    ShortformAction.OUT_OF_SCOPE,
+}
+_REMOVED_CATEGORY_LABELS = {
+    "사람·브랜드 이야기",
+    "사람/브랜드 이야기",
+    "이용 정보",
+    "이용정보",
+    "후기·신뢰·전문성",
+    "후기/신뢰/전문성",
+}
 
 
 class ShortformDomainError(RuntimeError):
@@ -124,6 +142,16 @@ class ShortformAgentService:
                 return self._confirm_and_recommend(db, session)
             return self._reject_confirmation(db, session)
 
+        entry_response = self._handle_entry_mode_option(db, session, turn_input)
+        if entry_response is not None:
+            return entry_response
+
+        selected_category = _promotion_category_from_option(turn_input)
+        if selected_category is not None:
+            project_state = dict(session.project_state or {})
+            project_state["promotion_category"] = selected_category.value
+            session.project_state = project_state
+
         graph_result = self._invoke_graph(
             {
                 "mode": "TURN",
@@ -156,7 +184,16 @@ class ShortformAgentService:
         if action == ShortformAction.CONFIRM and not project_state["ready_for_confirmation"]:
             action = ShortformAction.ASK
 
-        assistant_message = _single_question_message(decision.assistant_message)
+        assistant_message = _format_assistant_message(decision.assistant_message, action)
+        project_state["current_question"] = (
+            _extract_question(assistant_message)
+            if action in _QUESTION_ACTIONS
+            else None
+        )
+        project_state["ready_for_recommendation"] = bool(
+            project_state.get("brief_confirmed")
+            and project_state.get("ready_for_confirmation")
+        )
 
         session.project_state = project_state
         session.status = (
@@ -167,14 +204,14 @@ class ShortformAgentService:
         session.conversation = _append_conversation(
             session.conversation,
             _turn_input_to_text(turn_input),
-            decision.assistant_message,
+            assistant_message,
         )
         db.commit()
 
         if action == ShortformAction.RECOMMEND and project_state.get("brief_confirmed"):
             return self._recommend(db, session)
 
-        options = [ShortformOption(id=item.id, label=item.label) for item in decision.options]
+        options = _sanitize_options(decision.options, action)
         return ShortformTurnResponse(
             session_id=session.id,
             action=action,
@@ -212,6 +249,53 @@ class ShortformAgentService:
         session = self._get_session(db, session_id)
         db.delete(session)
         db.commit()
+
+    def _handle_entry_mode_option(
+        self,
+        db: Session,
+        session: ShortformSession,
+        turn_input: ShortformTurnInput,
+    ) -> ShortformTurnResponse | None:
+        if turn_input.type != TurnInputType.OPTION:
+            return None
+        if session.project_state.get("entry_mode"):
+            return None
+
+        option_id = str(turn_input.option_id or "").upper()
+        if option_id == "PROMOTION_GUIDE":
+            entry_mode = ShortformEntryMode.PROMOTION_GUIDE
+            message = "무엇을 홍보하고 싶으세요?"
+            options = _promotion_category_options()
+        elif option_id == "FREE_INPUT":
+            entry_mode = ShortformEntryMode.FREE_INPUT
+            message = (
+                "어떤 영상을 만들고 싶은지 편하게 말씀해주세요. "
+                "필요한 정보만 하나씩 확인할게요."
+            )
+            options = []
+        else:
+            return None
+
+        project_state = dict(session.project_state or {})
+        project_state["entry_mode"] = entry_mode.value
+        project_state["current_question"] = _extract_question(message)
+        project_state["ready_for_recommendation"] = False
+        session.project_state = project_state
+        session.status = ShortformSessionStatus.COLLECTING.value
+        session.conversation = _append_conversation(
+            session.conversation,
+            _turn_input_to_text(turn_input),
+            message,
+        )
+        db.commit()
+        return ShortformTurnResponse(
+            session_id=session.id,
+            action=ShortformAction.ASK,
+            assistant_message=message,
+            project_state=ShortformProjectState.model_validate(project_state),
+            options=options,
+            recommendation=None,
+        )
 
     def get_shooting_guide(
         self,
@@ -329,6 +413,8 @@ class ShortformAgentService:
             )
 
         project_state["brief_confirmed"] = True
+        project_state["ready_for_recommendation"] = True
+        project_state["current_question"] = None
         session.project_state = project_state
         session.status = ShortformSessionStatus.RECOMMENDING.value
         session.conversation = _append_conversation(
@@ -347,9 +433,11 @@ class ShortformAgentService:
         project_state = dict(session.project_state or {})
         project_state["brief_confirmed"] = False
         project_state["ready_for_confirmation"] = False
+        project_state["ready_for_recommendation"] = False
+        message = "바뀐 항목만 반영할게요. 어떤 내용을 수정할까요?"
+        project_state["current_question"] = _extract_question(message)
         session.project_state = project_state
         session.status = ShortformSessionStatus.COLLECTING.value
-        message = "수정하고 싶은 내용을 말씀해주세요. 바뀐 항목만 반영할게요."
         session.conversation = _append_conversation(
             session.conversation,
             "[UI_CONFIRM] 수정하기",
@@ -434,7 +522,7 @@ class ShortformAgentService:
         shown, a new recommendation cycle starts so `next` can always return one item.
         """
 
-        for mode in ("strict", "safe"):
+        for mode in ("strict", "safe", "any"):
             candidates = self._video_editing_db_candidates(
                 db,
                 session,
@@ -446,7 +534,7 @@ class ShortformAgentService:
 
         if session.shown_video_editing_db_ids:
             session.shown_video_editing_db_ids = []
-            for mode in ("strict", "safe"):
+            for mode in ("strict", "safe", "any"):
                 candidates = self._video_editing_db_candidates(
                     db,
                     session,
@@ -527,7 +615,9 @@ class ShortformAgentService:
             if exclude_shown and template.template_id in shown:
                 continue
             metadata = dict(template.recommendation_metadata or {})
-            if not _passes_hard_constraints(metadata, project_state):
+            if constraint_mode != "any" and not _passes_hard_constraints(
+                metadata, project_state
+            ):
                 continue
             if constraint_mode == "strict" and not _passes_soft_constraints(
                 metadata, project_state
@@ -611,7 +701,7 @@ class ShortformAgentService:
         updates = decision.state_updates
 
         if updates.promotion_category is not None:
-            state["promotion_category"] = updates.promotion_category
+            state["promotion_category"] = updates.promotion_category.value
         if updates.promotion_subject is not None:
             state["promotion_subject"] = {
                 "type": updates.promotion_subject.type,
@@ -672,13 +762,20 @@ class ShortformAgentService:
                 "Shortform session was not found.",
                 status_code=404,
             )
+        state = dict(session.project_state or {})
+        category = state.get("promotion_category")
+        if category not in {item.value for item in PromotionCategory}:
+            state["promotion_category"] = None
+        session.project_state = state
         return session
 
 
 def _initial_project_state() -> dict[str, Any]:
     return ShortformProjectState(
         missing_required_fields=list(_REQUIRED_FIELDS),
+        current_question="오늘 어떤 영상을 찍을까요?",
         ready_for_confirmation=False,
+        ready_for_recommendation=False,
         brief_confirmed=False,
     ).model_dump(mode="json")
 
@@ -752,23 +849,65 @@ def _append_conversation(
     return items[-40:]
 
 
+def _promotion_category_options() -> list[ShortformOption]:
+    return [
+        ShortformOption(id="MENU", label="메뉴"),
+        ShortformOption(id="SPACE", label="가게 공간·분위기"),
+        ShortformOption(id="EVENT", label="이벤트·혜택·할인"),
+    ]
+
+
+def _promotion_category_from_option(
+    turn_input: ShortformTurnInput,
+) -> PromotionCategory | None:
+    if turn_input.type != TurnInputType.OPTION:
+        return None
+    mapping = {
+        "MENU": PromotionCategory.MENU,
+        "SPACE": PromotionCategory.SPACE,
+        "EVENT": PromotionCategory.EVENT,
+    }
+    return mapping.get(str(turn_input.option_id or "").upper())
+
+
+def _sanitize_options(options: list[Any], action: ShortformAction) -> list[ShortformOption]:
+    if action == ShortformAction.SUGGEST_SWITCH:
+        return _promotion_category_options()
+
+    result: list[ShortformOption] = []
+    for item in options:
+        option_id = str(item.id).strip()
+        label = str(item.label).strip()
+        if label in _REMOVED_CATEGORY_LABELS:
+            continue
+        if option_id and label:
+            result.append(ShortformOption(id=option_id, label=label))
+    return result
+
+
+def _format_assistant_message(message: str, action: ShortformAction) -> str:
+    if action in _QUESTION_ACTIONS:
+        return _single_question_message(message)
+    return _limit_message_length(message.strip(), 500)
+
+
 def _single_question_message(message: str) -> str:
     if not message:
         return ""
 
-    text = re.sub(r"\s+", " ", message.strip())
-    if not text:
+    if not message.strip():
         return ""
 
     clean_lines = [
         re.sub(r"^\s*[\*\-\d]+\s*[)\.]\s*", "", part.strip())
-        for part in text.splitlines()
+        for part in message.strip().splitlines()
         if part.strip()
     ]
     if clean_lines:
         candidate = " ".join(clean_lines)
     else:
-        candidate = text
+        candidate = message.strip()
+    candidate = re.sub(r"\s+", " ", candidate)
 
     sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", candidate) if part.strip()]
     if not sentences:
@@ -785,6 +924,17 @@ def _single_question_message(message: str) -> str:
     # If the model did not include a question mark, keep the shortest meaningful
     # one-line summary and keep the fallback concise.
     return _limit_message_length(summary, 180)
+
+
+def _extract_question(message: str) -> str | None:
+    if not message:
+        return None
+    parts = [
+        part.strip()
+        for part in re.split(r"(?<=[?])\s+", message.strip())
+        if part.strip()
+    ]
+    return next((part for part in parts if part.endswith("?")), None)
 
 
 def _limit_message_length(text: str, max_len: int) -> str:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.agents.shortform.llm import ShortformLLMError
 from app.agents.shortform.service import ShortformAgentService, get_shortform_agent_service
 from app.agents.shortform.types import (
+    DecisionOption,
     DecisionPromotionSubject,
     StateUpdates,
     ShortformTurnDecision,
@@ -13,7 +14,7 @@ from app.db.session import SessionLocal
 from app.main import app
 from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.models.shortform_session import ShortformSession
-from app.schemas.shortform import ShortformAction
+from app.schemas.shortform import PromotionCategory, ShortformAction
 
 
 class FakeShortformLLM:
@@ -24,7 +25,7 @@ class FakeShortformLLM:
                 "이렇게 이해했어요. 딸기 크림 라떼 판매를 늘리고, 10분 안에 얼굴 없이 촬영할게요."
             ),
             state_updates=StateUpdates(
-                promotion_category="MENU",
+                promotion_category="menu",
                 promotion_subject=DecisionPromotionSubject(
                     type="MENU",
                     name="딸기 크림 라떼",
@@ -62,6 +63,39 @@ class FailingRecommendationLLM(FakeShortformLLM):
         raise ShortformLLMError(
             "recommendation selector unavailable",
             status_code=503,
+        )
+
+
+class MultiQuestionLLM(FakeShortformLLM):
+    def decide_turn(self, **kwargs) -> ShortformTurnDecision:
+        return ShortformTurnDecision(
+            action=ShortformAction.ASK,
+            assistant_message=(
+                "메뉴 홍보를 원하시는군요. 어떤 메뉴를 홍보할까요? "
+                "촬영 시간은 얼마나 되나요?"
+            ),
+            state_updates=StateUpdates(
+                promotion_category=None,
+                promotion_subject=None,
+                promotion_objective=None,
+                filming_time=None,
+                face_exposure=None,
+                creative_preferences=[],
+                secondary_information=[],
+                facts_from_user=[],
+            ),
+            options=[
+                DecisionOption(id="review", label="후기·신뢰·전문성"),
+                DecisionOption(id="trust", label="신뢰 높이기"),
+            ],
+            missing_required_fields=[
+                "promotion_subject",
+                "promotion_objective",
+                "filming_time",
+                "face_exposure",
+            ],
+            conflicts=[],
+            ready_for_confirmation=False,
         )
 
 
@@ -233,6 +267,82 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
             headers=auth_headers,
         )
         assert deleted.status_code == 204
+    finally:
+        app.dependency_overrides.pop(get_shortform_agent_service, None)
+
+
+def test_shortform_promotion_guide_exposes_only_v21_categories(client, auth_headers):
+    fake_service = ShortformAgentService(llm=FakeShortformLLM())
+    app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
+    try:
+        created = client.post(
+            "/api/v1/shortform-sessions",
+            headers=auth_headers,
+            json=_store_context(),
+        )
+        assert created.status_code == 200
+        body = created.json()
+        assert [item["id"] for item in body["options"]] == [
+            "PROMOTION_GUIDE",
+            "FREE_INPUT",
+        ]
+        assert body["project_state"]["current_question"] == "오늘 어떤 영상을 찍을까요?"
+
+        response = client.post(
+            f"/api/v1/shortform-sessions/{body['session_id']}/turns",
+            headers=auth_headers,
+            json={"input": {"type": "OPTION", "option_id": "PROMOTION_GUIDE"}},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["assistant_message"] == "무엇을 홍보하고 싶으세요?"
+        assert payload["project_state"]["entry_mode"] == "promotion_guide"
+        assert [item["id"] for item in payload["options"]] == [
+            "MENU",
+            "SPACE",
+            "EVENT",
+        ]
+        assert [item["label"] for item in payload["options"]] == [
+            "메뉴",
+            "가게 공간·분위기",
+            "이벤트·혜택·할인",
+        ]
+        assert {item.value for item in PromotionCategory} == {"menu", "space", "event"}
+    finally:
+        app.dependency_overrides.pop(get_shortform_agent_service, None)
+
+
+def test_shortform_filters_removed_categories_and_stores_one_question(
+    client, auth_headers
+):
+    fake_service = ShortformAgentService(llm=MultiQuestionLLM())
+    app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
+    try:
+        created = client.post(
+            "/api/v1/shortform-sessions",
+            headers=auth_headers,
+            json=_store_context(),
+        )
+        session_id = created.json()["session_id"]
+        response = client.post(
+            f"/api/v1/shortform-sessions/{session_id}/turns",
+            headers=auth_headers,
+            json={"input": {"type": "TEXT", "text": "메뉴를 홍보하고 싶어요"}},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["assistant_message"].count("?") == 1
+        assert payload["project_state"]["current_question"].count("?") == 1
+        assert payload["options"] == [
+            {"id": "trust", "label": "신뢰 높이기"}
+        ]
+
+        with SessionLocal() as db:
+            session = db.get(ShortformSession, session_id)
+            assert session is not None
+            assert session.conversation[-1]["content"] == payload["assistant_message"]
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)
 
