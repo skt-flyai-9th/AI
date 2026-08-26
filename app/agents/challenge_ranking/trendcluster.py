@@ -10,6 +10,14 @@ from typing import Any
 
 TRENDCLUSTER_FILENAME = "trendcluster.json"
 
+# 운영 trendcluster는 영상편집 DB에서 검증을 마친 이 세 영상만 사용한다.
+# 파이프라인이 더 많은 후보를 찾아도 API/DB에 다시 유입시키지 않는다.
+TRENDCLUSTER_CHALLENGE_IDS = (
+    "jujutsu_transition",
+    "cafe_recommendation_reels",
+    "otsukare_summer_challenge",
+)
+
 _SEED_CATEGORIES = {
     "jujutsu_transition": "meme",
     "cafe_recommendation_reels": "food",

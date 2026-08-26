@@ -9,10 +9,13 @@ from typing import Any
 
 import pandas as pd
 import yaml
-from sqlalchemy import update
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from app.agents.challenge_ranking.trendcluster import write_trendcluster
+from app.agents.challenge_ranking.trendcluster import (
+    TRENDCLUSTER_CHALLENGE_IDS,
+    write_trendcluster,
+)
 from app.core.config import get_settings
 from app.models.challenge import Challenge
 from app.models.pipeline_run import PipelineRun
@@ -131,7 +134,11 @@ def persist_result(
     source_metrics: pd.DataFrame,
 ) -> None:
     now = datetime.now(timezone.utc)
-    db.execute(update(Challenge).values(active=False))
+    # 운영 데이터 소스는 검증된 세 영상으로 고정한다. 과거 자동 발굴 결과는
+    # 비활성 행으로도 남기지 않아 `/challenges`와 다음 export에 재등장할 수 없게 한다.
+    db.execute(
+        delete(Challenge).where(Challenge.id.not_in(TRENDCLUSTER_CHALLENGE_IDS))
+    )
 
     metrics_by_id: dict[str, dict[str, Any]] = {}
     if source_metrics is not None and not source_metrics.empty:
@@ -142,7 +149,7 @@ def persist_result(
     for raw in ranked.to_dict(orient="records"):
         row = _row_dict(raw)
         challenge_id = str(row.get("challenge_id") or "").strip()
-        if not challenge_id:
+        if not challenge_id or challenge_id not in TRENDCLUSTER_CHALLENGE_IDS:
             continue
         challenge = db.get(Challenge, challenge_id)
         if challenge is None:
