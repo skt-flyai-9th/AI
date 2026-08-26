@@ -11,6 +11,7 @@ from app.ranker_core.gemini_json import call_gemini_structured, resolve_gemini_m
 from app.schemas.template_knowledge import (
     VideoEditingDBContent,
     EditingVideoInsight,
+    MAX_SHOOTING_GUIDE_CUTS,
     TradeAreaAnalysisResult,
     TradeAreaEvidence,
     TradeAreaDBContent,
@@ -137,6 +138,8 @@ class OpenAITemplateCandidateGenerator:
                 "trend_context": trend_context,
                 "gemini_video_insights": [item.model_dump(mode="json") for item in insights],
                 "guide_authoring_rules": [
+                    f"Create at most {MAX_SHOOTING_GUIDE_CUTS} ordered shooting-guide scenes and at most {MAX_SHOOTING_GUIDE_CUTS} matching tasks.",
+                    "When the reference contains more segments, merge adjacent segments into semantic filming cuts without changing their order or dropping their evidence.",
                     "Use Gemini's reference-original shot order and segment context as the target editing grammar.",
                     "When Gemini observes SHAKE, VIBRATION, ROTATION/TILT, ZOOM, POSITION_MOVE, FLASH, or COLOR, summarize when and why it occurs in existing scene_description/tasks; do not add schema fields.",
                     "Keep measurable effect values such as angle, amplitude, duration frames, scale, direction and damping in concise existing text fields when supported by evidence.",
@@ -302,7 +305,10 @@ class GeminiYouTubeVideoAnalyzer:
                     "and evidence_notes; the output schema must not be expanded. Describe when an "
                     "effect happens semantically (for example PRODUCT_REVEAL or IMPACT), not only "
                     "its appearance. Do not recommend TTS, generated narration, still-photo scenes, "
-                    "platform UI reproduction, or unobserved content."
+                    "platform UI reproduction, or unobserved content. Divide the complete reference "
+                    f"into no more than {MAX_SHOOTING_GUIDE_CUTS} ordered semantic filming cuts in "
+                    "shot_sequence. If it contains more visual segments, merge only adjacent segments "
+                    "while preserving their evidence and original order."
                 ),
                 "trend_id": trend_id,
                 "youtube_url": youtube_url,

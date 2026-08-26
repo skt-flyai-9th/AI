@@ -7,6 +7,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 
+MAX_SHOOTING_GUIDE_CUTS = 6
+
+
 class TemplateType(StrEnum):
     TRADE_AREA = "TRADE_AREA"
     VIDEO_EDITING = "VIDEO_EDITING"
@@ -177,8 +180,10 @@ class EditingShootingGuide(BaseModel):
     required_people: int = Field(default=1, ge=1)
     props: list[str] = Field(default_factory=list, max_length=30)
     difficulty: str
-    scenes: list[ShootingGuideScene] = Field(min_length=1, max_length=30)
-    tasks: list[ShootingGuideTask] = Field(max_length=30)
+    scenes: list[ShootingGuideScene] = Field(
+        min_length=1, max_length=MAX_SHOOTING_GUIDE_CUTS
+    )
+    tasks: list[ShootingGuideTask] = Field(max_length=MAX_SHOOTING_GUIDE_CUTS)
 
 
 class VideoEditingDBRules(BaseModel):
@@ -214,7 +219,9 @@ class EditingVideoInsight(BaseModel):
     youtube_url: str
     summary: str = Field(min_length=1, max_length=2000)
     hook_patterns: list[str] = Field(min_length=1, max_length=20)
-    shot_sequence: list[str] = Field(min_length=1, max_length=30)
+    shot_sequence: list[str] = Field(
+        min_length=1, max_length=MAX_SHOOTING_GUIDE_CUTS
+    )
     pacing: VideoPacing
     caption_patterns: list[str] = Field(max_length=20)
     camera_patterns: list[str] = Field(max_length=20)
