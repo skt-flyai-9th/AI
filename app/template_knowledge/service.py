@@ -282,7 +282,7 @@ class TemplateKnowledgeService:
                     trend_id=trend.id,
                     youtube_url=url,
                     trend_context=context,
-                    force=request.force_video_analysis,
+                    force=(request.force_video_analysis or request.rebuild_from_scratch),
                 )
                 insights.append(EditingVideoInsight.model_validate(analysis.insights))
                 analysis_ids.append(analysis.id)
@@ -297,7 +297,11 @@ class TemplateKnowledgeService:
             )
 
         base = self._latest_editing(db, request.template_id)
-        base_payload = _editing_payload(base) if base else None
+        base_payload = (
+            None
+            if request.rebuild_from_scratch
+            else (_editing_payload(base) if base else None)
+        )
         try:
             proposed = self.generator.generate_editing(
                 template_id=request.template_id,
@@ -319,6 +323,11 @@ class TemplateKnowledgeService:
                 "video_analysis_ids": analysis_ids,
                 "video_insights": [item.model_dump(mode="json") for item in insights],
                 "video_analysis_failures": failures,
+                "generation_mode": (
+                    "REBUILD_FROM_SCRATCH"
+                    if request.rebuild_from_scratch
+                    else "INCREMENTAL_UPDATE"
+                ),
             },
             generation_model=self.generator.model_name,
             requires_human_approval=(
