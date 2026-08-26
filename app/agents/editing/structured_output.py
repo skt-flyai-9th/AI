@@ -83,13 +83,20 @@ def request_structured_model(
             continue
 
         if response.status_code >= 400:
-            retryable = response.status_code == 429 or response.status_code >= 500
+            rate_limit_code = _rate_limit_error_code(response)
+            retryable = (
+                response.status_code == 429
+                and rate_limit_code not in {"insufficient_quota", "credit_balance_exhausted"}
+            ) or response.status_code >= 500
+            reason = f"http_{response.status_code}"
+            if rate_limit_code:
+                reason = f"{reason}_{rate_limit_code}"
             error = EditingLLMError(
                 _request_error_message(
                     schema_name=schema_name,
                     attempt=attempt,
                     max_attempts=max_attempts,
-                    reason=f"http_{response.status_code}",
+                    reason=reason,
                 ),
                 retryable=retryable,
             )
@@ -182,6 +189,19 @@ def _rate_limit_delay_seconds(
     except (TypeError, ValueError):
         pass
     return max(retry_after, min(base_seconds * (2 ** (attempt - 1)), 120.0))
+
+
+def _rate_limit_error_code(response: httpx.Response) -> str:
+    if response.status_code != 429:
+        return ""
+    try:
+        payload = response.json()
+    except (TypeError, ValueError):
+        return ""
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict):
+        return ""
+    return str(error.get("code") or error.get("type") or "").strip().lower()
 
 
 def _retry_instructions(instructions: str, reason: str) -> str:
