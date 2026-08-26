@@ -358,12 +358,20 @@ class GeminiYouTubeVideoAnalyzer:
                 "Return exactly that many segments and use the supplied boundary_basis to find the "
                 "subtle discontinuities; do not create arbitrary evenly spaced cuts."
             )
-        for attempt in range(2 if expected_cut_count is not None else 1):
+        previous_insight: EditingVideoInsight | None = None
+        for attempt in range(3 if expected_cut_count is not None else 1):
             if attempt:
+                assert previous_insight is not None
+                previous_count = len(previous_insight.segments)
+                prompt_payload["previous_mismatched_cut_analysis"] = (
+                    previous_insight.model_dump(mode="json")
+                )
                 prompt_payload["correction"] = (
-                    f"The previous analysis did not return the human-reviewed total of exactly "
-                    f"{expected_cut_count} physical edit cuts. Re-audit adjacent frames for every "
-                    "object/person/pose discontinuity and return the exact reviewed total."
+                    f"The previous analysis returned {previous_count} cuts instead of the "
+                    f"human-reviewed total of exactly {expected_cut_count}. Preserve every valid "
+                    "boundary in previous_mismatched_cut_analysis, then inspect inside its segments "
+                    "for the missed object/person/pose discontinuity. Split only at visually "
+                    "supported discontinuities and return the exact reviewed total."
                 )
             prompt = json.dumps(prompt_payload, ensure_ascii=False)
             try:
@@ -387,6 +395,7 @@ class GeminiYouTubeVideoAnalyzer:
                 insight = EditingVideoInsight.model_validate(parsed)
                 if expected_cut_count is None or len(insight.segments) == expected_cut_count:
                     return insight
+                previous_insight = insight
             except TemplateKnowledgeLLMError:
                 raise
             except Exception as exc:

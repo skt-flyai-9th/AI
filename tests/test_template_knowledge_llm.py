@@ -278,4 +278,5 @@ def test_gemini_retries_until_human_reviewed_cut_count_is_reproduced(monkeypatch
     assert len(prompts) == 2
     assert len(result.segments) == 7
     assert prompts[0]["human_reviewed_reference_cut_review"]["expected_cut_count"] == 7
-    assert "previous analysis" in prompts[1]["correction"]
+    assert "returned 6 cuts" in prompts[1]["correction"]
+    assert len(prompts[1]["previous_mismatched_cut_analysis"]["segments"]) == 6
