@@ -41,6 +41,7 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
             selected_shortform=SelectedShortform.model_validate(state["selected_shortform"]),
             video_editing_db=state["video_editing_db"],
             video_contexts=_contexts(state),
+            project=state["project"],
         )
         return {
             "validation_errors": [error.model_dump(mode="json") for error in errors],

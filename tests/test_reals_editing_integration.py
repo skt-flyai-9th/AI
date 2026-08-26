@@ -100,8 +100,9 @@ def test_reals_adapter_builds_multicut_assembly_and_engine_recipe():
     assert [effect.effect_id for effect in final.edit_recipe.segments[0].effects] == [
         "PUNCH_ZOOM"
     ]
-    caption, cta = final.edit_recipe.overlays
-    assert (caption.start_ms, caption.end_ms) == (0, 1500)
+    caption, reveal_caption, cta = final.edit_recipe.overlays
+    assert (caption.start_ms, caption.end_ms, caption.style_id) == (0, 1500, "HOOK")
+    assert reveal_caption.style_id == "CAPTION_EMPHASIS"
     assert (cta.start_ms, cta.end_ms, cta.style_id) == (2000, 4000, "CTA_BOX")
 
 
@@ -170,6 +171,26 @@ def test_validator_returns_structured_issues_from_reals_registry():
     capabilities = validator.registry.llm_capabilities()
     assert set(capabilities["effects"]) == validator.registry.creative_effect_ids
     assert capabilities["max_caption_chars"] == 40
+
+
+def test_validator_rejects_promotional_video_without_regular_captions():
+    recipe = _recipe().model_copy(deep=True)
+    for clip in recipe.timeline:
+        clip.caption = None
+    validator = EditRecipeValidator()
+
+    issues = validator.validate(
+        recipe,
+        selected_shortform=_request().selected_shortform,
+        video_editing_db=_video_editing_db(),
+        video_contexts=_contexts(),
+        project=_request().project.model_dump(mode="json"),
+    )
+
+    codes = {issue.code for issue in issues}
+    assert "PROMOTIONAL_CAPTIONS_MISSING" in codes
+    assert "PROMOTIONAL_HOOK_MISSING" in codes
+    assert "PROMOTIONAL_REVEAL_CAPTION_MISSING" in codes
 
 
 def test_free_tier_profile_limits_duration_and_disables_heavy_effect():

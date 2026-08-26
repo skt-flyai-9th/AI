@@ -844,6 +844,16 @@ def _requirements(
         "Caption scale must remain 1.0; use an approved style_id for visual emphasis.",
         "Use only renderer capabilities and the video-editing DB editing_rules.",
         "Keep captions at most 40 characters each and at most 8 captions total.",
+        "This is promotional video: regular in-video captions are required, not optional. "
+        "Create at least 3 regular captions when the timeline has 3 or more clips; otherwise "
+        "create one regular caption per clip. The rendered CTA does not count toward this minimum.",
+        "The first clip must contain a concise HOOK caption grounded in the verified project "
+        "promotion_subject. Use CAPTION_EMPHASIS on at least one item or reveal moment.",
+        "Distribute promotional captions across the timeline and align reveal captions to observed "
+        "item-appearance or semantic-event evidence. Do not leave the video with only the final CTA.",
+        "Use a verified item name only when supplied by project promotion_subject or supported by "
+        "the editing context. Otherwise use truthful category copy such as 메뉴, 음료, or 메인 메뉴 "
+        "instead of inventing a specific product name.",
         "Publishing title and caption are separate: title is a short hook and caption is the post body.",
         "Publishing title, caption, and video CTA must contain marketing copy only; never put music, upload, platform, or other operational instructions in them.",
         "Return 5 to 20 unique hashtags. Every hashtag must begin with # and contain no whitespace.",

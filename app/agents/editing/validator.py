@@ -31,6 +31,7 @@ class EditRecipeValidator:
         selected_shortform: SelectedShortform,
         video_editing_db: dict[str, Any],
         video_contexts: list[VideoContext],
+        project: dict[str, Any] | None = None,
     ) -> list[ValidationIssue]:
         issues: list[ValidationIssue] = []
 
@@ -304,6 +305,34 @@ class EditRecipeValidator:
                 f"Captions including CTA exceed the REALS limit of {max_captions}.",
                 source="REALS_REGISTRY",
             )
+        if _is_promotional_project(project):
+            regular_caption_count = caption_count - 1
+            required_caption_count = min(3, len(recipe.timeline))
+            if regular_caption_count < required_caption_count:
+                add(
+                    "PROMOTIONAL_CAPTIONS_MISSING",
+                    "timeline",
+                    "Promotional video requires at least "
+                    f"{required_caption_count} regular in-video captions; "
+                    f"received {regular_caption_count}. The final CTA does not count.",
+                )
+            first_caption = recipe.timeline[0].caption if recipe.timeline else None
+            if first_caption is None or first_caption.style_id != "HOOK":
+                add(
+                    "PROMOTIONAL_HOOK_MISSING",
+                    "timeline[0].caption",
+                    "The first promotional clip requires a HOOK caption grounded in the project.",
+                )
+            if not any(
+                clip.caption is not None
+                and clip.caption.style_id == "CAPTION_EMPHASIS"
+                for clip in recipe.timeline
+            ):
+                add(
+                    "PROMOTIONAL_REVEAL_CAPTION_MISSING",
+                    "timeline",
+                    "Promotional video requires a CAPTION_EMPHASIS overlay on an item or reveal moment.",
+                )
         max_chars = int(policies.get("max_caption_chars", 40))
         if len(recipe.cta.text) > max_chars:
             add(
@@ -391,3 +420,11 @@ class EditRecipeValidator:
 
 def _normalize_transition(value: str) -> str:
     return "HARD_CUT" if value == "CUT" else value
+
+
+def _is_promotional_project(project: dict[str, Any] | None) -> bool:
+    if not isinstance(project, dict):
+        return False
+    objective = str(project.get("promotion_objective") or "").strip()
+    subject = project.get("promotion_subject")
+    return bool(objective and isinstance(subject, dict) and subject)

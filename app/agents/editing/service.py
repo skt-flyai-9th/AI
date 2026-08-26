@@ -35,6 +35,7 @@ from app.schemas.editing import (
     EditingRunStatus,
     PublishingResult,
     PublishingTrack,
+    RecipeCaption,
     RecipeClip,
     RecipeCta,
     SelectedShortform,
@@ -340,6 +341,7 @@ class EditingAgentService:
 
         subject = request.project.promotion_subject
         subject_name = str(subject.get("name") or "오늘의 추천")[:40]
+        _apply_fallback_promotional_captions(timeline, subject_name)
         search_keyword = _fallback_search_keyword(
             str(
                 video_editing_db.get("recommendation_title")
@@ -353,7 +355,7 @@ class EditingAgentService:
             editing_template_version=request.selected_shortform.editing_template_version,
             source_type="VIDEO_ONLY",
             timeline=timeline,
-            cta=RecipeCta(text="지금 확인해 보세요"),
+            cta=RecipeCta(text=_fit_caption(f"{subject_name}, 지금 만나보세요")),
         )
         recipe = self.effect_planner.apply_recipe(
             recipe,
@@ -365,6 +367,7 @@ class EditingAgentService:
             selected_shortform=request.selected_shortform,
             video_editing_db=video_editing_db,
             video_contexts=contexts,
+            project=request.project.model_dump(mode="json"),
         )
         if validation_errors:
             errors = "; ".join(_format_validation_issue(item) for item in validation_errors)
@@ -504,6 +507,44 @@ def _database_payload(database_record: VideoEditingDBRecord) -> dict[str, Any]:
         # segment/effect context without extending the video-editing DB schema.
         "reference_evidence": database_record.evidence_summary or {},
     }
+
+
+def _apply_fallback_promotional_captions(
+    timeline: list[RecipeClip],
+    subject_name: str,
+) -> None:
+    """Guarantee useful, evidence-safe copy when the LLM fallback is used."""
+    if not timeline:
+        return
+    caption_total = min(3, len(timeline))
+    if len(timeline) <= caption_total:
+        indices = list(range(len(timeline)))
+    else:
+        indices = [0, (len(timeline) - 1) // 2, len(timeline) - 2]
+    texts = [
+        _fit_caption(f"{subject_name}, 지금 공개합니다"),
+        "하나씩 공개되는 특별한 순간",
+        "눈으로 먼저 만나는 매력",
+    ]
+    styles = ["HOOK", "CAPTION_EMPHASIS", "CAPTION"]
+    positions = ["TOP", "MIDDLE", "TOP"]
+    for order, index in enumerate(indices[:caption_total]):
+        clip = timeline[index]
+        output_duration = int(round((clip.source_end_ms - clip.source_start_ms) / clip.speed))
+        clip.caption = RecipeCaption(
+            text=texts[order],
+            start_ms=clip.timeline_start_ms,
+            end_ms=clip.timeline_start_ms + output_duration,
+            position=positions[order],
+            style_id=styles[order],
+            font_weight="BOLD" if order < 2 else "SEMIBOLD",
+            scale=1.0,
+        )
+
+
+def _fit_caption(value: str, limit: int = 40) -> str:
+    text = " ".join(value.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def _fallback_search_keyword(value: str) -> str:
