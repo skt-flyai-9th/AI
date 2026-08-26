@@ -531,12 +531,21 @@ def _apply_fallback_promotional_captions(
     for order, index in enumerate(indices[:caption_total]):
         clip = timeline[index]
         output_duration = int(round((clip.source_end_ms - clip.source_start_ms) / clip.speed))
+        typewriter_units = len("".join(texts[order].split()))
+        typewriter_required_ms = max(0, typewriter_units - 1) * 80 + 600
+        if order == 0 and typewriter_units <= 18 and output_duration >= typewriter_required_ms:
+            motion_id = "TYPEWRITER"
+        elif order < 2:
+            motion_id = "POP"
+        else:
+            motion_id = "NONE"
         clip.caption = RecipeCaption(
             text=texts[order],
             start_ms=clip.timeline_start_ms,
             end_ms=clip.timeline_start_ms + output_duration,
             position=positions[order],
             style_id=styles[order],
+            motion_id=motion_id,
             font_weight="BOLD" if order < 2 else "SEMIBOLD",
             scale=1.0,
         )

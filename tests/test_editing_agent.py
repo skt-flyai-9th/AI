@@ -82,6 +82,7 @@ def _recipe(*, invalid_timeline: bool = False) -> EditRecipe:
                         "end_ms": 1500,
                         "position": "BOTTOM",
                         "style_id": "HOOK",
+                        "motion_id": "TYPEWRITER",
                         "font_weight": "SEMIBOLD",
                         "scale": 1.0,
                     },
@@ -103,6 +104,7 @@ def _recipe(*, invalid_timeline: bool = False) -> EditRecipe:
                         "end_ms": 3500,
                         "position": "MIDDLE",
                         "style_id": "CAPTION_EMPHASIS",
+                        "motion_id": "POP",
                         "font_weight": "BOLD",
                         "scale": 1.0,
                     },
@@ -398,6 +400,7 @@ def test_editing_pipeline_renders_ordered_fallback_after_source_gap():
         assert [clip.video_id for clip in payload.recipe.timeline] == ["take_501", "take_502"]
         assert all(clip.caption is not None for clip in payload.recipe.timeline)
         assert payload.recipe.timeline[0].caption.style_id == "HOOK"
+        assert payload.recipe.timeline[0].caption.motion_id == "TYPEWRITER"
         assert payload.recipe.timeline[1].caption.style_id == "CAPTION_EMPHASIS"
         assert "딸기 크림 라떼" in payload.recipe.cta.text
         assert len(renderer.calls) == 1

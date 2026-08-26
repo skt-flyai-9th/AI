@@ -1,5 +1,6 @@
 """Recipe Validator — render-blocking deterministic validation."""
 from __future__ import annotations
+import unicodedata
 
 from fontTools.ttLib import TTFont
 
@@ -7,6 +8,7 @@ from .contracts import (
     EditRecipe,
     FinalAudioPolicy,
     MediaFileRef,
+    MotionId,
     OverlayType,
     QcCheck,
     QcReport,
@@ -133,6 +135,22 @@ def validate_recipe(recipe: EditRecipe, produced: MediaFileRef, reg: Registries)
                 )
             if o.style_id not in reg.style_ids_for(o.overlay_type.value):
                 fails.append(f"{o.overlay_id}: 미등록 style {o.style_id}")
+            if o.motion_id.value not in reg.motion_ids_for(o.overlay_type.value):
+                fails.append(f"{o.overlay_id}: 미등록 motion {o.motion_id.value}")
+            if o.motion_id == MotionId.TYPEWRITER:
+                unit_count = sum(
+                    1
+                    for ch in unicodedata.normalize("NFC", o.text_content)
+                    if not ch.isspace()
+                )
+                if unit_count > 18:
+                    fails.append(f"{o.overlay_id}: TYPEWRITER 문구 {unit_count}자 > 최대 18자")
+                required_ms = max(0, unit_count - 1) * 80 + 600
+                if o.end_ms - o.start_ms < required_ms:
+                    fails.append(
+                        f"{o.overlay_id}: TYPEWRITER 노출시간 부족 "
+                        f"({o.end_ms-o.start_ms}ms < {required_ms}ms)"
+                    )
             try:
                 f = reg.resolve_font(o.font_asset_id, o.font_weight.value)
                 missing = [

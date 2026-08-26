@@ -3,7 +3,7 @@
   "template_version": "4.2-frame-accurate.dev",
   "files": {
     "font_registry": "sha256:99852ea18ec57cdbab93ed02b59e10f9032e4d931087d034b113ff952d32e10a",
-    "effect_registry": "sha256:410e5e1575e89a0b7d7e8979ce8dc7218f38622d476d24e5a09face73d3bd1f3",
+    "effect_registry": "sha256:228511dd573e579dc86bfa9ecb91bd27285723e193835deea76a17f7a8efa8af",
     "safe_area_profiles": "sha256:e67d8f91110647ea6f205cab2317b8fed1b443d7c843b8d2893057b3b64e25e5",
     "render_profiles": "sha256:bd1ce47c72406ed762fd96faf44a19be7726d685f834552f04a6c0dce9d5f07f",
     "audio_mix_policy": "sha256:2a683b3ff180c287527b0de50c603105c4eba72ae00ff899699ecb65c038046e",

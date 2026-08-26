@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import unicodedata
 from typing import Any
 
 from app.agents.editing.reals import RealsRegistry, get_reals_registry
@@ -158,6 +159,7 @@ class EditRecipeValidator:
         expected_start = 0.0
         scene_orders: list[int] = []
         caption_count = 1  # CTA is rendered as a caption overlay.
+        typewriter_count = 0
         for index, clip in enumerate(recipe.timeline):
             path = f"timeline[{index}]"
             context = contexts.get(clip.video_id)
@@ -283,6 +285,32 @@ class EditRecipeValidator:
                         f"Unknown REALS caption style: {caption.style_id}.",
                         source="REALS_REGISTRY",
                     )
+                if caption.motion_id not in self.registry.caption_motion_ids():
+                    add(
+                        "CAPTION_MOTION_UNKNOWN",
+                        f"{caption_path}.motion_id",
+                        f"Unknown REALS caption motion: {caption.motion_id}.",
+                        source="REALS_REGISTRY",
+                    )
+                if caption.motion_id == "TYPEWRITER":
+                    typewriter_count += 1
+                    unit_count = _typewriter_unit_count(caption.text)
+                    if unit_count > 18:
+                        add(
+                            "TYPEWRITER_CAPTION_TOO_LONG",
+                            f"{caption_path}.text",
+                            "TYPEWRITER captions support at most 18 non-space characters.",
+                            source="REALS_REGISTRY",
+                        )
+                    required_ms = max(0, unit_count - 1) * 80 + 600
+                    if caption.end_ms - caption.start_ms < required_ms:
+                        add(
+                            "TYPEWRITER_CAPTION_TOO_SHORT",
+                            caption_path,
+                            "TYPEWRITER caption needs 80ms per character and at least "
+                            f"600ms hold time ({required_ms}ms required).",
+                            source="REALS_REGISTRY",
+                        )
                 if caption.scale != 1.0:
                     add(
                         "CAPTION_SCALE_UNSUPPORTED",
@@ -303,6 +331,13 @@ class EditRecipeValidator:
                 "CAPTION_COUNT_EXCEEDED",
                 "timeline",
                 f"Captions including CTA exceed the REALS limit of {max_captions}.",
+                source="REALS_REGISTRY",
+            )
+        if typewriter_count > 2:
+            add(
+                "TYPEWRITER_COUNT_EXCEEDED",
+                "timeline",
+                "Use TYPEWRITER on at most 2 captions per video.",
                 source="REALS_REGISTRY",
             )
         if _is_promotional_project(project):
@@ -428,3 +463,8 @@ def _is_promotional_project(project: dict[str, Any] | None) -> bool:
     objective = str(project.get("promotion_objective") or "").strip()
     subject = project.get("promotion_subject")
     return bool(objective and isinstance(subject, dict) and subject)
+
+
+def _typewriter_unit_count(value: str) -> int:
+    normalized = unicodedata.normalize("NFC", value)
+    return sum(1 for character in normalized if not character.isspace())
