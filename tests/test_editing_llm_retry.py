@@ -212,3 +212,28 @@ def test_rate_limit_uses_long_backoff_and_honors_retry_after(monkeypatch):
     assert result.outcome == "SOURCE_GAP"
     assert len(requests) == 2
     assert waits == [35.0]
+
+
+@pytest.mark.parametrize("code", ["credit_balance_exhausted", "insufficient_quota"])
+def test_exhausted_quota_fails_immediately_without_retry(monkeypatch, code):
+    requests = _install_responses(
+        monkeypatch,
+        [
+            _FakeResponse(
+                429,
+                {"error": {"type": "insufficient_quota", "code": code}},
+            )
+        ],
+    )
+
+    with pytest.raises(EditingLLMError) as captured:
+        _planner()._request_model(
+            schema_model=EditingPlanDecision,
+            instructions="Plan an edit.",
+            user_payload={},
+            schema_name="editing_plan",
+        )
+
+    assert len(requests) == 1
+    assert captured.value.retryable is False
+    assert code in str(captured.value)
