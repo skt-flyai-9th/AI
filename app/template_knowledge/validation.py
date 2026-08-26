@@ -159,6 +159,36 @@ class TemplateCandidateValidator:
                         "scene_order must be consecutive from 1.",
                     )
 
+        tasks = guide.tasks
+        if len(tasks) != len(raw_scenes):
+            _add(
+                errors,
+                "SHOOTING_TASK_COUNT_MISMATCH",
+                "shooting_guide.tasks",
+                "Each shooting-guide scene must have exactly one matching task.",
+            )
+        if tasks:
+            display_orders = [task.display_order for task in tasks]
+            expected_orders = list(range(1, len(tasks) + 1))
+            if display_orders != expected_orders:
+                _add(
+                    errors,
+                    "SHOOTING_TASK_ORDER_INVALID",
+                    "shooting_guide.tasks",
+                    "task display_order must be consecutive from 1.",
+                )
+            scene_indexes = [task.scene_index for task in tasks]
+            expected_indexes = list(range(len(tasks)))
+            if scene_indexes != expected_indexes or any(
+                index >= len(raw_scenes) for index in scene_indexes
+            ):
+                _add(
+                    errors,
+                    "SHOOTING_TASK_SCENE_INDEX_INVALID",
+                    "shooting_guide.tasks",
+                    "Tasks must map one-to-one to scenes using zero-based scene_index order.",
+                )
+
         rules = content.editing_rules
         render_profile_id = rules.render_profile_id
         render_profile = self.registry.render_profile(render_profile_id)

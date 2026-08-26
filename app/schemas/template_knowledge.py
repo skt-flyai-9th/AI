@@ -7,7 +7,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 
-MAX_SHOOTING_GUIDE_CUTS = 6
+# A guide cut is an actual edit boundary, not a broad semantic chapter.
+# Short references can contain more than six jump cuts while retaining the
+# same subject or action, so the schema must not force those cuts to merge.
+MAX_SHOOTING_GUIDE_CUTS = 12
 
 
 class TemplateType(StrEnum):

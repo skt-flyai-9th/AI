@@ -256,6 +256,53 @@ def test_editing_candidate_rejects_tts_before_activation():
         assert db.get(VideoEditingDBRecord, ("invalid_tts", 1)) is None
 
 
+def test_editing_candidate_rejects_non_one_to_one_shooting_tasks():
+    service, _ = _service()
+    invalid = video_editing_db_payload()
+    invalid["shooting_guide"]["scenes"].append(
+        {
+            **invalid["shooting_guide"]["scenes"][0],
+            "scene_order": 2,
+            "scene_role": "RESULT",
+        }
+    )
+    with SessionLocal() as db:
+        candidate = service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="invalid_task_mapping",
+            payload=invalid,
+            source_evidence={"test": True},
+            generation_model="test",
+            requires_human_approval=True,
+        )
+        codes = {item["code"] for item in candidate.validation_errors}
+        assert candidate.status == "INVALID"
+        assert "SHOOTING_TASK_COUNT_MISMATCH" in codes
+
+
+def test_editing_candidate_rejects_wrong_shooting_task_order_and_scene_index():
+    service, _ = _service()
+    invalid = video_editing_db_payload()
+    task = invalid["shooting_guide"]["tasks"][0]
+    task["display_order"] = 2
+    task["scene_index"] = 1
+    with SessionLocal() as db:
+        candidate = service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="invalid_task_order",
+            payload=invalid,
+            source_evidence={"test": True},
+            generation_model="test",
+            requires_human_approval=True,
+        )
+        codes = {item["code"] for item in candidate.validation_errors}
+        assert candidate.status == "INVALID"
+        assert "SHOOTING_TASK_ORDER_INVALID" in codes
+        assert "SHOOTING_TASK_SCENE_INDEX_INVALID" in codes
+
+
 def test_trend_video_analysis_generates_editing_candidate_and_uses_cache():
     service, video = _service()
     with SessionLocal() as db:
@@ -523,7 +570,8 @@ def test_llm_output_schemas_are_strict_and_have_no_open_objects():
         assert all("properties" in item for item in objects)
 
 
-def test_video_editing_schemas_limit_generated_cuts_to_six():
+def test_video_editing_schemas_allow_physical_edit_cuts_beyond_six():
+    assert MAX_SHOOTING_GUIDE_CUTS >= 7
     editing_schema = VideoEditingDBContent.model_json_schema()
     guide_schema = editing_schema["$defs"]["EditingShootingGuide"]["properties"]
     assert guide_schema["scenes"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
