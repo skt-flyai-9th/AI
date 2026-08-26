@@ -35,20 +35,27 @@ REALS AI Service
 
 현재 `shortform`과 `editing` Agent의 제어 흐름은 LangGraph `StateGraph`로 구현되어 있습니다. LLM이 데이터베이스를 직접 변경하지 않고, 서비스 계층이 세션·실행 상태를 저장하며 LangGraph는 한 요청 안의 분기와 검증 흐름만 담당합니다.
 
-```text
-Shortform Graph
-START
-  → route_start
-  ├─ decide_turn → END
-  └─ select_video_editing_db → END
+```mermaid
+flowchart LR
+    subgraph SF[Shortform Agent]
+        SF_START((START)) --> SF_ROUTE[route_start]
+        SF_ROUTE --> SF_MODE{mode}
+        SF_MODE -->|TURN| SF_TURN[decide_turn]
+        SF_MODE -->|RECOMMEND| SF_SELECT[select_video_editing_db]
+        SF_TURN --> SF_END((END))
+        SF_SELECT --> SF_END
+    end
 
-Editing Graph
-START
-  → plan_recipe
-  → validate_recipe
-  ├─ validation_passed → END
-  ├─ repair_recipe → validate_recipe
-  └─ repair limit exhausted → END
+    subgraph ED[Editing Agent]
+        ED_START((START)) --> ED_PLAN[plan_recipe]
+        ED_PLAN --> ED_VALIDATE[validate_recipe]
+        ED_VALIDATE --> ED_RESULT{validation result}
+        ED_RESULT -->|passed| ED_END((END))
+        ED_RESULT -->|repairable| ED_REPAIR[repair_recipe]
+        ED_REPAIR --> ED_VALIDATE
+        ED_RESULT -->|attempts exhausted| ED_EXHAUSTED[mark_exhausted]
+        ED_EXHAUSTED --> ED_END
+    end
 ```
 
 - `app/agents/shortform/graph.py`: 대화 턴 판단과 영상편집DB 추천 경로 분리
