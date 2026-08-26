@@ -9,6 +9,7 @@ from typing import Any, Protocol, TypeVar
 from pydantic import BaseModel
 
 from app.agents.editing.context_builder import build_editing_context
+from app.agents.editing.effect_planner import EffectPlanner
 from app.agents.editing.structured_output import (
     EditingLLMError,
     request_structured_model,
@@ -78,6 +79,7 @@ class OpenAIEditingLLM:
         self.analysis_max_total_frames = int(
             getattr(settings, "editing_analysis_max_total_frames", 120)
         )
+        self.effect_planner = EffectPlanner(settings=settings)
         self._analysis_cache: dict[str, dict[str, Any]] = {}
 
     def plan_recipe(
@@ -155,10 +157,15 @@ class OpenAIEditingLLM:
             user_payload=payload,
             schema_name="editing_plan",
         )
-        return _apply_source_preparation(
+        prepared_decision = _apply_source_preparation(
             decision,
             prepared["source_preparation"],
             video_contexts,
+        )
+        return self.effect_planner.apply(
+            prepared_decision,
+            produced_frame_context=prepared["produced_frame_context"],
+            video_editing_db=video_editing_db,
         )
 
     def repair_recipe(
@@ -218,10 +225,15 @@ class OpenAIEditingLLM:
             user_payload=payload,
             schema_name="editing_plan_repair",
         )
-        return _apply_source_preparation(
+        prepared_decision = _apply_source_preparation(
             repaired,
             prepared["source_preparation"],
             video_contexts,
+        )
+        return self.effect_planner.apply(
+            prepared_decision,
+            produced_frame_context=prepared["produced_frame_context"],
+            video_editing_db=video_editing_db,
         )
 
     def _prepare_frame_analysis(
