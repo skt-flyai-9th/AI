@@ -7,7 +7,13 @@ from app.core.security import require_internal_api_key
 from app.db.session import get_db
 from app.models.challenge import Challenge
 from app.schemas.challenge import ChallengeListResponse, ChallengeRead, ChallengeUpdate
-from app.services.challenges import apply_update, get_latest_generated_at, list_challenges, to_read
+from app.services.challenges import (
+    active_template_refs,
+    apply_update,
+    get_latest_generated_at,
+    list_challenges,
+    to_read,
+)
 from app.services.pipeline import export_trendcluster
 
 router = APIRouter(
@@ -25,10 +31,11 @@ def get_challenges(
     db: Session = Depends(get_db),
 ) -> ChallengeListResponse:
     rows = list_challenges(db, limit=limit, offset=offset, include_inactive=include_inactive)
+    template_refs = active_template_refs(db, {row.id for row in rows})
     return ChallengeListResponse(
         generated_at=get_latest_generated_at(db),
         count=len(rows),
-        results=[to_read(row) for row in rows],
+        results=[to_read(row, template_refs.get(row.id)) for row in rows],
     )
 
 
@@ -37,7 +44,8 @@ def get_challenge(challenge_id: str, db: Session = Depends(get_db)) -> Challenge
     row = db.get(Challenge, challenge_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Challenge not found")
-    return to_read(row)
+    template_ref = active_template_refs(db, {row.id}).get(row.id)
+    return to_read(row, template_ref)
 
 
 @router.patch("/{challenge_id}", response_model=ChallengeRead)
@@ -53,4 +61,5 @@ def update_challenge(
     db.commit()
     db.refresh(row)
     export_trendcluster(db)
-    return to_read(row)
+    template_ref = active_template_refs(db, {row.id}).get(row.id)
+    return to_read(row, template_ref)

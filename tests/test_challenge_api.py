@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from app.db.session import SessionLocal
 from app.models.challenge import Challenge
+from app.models.video_editing_db_record import VideoEditingDBRecord
 
 
 def seed_challenge():
@@ -45,6 +46,28 @@ def test_list_and_patch_override(client, auth_headers):
     data = patched.json()
     assert data["rank"] == 3
     assert data["representative_video_overridden"] is True
+
+
+def test_challenge_exposes_active_editing_template_reference(client, auth_headers):
+    seed_challenge()
+    with SessionLocal() as db:
+        db.add(
+            VideoEditingDBRecord(
+                template_id="gt_bad_challenge",
+                version=3,
+                status="ACTIVE",
+                name="BAD 챌린지 가이드",
+                trend_ids=["bad-challenge"],
+            )
+        )
+        db.commit()
+
+    response = client.get("/api/v1/challenges?limit=100", headers=auth_headers)
+
+    assert response.status_code == 200
+    item = response.json()["results"][0]
+    assert item["editing_template_id"] == "gt_bad_challenge"
+    assert item["editing_template_version"] == 3
 
 
 def test_clear_override_with_null(client, auth_headers):

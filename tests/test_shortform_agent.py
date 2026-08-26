@@ -97,6 +97,8 @@ def _seed_video_editing_db(
     template_id: str,
     *,
     title: str,
+    version: int = 1,
+    trend_ids: list[str] | None = None,
     requires_face: bool = False,
     metadata_overrides: dict | None = None,
 ) -> None:
@@ -117,7 +119,7 @@ def _seed_video_editing_db(
         db.add(
             VideoEditingDBRecord(
                 template_id=template_id,
-                version=1,
+                version=version,
                 status="ACTIVE",
                 name=title,
                 recommendation_title=title,
@@ -144,7 +146,7 @@ def _seed_video_editing_db(
                     ],
                 },
                 editing_rules={},
-                trend_ids=[],
+                trend_ids=trend_ids or [],
             )
         )
         db.commit()
@@ -240,6 +242,24 @@ def test_shortform_session_requires_internal_api_key(client):
     assert response.status_code == 401
 
 
+def test_shooting_guide_accepts_challenge_id_alias(client, auth_headers):
+    _seed_video_editing_db(
+        "gt_cafe_recommendation",
+        title="카페 추천 리뷰 릴스",
+        version=2,
+        trend_ids=["cafe_recommendation_reels"],
+    )
+
+    response = client.get(
+        "/api/v1/editing-templates/cafe_recommendation_reels/versions/1/shooting-guide",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["template_id"] == "gt_cafe_recommendation"
+    assert response.json()["version"] == 2
+
+
 def test_openapi_preserves_live_legacy_backend_contract(client):
     schema = client.get("/openapi.json").json()
     paths = schema["paths"]
@@ -247,6 +267,10 @@ def test_openapi_preserves_live_legacy_backend_contract(client):
     assert not any(path.startswith("/api/v1/video-editing-db/") for path in paths)
 
     components = schema["components"]["schemas"]
+    challenge_properties = components["ChallengeRead"]["properties"]
+    assert "editing_template_id" in challenge_properties
+    assert "editing_template_version" in challenge_properties
+
     for name in ("ShortformRecommendation", "SelectedShortform", "EditRecipe"):
         properties = components[name]["properties"]
         assert "editing_template_id" in properties
