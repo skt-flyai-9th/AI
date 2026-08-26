@@ -51,7 +51,7 @@ _FILMING_ORDER = {
     FilmingTime.WITHIN_20M.value: 3,
     FilmingTime.PLUS_30M.value: 4,
 }
-_CandidateConstraintMode = Literal["strict", "safe", "any"]
+_CandidateConstraintMode = Literal["strict", "safe"]
 logger = logging.getLogger(__name__)
 
 
@@ -431,7 +431,7 @@ class ShortformAgentService:
         shown, a new recommendation cycle starts so `next` can always return one item.
         """
 
-        for mode in ("strict", "safe", "any"):
+        for mode in ("strict", "safe"):
             candidates = self._video_editing_db_candidates(
                 db,
                 session,
@@ -443,7 +443,7 @@ class ShortformAgentService:
 
         if session.shown_video_editing_db_ids:
             session.shown_video_editing_db_ids = []
-            for mode in ("strict", "safe", "any"):
+            for mode in ("strict", "safe"):
                 candidates = self._video_editing_db_candidates(
                     db,
                     session,
@@ -524,7 +524,7 @@ class ShortformAgentService:
             if exclude_shown and template.template_id in shown:
                 continue
             metadata = dict(template.recommendation_metadata or {})
-            if constraint_mode != "any" and not _passes_hard_constraints(metadata, project_state):
+            if not _passes_hard_constraints(metadata, project_state):
                 continue
             if constraint_mode == "strict" and not _passes_soft_constraints(
                 metadata, project_state
