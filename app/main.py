@@ -52,3 +52,18 @@ def root() -> dict:
         "editing_runs": f"{settings.api_v1_prefix}/editing-runs",
         "database_knowledge": f"{settings.api_v1_prefix}/database-knowledge/databases",
     }
+
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok"}
+
+
+@app.get("/health/live")
+def health_live() -> dict:
+    return {"status": "live"}
+
+
+@app.get("/health/ready")
+def health_ready() -> dict:
+    return {"status": "ready"}
