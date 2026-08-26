@@ -16,6 +16,7 @@ from app.schemas.template_knowledge import (
     EditingCandidateCreate,
     VideoEditingDBContent,
     EditingVideoInsight,
+    MAX_SHOOTING_GUIDE_CUTS,
     TemplateCandidateStatus,
     TemplateType,
     TradeAreaAnalysisResult,
@@ -442,3 +443,16 @@ def test_llm_output_schemas_are_strict_and_have_no_open_objects():
         assert objects
         assert all(item.get("additionalProperties") is False for item in objects)
         assert all("properties" in item for item in objects)
+
+
+def test_video_editing_schemas_limit_generated_cuts_to_six():
+    editing_schema = VideoEditingDBContent.model_json_schema()
+    guide_schema = editing_schema["$defs"]["EditingShootingGuide"]["properties"]
+    assert guide_schema["scenes"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
+    assert guide_schema["tasks"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
+
+    insight_schema = EditingVideoInsight.model_json_schema()
+    assert (
+        insight_schema["properties"]["shot_sequence"]["maxItems"]
+        == MAX_SHOOTING_GUIDE_CUTS
+    )
