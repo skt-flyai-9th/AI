@@ -24,6 +24,10 @@ _SEED_CATEGORIES = {
     "otsukare_summer_challenge": "challenge",
 }
 
+_SEED_GUIDE_URL_OVERRIDES = {
+    "jujutsu_transition": "https://www.youtube.com/shorts/02afQgwCDSc",
+}
+
 # These labels describe the three guide videos that were actually analysed in
 # the bundled video-editing DB.  Duration and difficulty are derived from the
 # analysis rows below; type and whether a face is required are classification
@@ -103,7 +107,8 @@ def build_video_editing_db_trendcluster() -> dict[str, Any]:
         challenge_id = str(row["id"])
         if challenge_id not in _SEED_CATEGORIES:
             raise ValueError(f"Missing seed category for trendcluster entry: {challenge_id}")
-        guide_url = str(row.get("guide_youtube_url") or "").strip() or None
+        source_guide_url = str(row.get("guide_youtube_url") or "").strip() or None
+        guide_url = _SEED_GUIDE_URL_OVERRIDES.get(challenge_id, source_guide_url)
         generated = str(row.get("generated_at") or "").strip()
         if generated:
             generated_at.append(generated)
