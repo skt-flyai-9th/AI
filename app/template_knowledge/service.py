@@ -312,6 +312,11 @@ class TemplateKnowledgeService:
         except TemplateKnowledgeLLMError as exc:
             raise _llm_domain_error(exc) from exc
         payload = proposed.model_dump(mode="json")
+        guide = payload["shooting_guide"]
+        if len(guide["tasks"]) == len(guide["scenes"]):
+            for index, task in enumerate(guide["tasks"]):
+                task["display_order"] = index + 1
+                task["scene_index"] = index
         payload["trend_ids"] = list(dict.fromkeys(item.trend_id for item in insights))
         return self.create_candidate_from_payload(
             db,

@@ -220,3 +220,62 @@ def test_gemini_analysis_requires_frame_discontinuity_cut_boundaries(monkeypatch
     )
     assert captured["schema"]["properties"]["segments"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
     assert "segments" in prompt["task"]
+
+
+def test_gemini_retries_until_human_reviewed_cut_count_is_reproduced(monkeypatch):
+    prompts = []
+
+    def fake_call(**kwargs):
+        prompts.append(json.loads(kwargs["user_prompt"]))
+        count = 6 if len(prompts) == 1 else 7
+        return {
+            "trend_id": "ignored",
+            "youtube_url": "https://www.youtube.com/watch?v=example",
+            "summary": "사람의 자세 점프를 기준으로 컷을 분리한다.",
+            "hook_patterns": ["high-angle hook"],
+            "shot_sequence": [f"CUT_{index}" for index in range(1, count + 1)],
+            "segments": [
+                {
+                    "sequence": index,
+                    "start_sec": float(index - 1),
+                    "end_sec": float(index),
+                    "scene_role": f"CUT_{index}",
+                    "description": "인물의 자세가 불연속적으로 바뀐다.",
+                    "shot_type": "HIGH_ANGLE",
+                    "transition_out": "HARD_CUT" if index < count else None,
+                    "evidence": f"{index - 1}.0초 자세 점프",
+                }
+                for index in range(1, count + 1)
+            ],
+            "pacing": {"tempo": "FAST", "median_cut_sec": 1.0, "opening_hook_sec": 1.0},
+            "caption_patterns": [],
+            "camera_patterns": [],
+            "transition_patterns": ["HARD_CUT"],
+            "audio_role": "PLATFORM_MUSIC",
+            "reusable_editing_rules": ["자세 점프마다 컷 분리"],
+            "evidence_notes": ["육안 검수 7컷"],
+            "confidence": 0.95,
+        }
+
+    monkeypatch.setattr(llm, "call_gemini_structured", fake_call)
+    analyzer = GeminiYouTubeVideoAnalyzer()
+    analyzer.api_key = "test-gemini-key"
+    analyzer._resolved_model_name = "gemini-test"
+    result = analyzer.analyze(
+        trend_id="otsukare_summer_challenge",
+        youtube_url="https://www.youtube.com/watch?v=example",
+        trend_context={
+            "raw_details": {
+                "reference_cut_review": {
+                    "status": "HUMAN_REVIEWED",
+                    "expected_cut_count": 7,
+                    "boundary_basis": ["사람의 자세가 뚝 바뀌면 새 컷"],
+                }
+            }
+        },
+    )
+
+    assert len(prompts) == 2
+    assert len(result.segments) == 7
+    assert prompts[0]["human_reviewed_reference_cut_review"]["expected_cut_count"] == 7
+    assert "previous analysis" in prompts[1]["correction"]

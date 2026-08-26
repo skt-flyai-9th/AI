@@ -345,6 +345,50 @@ def test_trend_video_analysis_generates_editing_candidate_and_uses_cache():
         assert video.calls == 1
 
 
+def test_generated_editing_tasks_are_normalized_to_zero_based_scene_indexes():
+    class OneBasedTaskGenerator(FakeGenerator):
+        def generate_editing(self, **kwargs) -> VideoEditingDBContent:
+            content = super().generate_editing(**kwargs)
+            content.shooting_guide.tasks[0].display_order = 7
+            content.shooting_guide.tasks[0].scene_index = 1
+            return content
+
+    video = FakeVideoAnalyzer()
+    service = TemplateKnowledgeService(generator=OneBasedTaskGenerator(), video_analyzer=video)
+    with SessionLocal() as db:
+        db.add(
+            Challenge(
+                id="trend_task_normalization",
+                automatic_name="태스크 인덱스 정규화",
+                category="food",
+                automatic_rank=1,
+                automatic_score=90.0,
+                lifecycle="RISING",
+                kr_affinity=0.9,
+                confidence=0.9,
+                automatic_representative_youtube_url=(
+                    "https://www.youtube.com/watch?v=task-normalization"
+                ),
+                representative_video_metadata={},
+                raw_details={},
+            )
+        )
+        db.commit()
+
+        candidate = service.create_editing_candidate(
+            db,
+            EditingCandidateCreate(
+                template_id="edit_task_normalization",
+                trend_ids=["trend_task_normalization"],
+            ),
+        )
+
+        task = candidate.proposed_payload["shooting_guide"]["tasks"][0]
+        assert candidate.status == "VALIDATED"
+        assert task["display_order"] == 1
+        assert task["scene_index"] == 0
+
+
 def test_rebuild_from_scratch_ignores_base_and_forces_fresh_video_analysis():
     class CaptureGenerator(FakeGenerator):
         def __init__(self) -> None:
