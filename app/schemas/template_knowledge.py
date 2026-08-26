@@ -7,7 +7,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 
-MAX_SHOOTING_GUIDE_CUTS = 6
+# A guide cut is an actual edit boundary, not a broad semantic chapter.
+# Short references can contain more than six jump cuts while retaining the
+# same subject or action, so the schema must not force those cuts to merge.
+MAX_SHOOTING_GUIDE_CUTS = 12
 
 
 class TemplateType(StrEnum):
@@ -212,6 +215,27 @@ class VideoEditingDBContent(BaseModel):
     trend_ids: list[str] = Field(max_length=50)
 
 
+class ReferenceVideoSegment(BaseModel):
+    """One evidence-backed semantic cut from the reference video."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sequence: int = Field(ge=1, le=MAX_SHOOTING_GUIDE_CUTS)
+    start_sec: float = Field(ge=0, le=120)
+    end_sec: float = Field(gt=0, le=120)
+    scene_role: str = Field(min_length=1, max_length=80)
+    description: str = Field(min_length=1, max_length=500)
+    shot_type: str = Field(min_length=1, max_length=80)
+    transition_out: str | None = Field(default=None, max_length=120)
+    evidence: str = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> ReferenceVideoSegment:
+        if self.end_sec <= self.start_sec:
+            raise ValueError("end_sec must be greater than start_sec")
+        return self
+
+
 class EditingVideoInsight(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -222,6 +246,9 @@ class EditingVideoInsight(BaseModel):
     shot_sequence: list[str] = Field(
         min_length=1, max_length=MAX_SHOOTING_GUIDE_CUTS
     )
+    segments: list[ReferenceVideoSegment] = Field(
+        min_length=1, max_length=MAX_SHOOTING_GUIDE_CUTS
+    )
     pacing: VideoPacing
     caption_patterns: list[str] = Field(max_length=20)
     camera_patterns: list[str] = Field(max_length=20)
@@ -230,6 +257,18 @@ class EditingVideoInsight(BaseModel):
     reusable_editing_rules: list[str] = Field(min_length=1, max_length=30)
     evidence_notes: list[str] = Field(min_length=1, max_length=30)
     confidence: float = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_segments(self) -> EditingVideoInsight:
+        expected = list(range(1, len(self.segments) + 1))
+        if [item.sequence for item in self.segments] != expected:
+            raise ValueError("segments.sequence must be consecutive from 1")
+        if len(self.shot_sequence) != len(self.segments):
+            raise ValueError("shot_sequence and segments must have the same number of cuts")
+        for previous, current in zip(self.segments, self.segments[1:], strict=False):
+            if current.start_sec < previous.end_sec:
+                raise ValueError("reference video segments must not overlap")
+        return self
 
 
 class VideoPacing(BaseModel):
@@ -273,6 +312,7 @@ class EditingCandidateCreate(BaseModel):
     trend_ids: list[str] = Field(default_factory=list, max_length=10)
     requires_human_approval: bool = True
     force_video_analysis: bool = False
+    rebuild_from_scratch: bool = False
 
 
 class CandidateDecision(BaseModel):

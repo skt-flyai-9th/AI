@@ -24,6 +24,10 @@ _SEED_CATEGORIES = {
     "otsukare_summer_challenge": "challenge",
 }
 
+_SEED_GUIDE_URL_OVERRIDES = {
+    "jujutsu_transition": "https://www.youtube.com/shorts/02afQgwCDSc",
+}
+
 # These labels describe the three guide videos that were actually analysed in
 # the bundled video-editing DB.  Duration and difficulty are derived from the
 # analysis rows below; type and whether a face is required are classification
@@ -32,6 +36,27 @@ _GUIDE_CLASSIFICATIONS: dict[str, tuple[str, bool]] = {
     "jujutsu_transition": ("밈", False),
     "otsukare_summer_challenge": ("챌린지", True),
     "cafe_recommendation_reels": ("정보형", False),
+}
+
+_REFERENCE_CUT_REVIEWS: dict[str, dict[str, Any]] = {
+    "jujutsu_transition": {
+        "status": "HUMAN_REVIEWED",
+        "expected_cut_count": 6,
+        "boundary_basis": [
+            "음식이나 음료가 이전 프레임에 없다가 갑자기 등장하면 별도 컷으로 분리",
+            "손동작, 화면 가림, 의상·구도 변경 전후의 프레임 불연속을 각각 컷으로 분리",
+            "의미가 같은 변신 장면이어도 물체·인물·구도가 연속되지 않으면 합치지 않음",
+        ],
+    },
+    "otsukare_summer_challenge": {
+        "status": "HUMAN_REVIEWED",
+        "expected_cut_count": 7,
+        "boundary_basis": [
+            "사람이 갑자기 사라지거나 다시 나타나는 프레임 불연속마다 별도 컷으로 분리",
+            "인물의 자세나 화면 위치가 연속 동작 없이 뚝 바뀌면 별도 컷으로 분리",
+            "같은 안무 구간이어도 점프컷을 하나의 연속 장면으로 합치지 않음",
+        ],
+    },
 }
 
 
@@ -103,12 +128,12 @@ def build_video_editing_db_trendcluster() -> dict[str, Any]:
         challenge_id = str(row["id"])
         if challenge_id not in _SEED_CATEGORIES:
             raise ValueError(f"Missing seed category for trendcluster entry: {challenge_id}")
-        guide_url = str(row.get("guide_youtube_url") or "").strip() or None
+        source_guide_url = str(row.get("guide_youtube_url") or "").strip() or None
+        guide_url = _SEED_GUIDE_URL_OVERRIDES.get(challenge_id, source_guide_url)
         generated = str(row.get("generated_at") or "").strip()
         if generated:
             generated_at.append(generated)
-        results.append(
-            {
+        result = {
                 "id": challenge_id,
                 "rank": int(rank),
                 "name": str(row["name"]),
@@ -117,7 +142,9 @@ def build_video_editing_db_trendcluster() -> dict[str, Any]:
                 "guide_youtube_url": guide_url,
                 **_video_format_metadata(source, str(row["id"])),
             }
-        )
+        if challenge_id in _REFERENCE_CUT_REVIEWS:
+            result["reference_cut_review"] = _REFERENCE_CUT_REVIEWS[challenge_id]
+        results.append(result)
     results.sort(key=lambda item: (item["rank"], item["id"]))
     if len(results) != 3:
         raise ValueError(
