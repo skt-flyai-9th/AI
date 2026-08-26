@@ -1,6 +1,6 @@
-# SARILS AI Service
+# REALS AI Service
 
-SARILS 앱의 숏폼 추천, 촬영 가이드, 영상 편집, 트렌드 데이터를 담당하는 독립 AI 서버입니다.
+REALS 앱의 숏폼 추천, 촬영 가이드, 영상 편집, 트렌드 데이터를 담당하는 독립 AI 서버입니다.
 
 프론트엔드가 이 서버를 직접 호출하지 않습니다. 앱 요청은 메인 백엔드를 거쳐 전달되며, 모든 내부 API는 `X-Internal-API-Key`로 보호됩니다.
 
@@ -9,7 +9,7 @@ Mobile App
     ↓
 Main Backend
     ↓  X-Internal-API-Key
-SARILS AI Service
+REALS AI Service
     ├─ Challenge Ranking Agent
     ├─ Shortform Recommendation Agent
     ├─ Editing Agent
@@ -30,6 +30,33 @@ SARILS AI Service
 | REALS Renderer | `AVAILABLE` | FFmpeg 기반 세로형 숏폼 렌더링과 결과 QC |
 
 운영 서버는 AWS EC2에서 Docker Compose로 실행합니다. 현재 CPU 운영 프로필은 2 vCPU / 8 GiB 환경을 기준으로 조정되어 있습니다.
+
+## LangGraph 구조
+
+현재 `shortform`과 `editing` Agent의 제어 흐름은 LangGraph `StateGraph`로 구현되어 있습니다. LLM이 데이터베이스를 직접 변경하지 않고, 서비스 계층이 세션·실행 상태를 저장하며 LangGraph는 한 요청 안의 분기와 검증 흐름만 담당합니다.
+
+```text
+Shortform Graph
+START
+  → route_start
+  ├─ decide_turn → END
+  └─ select_video_editing_db → END
+
+Editing Graph
+START
+  → plan_recipe
+  → validate_recipe
+  ├─ validation_passed → END
+  ├─ repair_recipe → validate_recipe
+  └─ repair limit exhausted → END
+```
+
+- `app/agents/shortform/graph.py`: 대화 턴 판단과 영상편집DB 추천 경로 분리
+- `app/agents/editing/graph.py`: 레시피 계획, 결정론적 검증, 제한된 자동 수정 반복
+- PostgreSQL: 대화 세션, 편집 실행, 결과의 영속 상태 관리
+- Celery: 장시간 영상 분석·렌더 작업 실행
+
+LangGraph는 현재 필요한 결정 흐름에만 사용합니다. 챌린지 수집, DB 승인, FFmpeg 렌더링처럼 결정론적 서비스·배치 작업까지 불필요하게 그래프로 감싸지 않습니다.
 
 ## 서비스 범위
 
@@ -52,27 +79,6 @@ AI 서버가 담당하지 않는 기능:
 - 매장·프로젝트·촬영 파일의 메인 도메인 관리
 - SNS 계정 로그인 또는 자동 게시
 - 프론트엔드와의 직접 통신
-
-## 현재 데이터
-
-운영 `trendcluster`는 영상편집DB에서 검증된 다음 3건만 사용합니다.
-
-| 순위 | ID | 이름 | 카테고리 |
-|---:|---|---|---|
-| 1 | `jujutsu_transition` | 주술회전 트랜지션 | `meme` |
-| 2 | `cafe_recommendation_reels` | 카페 추천 리뷰 릴스 | `food` |
-| 3 | `otsukare_summer_challenge` | 오츠카레 썸머 챌린지 | `challenge` |
-
-영상편집DB 원본과 촬영 태스크 구간은 다음 파일에 포함되어 있습니다.
-
-- `app/template_knowledge/sources/영상편집DB.xlsx`
-- `app/template_knowledge/sources/영상편집DB_원본구간.xlsx`
-- `app/template_knowledge/sources/video_editing.json`
-- `app/template_knowledge/sources/video_editing_task_intervals.json`
-- `app/template_knowledge/sources/상권분석DB.xlsx`
-- `app/template_knowledge/sources/trade_area.json`
-
-촬영 태스크는 `display_order`, `task_title`, `scene_index`, `guide.instructions`를 백엔드에 제공합니다. 내부 편집 분석에는 각 구간의 `scene_role`도 사용합니다.
 
 ## 대화형 숏폼 추천
 
@@ -336,7 +342,7 @@ OpenAI 잔액이 소진되면 추천·편집 요청은 provider의 `429 insuffic
 
 ```text
 AWS EC2
-└─ /opt/sarils-ai
+└─ AI service checkout
    ├─ api:8000
    ├─ renderer:8080
    ├─ worker
