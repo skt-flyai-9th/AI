@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+from collections.abc import Callable
 from typing import Any, Protocol, TypeVar
 
 from pydantic import BaseModel
@@ -33,6 +35,7 @@ class EditingLLM(Protocol):
         video_contexts: list[VideoContext],
         parent_recipe: dict[str, Any] | None,
         revision_action: str | None,
+        progress_callback: Callable[[int], None] | None = None,
     ) -> EditingPlanDecision: ...
 
     def repair_recipe(
@@ -47,16 +50,16 @@ class EditingLLM(Protocol):
         validation_errors: list[dict[str, Any]],
         parent_recipe: dict[str, Any] | None,
         revision_action: str | None,
+        progress_callback: Callable[[int], None] | None = None,
     ) -> EditingPlanDecision: ...
 
 
 class OpenAIEditingLLM:
     """Frame-accurate editing planner on top of the Responses API.
 
-    MULTI_CUT analyzes every raw frame before source trimming, maps each cut to
-    the Gemini reference-original segment context, and reuses the analyzed
-    frames on the produced timeline. ONE_TAKE first gets a 3-frame-stride global
-    overview, then a full one-frame pass before final creative editing.
+    Source videos are uniformly sampled under per-video and per-run budgets
+    before source trimming. The sampled exact timestamps remain the only legal
+    cut boundaries and the resulting observations are reused on the timeline.
     """
 
     def __init__(self) -> None:
@@ -68,6 +71,12 @@ class OpenAIEditingLLM:
         self.max_output_tokens = settings.editing_max_output_tokens
         self.max_request_attempts = settings.editing_llm_max_request_attempts
         self.analysis_batch_frames = int(getattr(settings, "editing_analysis_batch_frames", 24))
+        self.analysis_max_frames_per_video = int(
+            getattr(settings, "editing_analysis_max_frames_per_video", 48)
+        )
+        self.analysis_max_total_frames = int(
+            getattr(settings, "editing_analysis_max_total_frames", 120)
+        )
         self._analysis_cache: dict[str, dict[str, Any]] = {}
 
     def plan_recipe(
@@ -80,6 +89,7 @@ class OpenAIEditingLLM:
         video_contexts: list[VideoContext],
         parent_recipe: dict[str, Any] | None,
         revision_action: str | None,
+        progress_callback: Callable[[int], None] | None = None,
     ) -> EditingPlanDecision:
         reduced_structure = _is_reduced_structure_revision(revision_action)
         if reduced_structure:
@@ -98,6 +108,7 @@ class OpenAIEditingLLM:
             reference_context=reference_context,
             revision_action=revision_action,
             shoot_mode=shoot_mode,
+            progress_callback=progress_callback,
         )
         self._analysis_cache[cache_key] = prepared
         editing_context = build_editing_context(
@@ -161,6 +172,7 @@ class OpenAIEditingLLM:
         validation_errors: list[dict[str, Any]],
         parent_recipe: dict[str, Any] | None,
         revision_action: str | None,
+        progress_callback: Callable[[int], None] | None = None,
     ) -> EditingPlanDecision:
         shoot_mode = _resolve_shoot_mode(project, video_contexts)
         cache_key = _analysis_cache_key(selected_shortform, video_contexts, shoot_mode)
@@ -172,6 +184,7 @@ class OpenAIEditingLLM:
                 reference_context=video_editing_db.get("reference_evidence") or {},
                 revision_action=revision_action,
                 shoot_mode=shoot_mode,
+                progress_callback=progress_callback,
             )
             self._analysis_cache[cache_key] = prepared
         editing_context = build_editing_context(
@@ -218,15 +231,35 @@ class OpenAIEditingLLM:
         reference_context: dict[str, Any],
         revision_action: str | None,
         shoot_mode: str,
+        progress_callback: Callable[[int], None] | None = None,
     ) -> dict[str, Any]:
+        sampled_by_video = _sample_video_frames(
+            video_contexts,
+            max_per_video=max(1, getattr(self, "analysis_max_frames_per_video", 48)),
+            max_total=max(1, getattr(self, "analysis_max_total_frames", 120)),
+        )
+        batch_size = max(1, min(getattr(self, "analysis_batch_frames", 24), 40))
+        total_batches = sum(
+            math.ceil(len(sampled_by_video[context.video_id]) / batch_size)
+            for context in video_contexts
+        )
+        completed_batches = 0
+
+        def report_batch_complete() -> None:
+            nonlocal completed_batches
+            completed_batches += 1
+            if progress_callback is not None and total_batches:
+                progress_callback(35 + int(23 * completed_batches / total_batches))
+
         if shoot_mode == "MULTI_CUT":
             analyzed = [
                 self._analyze_video_frames(
                     context=context,
-                    frames=context.keyframes,
-                    purpose="MULTI_CUT_SOURCE_FRAME_EXACT",
+                    frames=sampled_by_video[context.video_id],
+                    purpose="MULTI_CUT_SAMPLED_EXACT_FRAMES",
                     reference_context=reference_context,
                     video_editing_db=video_editing_db,
+                    on_batch_complete=report_batch_complete,
                 )
                 for context in video_contexts
             ]
@@ -255,20 +288,13 @@ class OpenAIEditingLLM:
                 "ONE_TAKE requires exactly one source video.", retryable=False
             )
         context = video_contexts[0]
-        overview = self._analyze_video_frames(
-            context=context,
-            frames=context.keyframes[::3] or context.keyframes[:1],
-            purpose="ONE_TAKE_GLOBAL_EVERY_3_FRAMES",
-            reference_context=reference_context,
-            video_editing_db=video_editing_db,
-        )
         detailed = self._analyze_video_frames(
             context=context,
-            frames=context.keyframes,
-            purpose="ONE_TAKE_FINAL_FRAME_EXACT",
+            frames=sampled_by_video[context.video_id],
+            purpose="ONE_TAKE_SAMPLED_EXACT_FRAMES",
             reference_context=reference_context,
             video_editing_db=video_editing_db,
-            prior_summary=overview["summary"],
+            on_batch_complete=report_batch_complete,
         )
         produced_observations = []
         for observation in detailed["observations"]:
@@ -283,7 +309,7 @@ class OpenAIEditingLLM:
                 "trim_in_ms": 0,
                 "trim_out_ms": context.duration_ms,
             },
-            "one_take_overview": overview,
+            "one_take_overview": detailed,
             "produced_frame_context": {
                 "mode": "ONE_TAKE",
                 "duration_ms": context.duration_ms,
@@ -301,6 +327,7 @@ class OpenAIEditingLLM:
         reference_context: dict[str, Any],
         video_editing_db: dict[str, Any],
         prior_summary: str | None = None,
+        on_batch_complete: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
         if not frames:
             raise EditingLLMError(
@@ -377,6 +404,8 @@ class OpenAIEditingLLM:
                 schema_name="editing_frame_batch",
                 content_override=content,
             )
+            if on_batch_complete is not None:
+                on_batch_complete()
             summaries.append(result.summary)
             by_index = {item.frame_index: item for item in result.observations}
             for frame in batch:
@@ -481,6 +510,44 @@ class OpenAIEditingLLM:
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_request_attempts,
         )
+
+
+def _sample_video_frames(
+    contexts: list[VideoContext],
+    *,
+    max_per_video: int,
+    max_total: int,
+) -> dict[str, list[Any]]:
+    """Uniformly retain temporal coverage while bounding vision-model calls."""
+    desired = [min(len(context.keyframes), max_per_video) for context in contexts]
+    budgets = desired.copy()
+    while sum(budgets) > max_total:
+        candidate = max(
+            (index for index, value in enumerate(budgets) if value > 1),
+            key=lambda index: (budgets[index], desired[index], -index),
+            default=None,
+        )
+        if candidate is None:
+            break
+        budgets[candidate] -= 1
+    return {
+        context.video_id: _uniform_sample(context.keyframes, budgets[index])
+        for index, context in enumerate(contexts)
+    }
+
+
+def _uniform_sample(frames: list[Any], limit: int) -> list[Any]:
+    if limit <= 0 or not frames:
+        return []
+    if len(frames) <= limit:
+        return list(frames)
+    if limit == 1:
+        return [frames[0]]
+    indices = {
+        round(position * (len(frames) - 1) / (limit - 1))
+        for position in range(limit)
+    }
+    return [frames[index] for index in sorted(indices)]
 
 
 def _resolve_shoot_mode(project: dict[str, Any], contexts: list[VideoContext]) -> str:
