@@ -70,6 +70,7 @@ class OpenAIEditingLLM:
         self.timeout = settings.editing_request_timeout_seconds
         self.max_output_tokens = settings.editing_max_output_tokens
         self.max_request_attempts = settings.editing_llm_max_request_attempts
+        self.rate_limit_retry_base_seconds = settings.editing_rate_limit_retry_base_seconds
         self.analysis_batch_frames = int(getattr(settings, "editing_analysis_batch_frames", 24))
         self.analysis_max_frames_per_video = int(
             getattr(settings, "editing_analysis_max_frames_per_video", 48)
@@ -509,6 +510,7 @@ class OpenAIEditingLLM:
             timeout=self.timeout,
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_request_attempts,
+            rate_limit_retry_base_seconds=self.rate_limit_retry_base_seconds,
         )
 
 

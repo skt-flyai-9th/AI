@@ -16,6 +16,7 @@ from app.agents.editing.types import EditingPlanDecision
 class _FakeResponse:
     status_code: int
     payload: dict[str, Any]
+    headers: dict[str, str] | None = None
 
     def json(self) -> dict[str, Any]:
         return self.payload
@@ -27,6 +28,7 @@ def _planner() -> OpenAIEditingLLM:
     planner.model = "test-model"
     planner.max_output_tokens = 5000
     planner.max_request_attempts = 3
+    planner.rate_limit_retry_base_seconds = 20.0
     return planner
 
 
@@ -65,7 +67,11 @@ def _install_responses(monkeypatch, responses: list[_FakeResponse]) -> list[dict
         return responses.pop(0)
 
     monkeypatch.setattr(structured_output, "_post_responses_api", fake_post)
-    monkeypatch.setattr(structured_output, "_wait_before_retry", lambda _attempt: None)
+    monkeypatch.setattr(
+        structured_output,
+        "_wait_before_retry",
+        lambda _attempt, **_kwargs: None,
+    )
     return requests
 
 
@@ -175,3 +181,34 @@ def test_rate_limit_response_is_retried(monkeypatch):
     assert result.outcome == "SOURCE_GAP"
     assert len(requests) == 2
     assert requests[1]["max_output_tokens"] == 5000
+
+
+def test_rate_limit_uses_long_backoff_and_honors_retry_after(monkeypatch):
+    waits: list[float] = []
+    responses = [
+        _FakeResponse(429, {}, headers={"retry-after": "35"}),
+        _FakeResponse(200, _output(_source_gap_payload())),
+    ]
+    requests: list[dict[str, Any]] = []
+
+    def fake_post(**kwargs):
+        requests.append(copy.deepcopy(kwargs["request_payload"]))
+        return responses.pop(0)
+
+    monkeypatch.setattr(structured_output, "_post_responses_api", fake_post)
+    monkeypatch.setattr(
+        structured_output,
+        "_wait_before_retry",
+        lambda _attempt, *, minimum_seconds=0.0: waits.append(minimum_seconds),
+    )
+
+    result = _planner()._request_model(
+        schema_model=EditingPlanDecision,
+        instructions="Plan an edit.",
+        user_payload={},
+        schema_name="editing_plan",
+    )
+
+    assert result.outcome == "SOURCE_GAP"
+    assert len(requests) == 2
+    assert waits == [35.0]

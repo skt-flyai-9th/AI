@@ -27,6 +27,7 @@ def request_structured_model(
     timeout: int,
     max_output_tokens: int,
     max_attempts: int,
+    rate_limit_retry_base_seconds: float,
 ) -> _ModelT:
     request_payload: dict[str, Any] = {
         "model": model,
@@ -94,7 +95,17 @@ def request_structured_model(
             )
             if not retryable or attempt >= max_attempts:
                 raise error
-            _wait_before_retry(attempt)
+            if response.status_code == 429:
+                _wait_before_retry(
+                    attempt,
+                    minimum_seconds=_rate_limit_delay_seconds(
+                        response,
+                        attempt=attempt,
+                        base_seconds=rate_limit_retry_base_seconds,
+                    ),
+                )
+            else:
+                _wait_before_retry(attempt)
             continue
 
         response_payload: dict[str, Any] = {}
@@ -154,8 +165,23 @@ def _post_responses_api(
         )
 
 
-def _wait_before_retry(attempt: int) -> None:
-    time.sleep(min(0.5 * (2 ** (attempt - 1)), 2.0))
+def _wait_before_retry(attempt: int, *, minimum_seconds: float = 0.0) -> None:
+    time.sleep(max(minimum_seconds, min(0.5 * (2 ** (attempt - 1)), 2.0)))
+
+
+def _rate_limit_delay_seconds(
+    response: httpx.Response,
+    *,
+    attempt: int,
+    base_seconds: float,
+) -> float:
+    retry_after = 0.0
+    try:
+        headers = getattr(response, "headers", {}) or {}
+        retry_after = float(headers.get("retry-after", "0"))
+    except (TypeError, ValueError):
+        pass
+    return max(retry_after, min(base_seconds * (2 ** (attempt - 1)), 120.0))
 
 
 def _retry_instructions(instructions: str, reason: str) -> str:
