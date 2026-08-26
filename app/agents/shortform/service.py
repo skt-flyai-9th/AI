@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from functools import lru_cache
 from pathlib import Path
@@ -155,6 +156,8 @@ class ShortformAgentService:
         if action == ShortformAction.CONFIRM and not project_state["ready_for_confirmation"]:
             action = ShortformAction.ASK
 
+        assistant_message = _single_question_message(decision.assistant_message)
+
         session.project_state = project_state
         session.status = (
             ShortformSessionStatus.CONFIRMING.value
@@ -175,7 +178,7 @@ class ShortformAgentService:
         return ShortformTurnResponse(
             session_id=session.id,
             action=action,
-            assistant_message=decision.assistant_message,
+            assistant_message=assistant_message,
             project_state=ShortformProjectState.model_validate(project_state),
             options=options,
             recommendation=None,
@@ -747,6 +750,47 @@ def _append_conversation(
     if assistant_text:
         items.append({"role": "assistant", "content": assistant_text})
     return items[-40:]
+
+
+def _single_question_message(message: str) -> str:
+    if not message:
+        return ""
+
+    text = re.sub(r"\s+", " ", message.strip())
+    if not text:
+        return ""
+
+    clean_lines = [
+        re.sub(r"^\s*[\*\-\d]+\s*[)\.]\s*", "", part.strip())
+        for part in text.splitlines()
+        if part.strip()
+    ]
+    if clean_lines:
+        candidate = " ".join(clean_lines)
+    else:
+        candidate = text
+
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", candidate) if part.strip()]
+    if not sentences:
+        sentences = [candidate]
+
+    summary = sentences[0].rstrip()
+    question = next((item for item in sentences if item.endswith("?")), None)
+
+    if question:
+        if question == summary:
+            return _limit_message_length(question, 240)
+        return _limit_message_length(f"{summary}\n{question}", 260)
+
+    # If the model did not include a question mark, keep the shortest meaningful
+    # one-line summary and keep the fallback concise.
+    return _limit_message_length(summary, 180)
+
+
+def _limit_message_length(text: str, max_len: int) -> str:
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1].rstrip() + "…"
 
 
 def _turn_input_to_text(turn_input: ShortformTurnInput) -> str:
