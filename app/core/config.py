@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     editing_request_timeout_seconds: int = Field(default=30, ge=5, le=180)
     editing_max_output_tokens: int = Field(default=5000, ge=512, le=20000)
     editing_llm_max_request_attempts: int = Field(default=3, ge=1, le=5)
+    editing_rate_limit_retry_base_seconds: float = Field(default=20.0, ge=1.0, le=120.0)
     editing_max_repair_attempts: int = Field(default=2, ge=0, le=5)
     editing_max_keyframes_per_video: int = Field(default=3, ge=1, le=12)
     editing_analysis_frame_width: int = Field(default=360, ge=240, le=720)
