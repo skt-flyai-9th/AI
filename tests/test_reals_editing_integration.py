@@ -225,7 +225,6 @@ def test_typewriter_ass_reveals_complete_korean_characters():
         OverlayType,
         PlacementId,
     )
-    from reals_edit_engine.registries import Registries
     from reals_edit_engine.subtitle_layout import PlacedOverlay, _graphemes, build_ass
 
     assert _graphemes("가") == ["가"]
@@ -251,7 +250,12 @@ def test_typewriter_ass_reveals_complete_korean_characters():
         lines=["홍대 맛집"],
     )
 
-    ass = build_ass([placed], Registries("reals-video-engine"))
+    class StubFontRegistry:
+        @staticmethod
+        def resolve_font(_font_asset_id: str, _weight: str) -> dict[str, object]:
+            return {"ass_family": "Pretendard", "ass_bold": -1}
+
+    ass = build_ass([placed], StubFontRegistry())
     dialogues = [line for line in ass.splitlines() if line.startswith("Dialogue:")]
 
     assert len(dialogues) == 4
