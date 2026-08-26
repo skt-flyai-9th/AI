@@ -7,6 +7,7 @@ from typing import Any, Protocol, TypeVar
 import httpx
 from pydantic import BaseModel
 
+from app.agents.editing.context_builder import build_editing_context
 from app.agents.editing.types import (
     EditingPlanDecision,
     FrameBatchAnalysis,
@@ -101,6 +102,13 @@ class OpenAIEditingLLM:
             shoot_mode=shoot_mode,
         )
         self._analysis_cache[cache_key] = prepared
+        editing_context = build_editing_context(
+            project=project,
+            selected_shortform=selected_shortform,
+            video_editing_db=video_editing_db,
+            video_contexts=video_contexts,
+            prepared_analysis=prepared,
+        )
         payload = {
             "task": task,
             "project": project,
@@ -110,6 +118,7 @@ class OpenAIEditingLLM:
             "source_preparation": prepared["source_preparation"],
             "one_take_overview": prepared.get("one_take_overview"),
             "produced_frame_context": prepared["produced_frame_context"],
+            "editing_context": editing_context,
             "parent_recipe": parent_recipe,
             "revision_action": revision_action,
             "source_gap_policy": (
@@ -167,6 +176,13 @@ class OpenAIEditingLLM:
                 shoot_mode=shoot_mode,
             )
             self._analysis_cache[cache_key] = prepared
+        editing_context = build_editing_context(
+            project=project,
+            selected_shortform=selected_shortform,
+            video_editing_db=video_editing_db,
+            video_contexts=video_contexts,
+            prepared_analysis=prepared,
+        )
         payload = {
             "task": "Repair the EditRecipe so every deterministic validation error is fixed.",
             "project": project,
@@ -176,6 +192,7 @@ class OpenAIEditingLLM:
             "source_preparation": prepared["source_preparation"],
             "one_take_overview": prepared.get("one_take_overview"),
             "produced_frame_context": prepared["produced_frame_context"],
+            "editing_context": editing_context,
             "invalid_decision": decision.model_dump(mode="json"),
             "validation_errors": validation_errors,
             "parent_recipe": parent_recipe,
