@@ -70,7 +70,7 @@ class EditRecipeValidator:
         configured_effects = rules.get("allowed_effect_ids")
         allowed_effects = (
             set(configured_effects)
-            if isinstance(configured_effects, list)
+            if isinstance(configured_effects, list) and configured_effects
             else set(renderer_effects)
         )
         allowed_effects &= renderer_effects

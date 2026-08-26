@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 from sqlalchemy.orm import Session
 
+from app.agents.editing.effect_planner import EffectPlanner
 from app.agents.editing.graph import build_editing_graph
 from app.agents.editing.llm import EditingLLM, OpenAIEditingLLM
 from app.agents.editing.renderer import EditingRenderer, HttpEditingRenderer
@@ -54,11 +55,13 @@ class EditingAgentService:
         video_context_builder: VideoContextBuilder | None = None,
         validator: EditRecipeValidator | None = None,
         renderer: EditingRenderer | None = None,
+        effect_planner: EffectPlanner | None = None,
     ) -> None:
         self.llm = llm or OpenAIEditingLLM()
         self.video_context_builder = video_context_builder or FFmpegVideoContextBuilder()
         self.validator = validator or EditRecipeValidator()
         self.renderer = renderer or HttpEditingRenderer()
+        self.effect_planner = effect_planner or EffectPlanner()
         self.settings = get_settings()
         self.domain_context = _load_domain_context()
         self.graph = build_editing_graph(self.llm, self.validator)
@@ -345,6 +348,11 @@ class EditingAgentService:
             source_type="VIDEO_ONLY",
             timeline=timeline,
             cta=RecipeCta(text="지금 확인해 보세요"),
+        )
+        recipe = self.effect_planner.apply_recipe(
+            recipe,
+            produced_frame_context={"observations": []},
+            video_editing_db=video_editing_db,
         )
         validation_errors = self.validator.validate(
             recipe,
