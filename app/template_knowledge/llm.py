@@ -141,6 +141,7 @@ class OpenAITemplateCandidateGenerator:
                     f"Create at most {MAX_SHOOTING_GUIDE_CUTS} ordered shooting-guide scenes and at most {MAX_SHOOTING_GUIDE_CUTS} matching tasks.",
                     "Treat gemini_video_insights[].segments as the authoritative cut plan.",
                     "Create exactly one shooting-guide scene and one matching task for each authoritative segment, preserving sequence and semantic role.",
+                    "For the task matching segment sequence N, set display_order to N and the zero-based scene_index to N-1.",
                     "Never merge segments across a visible edit discontinuity, even when adjacent segments have the same subject, action, or semantic role.",
                     "Write every user-facing name, recommendation, scene description, subtitle, task title, and instruction in natural Korean; keep only machine identifiers and effect IDs in English.",
                     "Include each segment's observed start/end timestamps and evidence in its scene description or task instructions so the cut boundary remains auditable.",
@@ -294,9 +295,14 @@ class GeminiYouTubeVideoAnalyzer:
     ) -> EditingVideoInsight:
         if not self.api_key:
             raise TemplateKnowledgeLLMError("GEMINI_API_KEY is not configured.", retryable=False)
-        prompt = json.dumps(
-            {
-                "task": (
+        reference_cut_review = _human_reviewed_reference_cut_review(trend_context)
+        expected_cut_count = (
+            reference_cut_review.get("expected_cut_count")
+            if reference_cut_review is not None
+            else None
+        )
+        prompt_payload = {
+            "task": (
                     "Analyze the supplied public YouTube video as reference-original editing evidence "
                     "for a Korean small-business short-form video-editing database. Preserve the "
                     "original edit-cut order and describe the meaning of every cut. Analyze "
@@ -324,16 +330,16 @@ class GeminiYouTubeVideoAnalyzer:
                     "when the subject and action are otherwise unchanged. "
                     "Cuts must not overlap and must cover the observed content from the opening hook "
                     "through the final meaningful frame."
-                ),
-                "trend_id": trend_id,
-                "youtube_url": youtube_url,
-                "trend_context": trend_context,
-                "effect_analysis_format_examples": [
+            ),
+            "trend_id": trend_id,
+            "youtube_url": youtube_url,
+            "trend_context": trend_context,
+            "effect_analysis_format_examples": [
                     "SEGMENT|id=seg_02|role=PROCESS|start=2.10s|end=4.80s|subject=drink|composition=close-up",
                     "EFFECT|segment=seg_03|event=PRODUCT_REVEAL|type=SHAKE|start=5.40s|duration=4f|x=1.8%|y=0.7%|rotation=0.5deg|scale=1.018|damping=true",
                     "EFFECT|segment=seg_01|event=HOOK|type=ROTATION|start=0.20s|duration=8f|rotation=-1.2deg",
-                ],
-                "cut_boundary_rules": [
+            ],
+            "cut_boundary_rules": [
                     "Start a new cut at every observable shot change, action-state discontinuity, subject change, or intentional transition boundary.",
                     "Treat a prop or food item popping into or out of view between adjacent frames as a mandatory cut boundary.",
                     "Treat a person disappearing, reappearing, teleporting, or jumping instantly to a different pose or screen position as a mandatory cut boundary.",
@@ -342,34 +348,77 @@ class GeminiYouTubeVideoAnalyzer:
                     "Use timestamps from the supplied video; do not invent evenly spaced cuts.",
                     "Do not overlap segments or reverse their order.",
                     "Record the visual observation that justifies every boundary in segments[].evidence.",
-                ],
-                "allowed_audio_roles": ["PLATFORM_MUSIC", "ORIGINAL_AMBIENCE", "NONE"],
-            },
-            ensure_ascii=False,
-        )
-        try:
-            parsed = call_gemini_structured(
-                api_key=self.api_key,
-                model=self.model_name,
-                system_prompt=(
-                    "You are SARILS's evidence-only reference-video analyst. Treat the original "
-                    "video's segment context as the editing target that later user footage will be "
-                    "matched against. Visual and effect measurements must be conservative, timestamped, "
-                    "and reusable. Never invent a value that the video does not support."
-                ),
-                user_prompt=prompt,
-                schema_name="editing_video_insight",
-                schema=EditingVideoInsight.model_json_schema(),
-                timeout=self.timeout,
-                file_uris=[youtube_url],
+            ],
+            "human_reviewed_reference_cut_review": reference_cut_review,
+            "allowed_audio_roles": ["PLATFORM_MUSIC", "ORIGINAL_AMBIENCE", "NONE"],
+        }
+        if expected_cut_count is not None:
+            prompt_payload["task"] += (
+                f" A human reviewer confirmed exactly {expected_cut_count} physical edit cuts. "
+                "Return exactly that many segments and use the supplied boundary_basis to find the "
+                "subtle discontinuities; do not create arbitrary evenly spaced cuts."
             )
-            parsed["trend_id"] = trend_id
-            parsed["youtube_url"] = youtube_url
-            return EditingVideoInsight.model_validate(parsed)
-        except TemplateKnowledgeLLMError:
-            raise
-        except Exception as exc:
-            raise TemplateKnowledgeLLMError("Gemini video analysis failed.") from exc
+        for attempt in range(2 if expected_cut_count is not None else 1):
+            if attempt:
+                prompt_payload["correction"] = (
+                    f"The previous analysis did not return the human-reviewed total of exactly "
+                    f"{expected_cut_count} physical edit cuts. Re-audit adjacent frames for every "
+                    "object/person/pose discontinuity and return the exact reviewed total."
+                )
+            prompt = json.dumps(prompt_payload, ensure_ascii=False)
+            try:
+                parsed = call_gemini_structured(
+                    api_key=self.api_key,
+                    model=self.model_name,
+                    system_prompt=(
+                        "You are REALS's evidence-only reference-video analyst. Treat the original "
+                        "video's segment context as the editing target that later user footage will be "
+                        "matched against. Visual and effect measurements must be conservative, timestamped, "
+                        "and reusable. Never invent a value that the video does not support."
+                    ),
+                    user_prompt=prompt,
+                    schema_name="editing_video_insight",
+                    schema=EditingVideoInsight.model_json_schema(),
+                    timeout=self.timeout,
+                    file_uris=[youtube_url],
+                )
+                parsed["trend_id"] = trend_id
+                parsed["youtube_url"] = youtube_url
+                insight = EditingVideoInsight.model_validate(parsed)
+                if expected_cut_count is None or len(insight.segments) == expected_cut_count:
+                    return insight
+            except TemplateKnowledgeLLMError:
+                raise
+            except Exception as exc:
+                raise TemplateKnowledgeLLMError("Gemini video analysis failed.") from exc
+        raise TemplateKnowledgeLLMError(
+            f"Gemini did not reproduce the human-reviewed {expected_cut_count}-cut boundary plan.",
+            retryable=True,
+        )
+
+
+def _human_reviewed_reference_cut_review(
+    trend_context: dict[str, Any],
+) -> dict[str, Any] | None:
+    raw_details = trend_context.get("raw_details")
+    if not isinstance(raw_details, dict):
+        return None
+    review = raw_details.get("reference_cut_review")
+    if not isinstance(review, dict) or review.get("status") != "HUMAN_REVIEWED":
+        return None
+    expected = review.get("expected_cut_count")
+    if not isinstance(expected, int) or not 1 <= expected <= MAX_SHOOTING_GUIDE_CUTS:
+        return None
+    basis = review.get("boundary_basis")
+    if not isinstance(basis, list) or not basis or not all(
+        isinstance(item, str) and item.strip() for item in basis
+    ):
+        return None
+    return {
+        "status": "HUMAN_REVIEWED",
+        "expected_cut_count": expected,
+        "boundary_basis": basis,
+    }
 
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)

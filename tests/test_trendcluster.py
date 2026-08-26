@@ -43,6 +43,8 @@ def test_checked_in_trendcluster_matches_provided_video_editing_db():
     assert checked_in["results"][1]["guide_youtube_url"] == (
         "https://www.youtube.com/shorts/OWnLiuJU8Ks"
     )
+    assert checked_in["results"][0]["reference_cut_review"]["expected_cut_count"] == 6
+    assert checked_in["results"][2]["reference_cut_review"]["expected_cut_count"] == 7
     assert [
         (
             item["format_type"],
