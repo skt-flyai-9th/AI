@@ -4,10 +4,13 @@ import hashlib
 import json
 from typing import Any, Protocol, TypeVar
 
-import httpx
 from pydantic import BaseModel
 
 from app.agents.editing.context_builder import build_editing_context
+from app.agents.editing.structured_output import (
+    EditingLLMError,
+    request_structured_model,
+)
 from app.agents.editing.types import (
     EditingPlanDecision,
     FrameBatchAnalysis,
@@ -17,12 +20,6 @@ from app.agents.editing.types import (
 )
 from app.agents.editing.reals import get_reals_registry
 from app.core.config import Settings, get_settings
-
-
-class EditingLLMError(RuntimeError):
-    def __init__(self, message: str, *, retryable: bool = True) -> None:
-        super().__init__(message)
-        self.retryable = retryable
 
 
 class EditingLLM(Protocol):
@@ -69,6 +66,7 @@ class OpenAIEditingLLM:
         self.model = settings.editing_openai_model.strip()
         self.timeout = settings.editing_request_timeout_seconds
         self.max_output_tokens = settings.editing_max_output_tokens
+        self.max_request_attempts = settings.editing_llm_max_request_attempts
         self.analysis_batch_frames = int(getattr(settings, "editing_analysis_batch_frames", 24))
         self._analysis_cache: dict[str, dict[str, Any]] = {}
 
@@ -470,47 +468,19 @@ class OpenAIEditingLLM:
                 }
             ]
         schema = _make_strict_schema(schema_model.model_json_schema())
-        request_payload = {
-            "model": self.model,
-            "instructions": instructions,
-            "input": [{"role": "user", "content": content}],
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": schema_name,
-                    "schema": schema,
-                    "strict": True,
-                }
-            },
-            "reasoning": {"effort": "low"},
-            "max_output_tokens": self.max_output_tokens,
-            "store": False,
-        }
-        try:
-            with httpx.Client(timeout=max(self.timeout, 60)) as client:
-                response = client.post(
-                    f"{self.base_url}/responses",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=request_payload,
-                )
-        except httpx.TimeoutException as exc:
-            raise EditingLLMError("Editing GPT request timed out.") from exc
-        except httpx.HTTPError as exc:
-            raise EditingLLMError("Editing GPT request failed.") from exc
-        if response.status_code >= 400:
-            retryable = response.status_code == 429 or response.status_code >= 500
-            raise EditingLLMError(
-                f"OpenAI Responses API returned HTTP {response.status_code}.",
-                retryable=retryable,
-            )
-        try:
-            parsed = json.loads(_extract_output_text(response.json()))
-            return schema_model.model_validate(parsed)
-        except (ValueError, TypeError) as exc:
-            raise EditingLLMError("Editing GPT returned invalid structured output.") from exc
+        return request_structured_model(
+            schema_model=schema_model,
+            schema=schema,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            model=self.model,
+            instructions=instructions,
+            content=content,
+            schema_name=schema_name,
+            timeout=self.timeout,
+            max_output_tokens=self.max_output_tokens,
+            max_attempts=self.max_request_attempts,
+        )
 
 
 def _resolve_shoot_mode(project: dict[str, Any], contexts: list[VideoContext]) -> str:
@@ -832,19 +802,6 @@ def _make_strict_schema(value: Any) -> Any:
         result["required"] = list(properties)
         result["additionalProperties"] = False
     return result
-
-
-def _extract_output_text(payload: dict[str, Any]) -> str:
-    for item in payload.get("output", []):
-        if not isinstance(item, dict):
-            continue
-        for part in item.get("content", []):
-            if isinstance(part, dict) and part.get("type") == "output_text":
-                text = part.get("text")
-                if isinstance(text, str):
-                    return text
-    value = payload.get("output_text")
-    return value if isinstance(value, str) else ""
 
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
