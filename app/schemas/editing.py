@@ -4,7 +4,24 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+_OPERATIONAL_COPY_MARKERS = (
+    "플랫폼에서 직접",
+    "직접 추가",
+    "업로드 후",
+    "게시 시",
+    "음원은",
+    "음악은",
+)
+
+
+def _reject_operational_copy(value: str) -> str:
+    text = value.strip()
+    if any(marker in text for marker in _OPERATIONAL_COPY_MARKERS):
+        raise ValueError("operational music/upload instructions are not publishing copy")
+    return text
 
 
 class EditingRunStatus(StrEnum):
@@ -162,6 +179,8 @@ class RecipeCta(BaseModel):
 
     text: str = Field(min_length=1, max_length=80)
 
+    _validate_text = field_validator("text")(_reject_operational_copy)
+
 
 class EditRecipe(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -183,12 +202,64 @@ class EditingRenderResult(BaseModel):
     cover_image_url: str | None = None
 
 
+class PublishingTrack(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["FIXED", "SUGGESTED"]
+    title: str | None = Field(default=None, max_length=120)
+    artist: str | None = Field(default=None, max_length=120)
+    # The source-song offset is intentionally not inferred until audio matching exists.
+    start_sec: None = None
+    end_sec: None = None
+    mood: str | None = Field(default=None, max_length=160)
+    search_keyword: str | None = Field(default=None, min_length=1, max_length=80)
+
+    @model_validator(mode="after")
+    def validate_mode(self) -> PublishingTrack:
+        if self.mode == "FIXED":
+            if not self.title:
+                raise ValueError("FIXED track requires a verified title")
+        else:
+            if self.title is not None or self.artist is not None:
+                raise ValueError("SUGGESTED track cannot claim a verified title or artist")
+            if not self.search_keyword:
+                raise ValueError("SUGGESTED track requires a platform search_keyword")
+        return self
+
+
 class PublishingResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    caption: str
-    hashtags: list[str] = Field(max_length=20)
+    title: str = Field(min_length=1, max_length=80)
+    caption: str = Field(min_length=1, max_length=2000)
+    hashtags: list[str] = Field(min_length=5, max_length=20)
+    track: PublishingTrack
     post_note: str = "음원은 게시 시 플랫폼 내에서 추가해주세요."
+
+    _validate_title = field_validator("title")(_reject_operational_copy)
+    _validate_caption = field_validator("caption")(_reject_operational_copy)
+
+    @field_validator("hashtags")
+    @classmethod
+    def validate_hashtags(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("hashtags must be unique")
+        for value in values:
+            if value != value.strip() or not value.startswith("#") or len(value) == 1:
+                raise ValueError("each hashtag must be a non-empty value beginning with #")
+            if any(character.isspace() for character in value):
+                raise ValueError("hashtags cannot contain whitespace")
+        return values
+
+    @model_validator(mode="after")
+    def validate_track_note(self) -> PublishingResult:
+        if (
+            self.track.mode == "SUGGESTED"
+            and self.track.search_keyword
+            and self.track.search_keyword not in self.post_note
+        ):
+            raise ValueError("post_note must include the suggested track search_keyword")
+        return self
 
 
 class EditingRunResultResponse(BaseModel):

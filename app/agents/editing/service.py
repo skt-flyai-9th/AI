@@ -33,6 +33,7 @@ from app.schemas.editing import (
     EditingRunStage,
     EditingRunStatus,
     PublishingResult,
+    PublishingTrack,
     RecipeClip,
     RecipeCta,
     SelectedShortform,
@@ -248,9 +249,7 @@ class EditingAgentService:
                     )
 
             recipe = EditRecipe.model_validate(decision.recipe)
-            publishing = PublishingResult.model_validate(decision.publishing).model_copy(
-                update={"post_note": "음원은 게시 시 플랫폼 내에서 추가해주세요."}
-            )
+            publishing = PublishingResult.model_validate(decision.publishing)
             self._set_stage(db, run, EditingRunStage.RENDERING, 80)
             render_result = self.renderer.render(
                 run_id=run.id,
@@ -338,6 +337,13 @@ class EditingAgentService:
 
         subject = request.project.promotion_subject
         subject_name = str(subject.get("name") or "오늘의 추천")[:40]
+        search_keyword = _fallback_search_keyword(
+            str(
+                video_editing_db.get("recommendation_title")
+                or video_editing_db.get("name")
+                or request.selected_shortform.editing_template_id
+            )
+        )
         recipe = EditRecipe(
             recipe_version=1,
             editing_template_id=request.selected_shortform.editing_template_id,
@@ -363,8 +369,16 @@ class EditingAgentService:
             outcome="RECIPE",
             recipe=recipe,
             publishing=PublishingResult(
-                caption=f"{subject_name}, 영상으로 확인해 보세요.",
-                hashtags=[],
+                title=f"{subject_name}을 영상으로 만나보세요",
+                caption=f"{subject_name}의 매력을 짧은 영상으로 확인해 보세요.",
+                hashtags=_fallback_hashtags(subject_name),
+                track=PublishingTrack(
+                    mode="SUGGESTED",
+                    search_keyword=search_keyword,
+                ),
+                post_note=(
+                    f"플랫폼 음원 검색에서 ‘{search_keyword}’을 검색해 직접 추가해주세요."
+                ),
             ),
             missing_scene_roles=[],
             available_options=[],
@@ -385,7 +399,7 @@ class EditingAgentService:
             status=EditingRunStatus(run.status),
             recipe=EditRecipe.model_validate(run.recipe) if run.recipe else None,
             render=run.render_result,
-            publishing=run.publishing_result,
+            publishing=_publishing_for_result(run),
             warnings=[str(item) for item in (run.warnings or [])],
             missing_scene_roles=[str(item) for item in (run.missing_scene_roles or [])],
             available_options=run.available_options or [],
@@ -482,6 +496,97 @@ def _database_payload(database_record: VideoEditingDBRecord) -> dict[str, Any]:
         # segment/effect context without extending the video-editing DB schema.
         "reference_evidence": database_record.evidence_summary or {},
     }
+
+
+def _fallback_search_keyword(value: str) -> str:
+    keyword = value.strip()
+    lowered = keyword.lower()
+    known_keywords = {
+        "jujutsu": "주술회전",
+        "otsukare": "오츠카레 썸머",
+        "cafe_recommendation": "카페 추천 릴스",
+    }
+    for marker, known in known_keywords.items():
+        if marker in lowered:
+            return known
+    for suffix in ("트랜지션", "챌린지", "릴스", "숏폼", "포맷"):
+        keyword = keyword.replace(suffix, " ")
+    keyword = " ".join(keyword.split())
+    return (keyword or "트렌드 음원")[:80]
+
+
+def _fallback_hashtags(subject_name: str) -> list[str]:
+    subject_tag = "#" + "".join(subject_name.split())
+    candidates = [
+        subject_tag,
+        "#매장소개",
+        "#가게소개",
+        "#동네맛집",
+        "#숏폼",
+        "#릴스",
+    ]
+    return list(dict.fromkeys(candidates))[:5]
+
+
+def _publishing_for_result(run: EditingRun) -> PublishingResult | None:
+    if not run.publishing_result:
+        return None
+    data = dict(run.publishing_result)
+    raw_caption = str(data.get("caption") or "").strip()
+    project = (run.request_snapshot or {}).get("project") or {}
+    subject = project.get("promotion_subject") or {}
+    subject_name = str(subject.get("name") or "오늘의 추천")[:40]
+    if not data.get("title"):
+        data["title"] = f"{subject_name}의 매력을 만나보세요"
+        data["caption"] = _strip_legacy_operational_copy(raw_caption) or (
+            f"{subject_name}의 모습을 짧은 영상으로 확인해 보세요."
+        )
+
+    hashtags = [str(value) for value in (data.get("hashtags") or [])]
+    for fallback in ("#숏폼", "#릴스", "#매장소개", "#가게소개", "#동네맛집"):
+        if len(hashtags) >= 5:
+            break
+        if fallback not in hashtags:
+            hashtags.append(fallback)
+    data["hashtags"] = hashtags
+
+    selected = (run.request_snapshot or {}).get("selected_shortform") or {}
+    fallback_keyword = _fallback_search_keyword(
+        str(selected.get("editing_template_id") or "")
+    )
+    track = dict(data.get("track") or {})
+    track["start_sec"] = None
+    track["end_sec"] = None
+    if track.get("title"):
+        track["mode"] = "FIXED"
+    else:
+        keyword = str(track.get("search_keyword") or fallback_keyword)
+        track.update(
+            {
+                "mode": "SUGGESTED",
+                "title": None,
+                "artist": None,
+                "mood": track.get("mood"),
+                "search_keyword": keyword,
+            }
+        )
+        data["post_note"] = (
+            f"플랫폼 음원 검색에서 ‘{keyword}’을 검색해 직접 추가해주세요."
+        )
+    data["track"] = track
+    return PublishingResult.model_validate(data)
+
+
+def _strip_legacy_operational_copy(value: str) -> str:
+    text = value.strip()
+    positions = [
+        text.find(marker)
+        for marker in ("음악은", "음원은", "플랫폼에서", "업로드 후", "게시 시")
+        if marker in text
+    ]
+    if positions:
+        text = text[: min(positions)].rstrip(" ,.!·")
+    return text
 
 
 def _safe_error_message(exc: Exception) -> str:

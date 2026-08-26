@@ -314,7 +314,13 @@ def test_source_preparation_overrides_llm_cut_boundaries():
     decision = EditingPlanDecision(
         outcome="RECIPE",
         recipe=recipe,
-        publishing=PublishingResult(caption="테스트", hashtags=[]),
+        publishing=PublishingResult(
+            title="테스트 제목",
+            caption="테스트 본문",
+            hashtags=["#테스트1", "#테스트2", "#테스트3", "#테스트4", "#테스트5"],
+            track={"mode": "SUGGESTED", "search_keyword": "테스트 음원"},
+            post_note="플랫폼에서 ‘테스트 음원’을 검색해 추가해주세요.",
+        ),
         missing_scene_roles=[],
         available_options=[],
         rationale="test",
@@ -363,7 +369,13 @@ def test_one_take_source_preparation_keeps_full_source():
     decision = EditingPlanDecision(
         outcome="RECIPE",
         recipe=recipe,
-        publishing=PublishingResult(caption="테스트", hashtags=[]),
+        publishing=PublishingResult(
+            title="테스트 제목",
+            caption="테스트 본문",
+            hashtags=["#테스트1", "#테스트2", "#테스트3", "#테스트4", "#테스트5"],
+            track={"mode": "SUGGESTED", "search_keyword": "테스트 음원"},
+            post_note="플랫폼에서 ‘테스트 음원’을 검색해 추가해주세요.",
+        ),
         missing_scene_roles=[],
         available_options=[],
         rationale="test",
