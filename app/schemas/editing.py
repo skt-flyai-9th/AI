@@ -154,6 +154,7 @@ class RecipeCaption(BaseModel):
     end_ms: int = Field(gt=0)
     position: Literal["BOTTOM", "MIDDLE", "TOP"] = "BOTTOM"
     style_id: str = "CAPTION"
+    motion_id: Literal["NONE", "FADE", "POP", "TYPEWRITER"] = "NONE"
     font_weight: Literal["REGULAR", "SEMIBOLD", "BOLD"] = "SEMIBOLD"
     scale: float = Field(default=1.0, ge=0.8, le=1.5)
 

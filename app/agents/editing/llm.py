@@ -849,6 +849,11 @@ def _requirements(
         "create one regular caption per clip. The rendered CTA does not count toward this minimum.",
         "The first clip must contain a concise HOOK caption grounded in the verified project "
         "promotion_subject. Use CAPTION_EMPHASIS on at least one item or reveal moment.",
+        "For a concise first promotional HOOK, prefer motion_id TYPEWRITER so text appears one "
+        "Korean character at a time. TYPEWRITER captions must contain at most 18 non-space "
+        "characters and allow 80ms per character plus at least 600ms of fully visible hold time.",
+        "Use TYPEWRITER on at most 2 captions per video. Prefer POP for short item-reveal captions "
+        "and NONE or FADE for ordinary explanatory captions and the final CTA.",
         "Distribute promotional captions across the timeline and align reveal captions to observed "
         "item-appearance or semantic-event evidence. Do not leave the video with only the final CTA.",
         "Use a verified item name only when supplied by project promotion_subject or supported by "

@@ -34,7 +34,7 @@ font_registry = {
 
 
 effect_registry = {
-    "effect_registry_version": "2.0",
+    "effect_registry_version": "2.1",
     "effects": {
         "NONE": {"effect_id": "NONE", "support_level": "BASIC", "renderer_key": "noop", "allowed_params": {}, "version": 1},
         "PUNCH_ZOOM": {
@@ -160,7 +160,7 @@ effect_registry = {
         },
     },
     "overlay_types": {
-        "CAPTION": {"style_ids": ["CAPTION", "CAPTION_EMPHASIS", "CTA_BOX", "HOOK"], "motion_ids": ["NONE", "POP", "FADE"]},
+        "CAPTION": {"style_ids": ["CAPTION", "CAPTION_EMPHASIS", "CTA_BOX", "HOOK"], "motion_ids": ["NONE", "POP", "FADE", "TYPEWRITER"]},
         "TEXT_2D": {"style_ids": ["TEXT_2D"], "motion_ids": ["NONE", "POP", "FADE"]},
         "SFX": {"intent_ids": ["TEXT_POP", "PRODUCT_REVEAL", "CTA_APPEAR", "FAST_TRANSITION", "RESULT_REVEAL"]},
     },

@@ -85,6 +85,10 @@ class RealsRegistry:
         value = self.effects.get("overlay_types", {}).get("CAPTION", {}).get("style_ids", [])
         return set(value)
 
+    def caption_motion_ids(self) -> set[str]:
+        value = self.effects.get("overlay_types", {}).get("CAPTION", {}).get("motion_ids", [])
+        return set(value)
+
     def render_profile(self, profile_id: str) -> dict[str, Any] | None:
         value = self.render_profiles.get("profiles", {}).get(profile_id)
         return value if isinstance(value, dict) else None
@@ -113,6 +117,7 @@ class RealsRegistry:
             "effects": sorted(self.creative_effect_ids),
             "caption_positions": ["BOTTOM", "MIDDLE", "TOP"],
             "caption_style_ids": sorted(self.caption_style_ids()),
+            "caption_motion_ids": sorted(self.caption_motion_ids()),
             "font_weights": ["REGULAR", "SEMIBOLD", "BOLD"],
             "caption_scale": 1.0,
             "max_caption_chars": policies.get("max_caption_chars", 40),
@@ -204,7 +209,7 @@ class RealsOverlay(BaseModel):
     start_ms: int = Field(ge=0)
     end_ms: int = Field(gt=0)
     placement_id: Literal["BOTTOM_SAFE", "MID_SAFE", "UPPER_SAFE"]
-    motion_id: Literal["NONE", "FADE"] = "NONE"
+    motion_id: Literal["NONE", "FADE", "POP", "TYPEWRITER"] = "NONE"
     font_asset_id: Literal["PRETENDARD"] = "PRETENDARD"
     font_weight: Literal["REGULAR", "SEMIBOLD", "BOLD"] = "SEMIBOLD"
     sfx_intent_id: str = ""
@@ -415,6 +420,7 @@ class RealsRecipeAdapter:
                             produced_range[0],
                         ),
                         placement_id=_to_reals_placement(caption.position),
+                        motion_id=caption.motion_id,
                         font_weight=caption.font_weight,
                         actual_video_evidence=f"source_video_id={clip.video_id}",
                     )

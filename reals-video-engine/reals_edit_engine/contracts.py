@@ -77,6 +77,7 @@ class MotionId(str, Enum):
     NONE = "NONE"
     POP = "POP"
     FADE = "FADE"
+    TYPEWRITER = "TYPEWRITER"
 
 
 class SfxStrength(str, Enum):

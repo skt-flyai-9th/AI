@@ -7,6 +7,7 @@
 - 줄바꿈·크기는 Pretendard 실제 메트릭(PIL freetype)으로 계산한다.
 """
 from __future__ import annotations
+import unicodedata
 from dataclasses import dataclass, field
 
 from PIL import ImageFont
@@ -32,6 +33,7 @@ LINE_SPACING = 1.18
 HARD_PRIORITY = 90     # 이 우선순위 이상(FACE·HANDS·FOOD·TEXT)은 강하게 회피
 SOFT_WEIGHT = 0.15     # 그 미만(PERSON_BODY 등)은 약한 선호 신호로만
 DIST_WEIGHT = 30.0     # 편집 관례상 선호 위치에서 멀어지는 비용 (px당)
+TYPEWRITER_STEP_MS = 80
 
 
 @dataclass
@@ -196,6 +198,35 @@ def _ts(ms: int) -> str:
     return f"{h}:{m:02d}:{s:02d}.{c:02d}"
 
 
+def _graphemes(value: str) -> list[str]:
+    """Split NFC text without separating combining marks or emoji ZWJ sequences."""
+    units: list[str] = []
+    current = ""
+    for character in unicodedata.normalize("NFC", value):
+        variation_selector = "\ufe00" <= character <= "\ufe0f"
+        emoji_modifier = "\U0001f3fb" <= character <= "\U0001f3ff"
+        if not current:
+            current = character
+        elif (
+            unicodedata.combining(character)
+            or variation_selector
+            or emoji_modifier
+            or character == "\u200d"
+            or current.endswith("\u200d")
+        ):
+            current += character
+        else:
+            units.append(current)
+            current = character
+    if current:
+        units.append(current)
+    return units
+
+
+def _ass_text(value: str) -> str:
+    return value.replace("\n", "\\N")
+
+
 def build_ass(placed: list[PlacedOverlay], reg: Registries, canvas=(1080, 1920)) -> str:
     used_styles = {}
     for p in placed:
@@ -238,7 +269,30 @@ def build_ass(placed: list[PlacedOverlay], reg: Registries, canvas=(1080, 1920))
                         "\\t(100,170,\\fscx100\\fscy100)\\fad(40,70)")
         elif o.motion_id == MotionId.FADE:
             tags.append("\\fad(140,140)")
-        text = "{" + "".join(tags) + "}" + "\\N".join(p.lines)
+        tag_text = "{" + "".join(tags) + "}"
+        if o.motion_id == MotionId.TYPEWRITER:
+            units = _graphemes("\n".join(p.lines))
+            reveal_indices = [
+                index for index, unit in enumerate(units) if not unit.isspace()
+            ]
+            for step, unit_index in enumerate(reveal_indices):
+                event_start = p.out_start_ms + step * TYPEWRITER_STEP_MS
+                event_end = (
+                    p.out_end_ms
+                    if step == len(reveal_indices) - 1
+                    else min(p.out_end_ms, event_start + TYPEWRITER_STEP_MS)
+                )
+                visible = _ass_text("".join(units[: unit_index + 1]))
+                hidden = _ass_text("".join(units[unit_index + 1 :]))
+                text = tag_text + visible
+                if hidden:
+                    text += "{\\alpha&HFF&\\3a&HFF&}" + hidden
+                events.append(
+                    f"Dialogue: 0,{_ts(event_start)},{_ts(event_end)},"
+                    f"{o.style_id},,0,0,0,,{text}"
+                )
+            continue
+        text = tag_text + "\\N".join(p.lines)
         events.append(f"Dialogue: 0,{_ts(p.out_start_ms)},{_ts(p.out_end_ms)},"
                       f"{o.style_id},,0,0,0,,{text}")
     return "\n".join(head + events) + "\n"
