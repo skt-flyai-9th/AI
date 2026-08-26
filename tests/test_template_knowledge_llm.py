@@ -102,6 +102,28 @@ def test_editing_generator_instructs_gpt_to_keep_guides_within_six_cuts(monkeypa
         summary="reference summary",
         hook_patterns=["hook"],
         shot_sequence=["HOOK", "RESULT"],
+        segments=[
+            {
+                "sequence": 1,
+                "start_sec": 0.0,
+                "end_sec": 1.0,
+                "scene_role": "HOOK",
+                "description": "결과를 먼저 보여준다.",
+                "shot_type": "CLOSE_UP",
+                "transition_out": "HARD_CUT",
+                "evidence": "0.0-1.0초 결과 클로즈업",
+            },
+            {
+                "sequence": 2,
+                "start_sec": 1.0,
+                "end_sec": 2.0,
+                "scene_role": "RESULT",
+                "description": "완성 결과를 유지한다.",
+                "shot_type": "MEDIUM",
+                "transition_out": None,
+                "evidence": "1.0-2.0초 완성 결과",
+            },
+        ],
         pacing={"tempo": "FAST", "median_cut_sec": 1.0, "opening_hook_sec": 1.0},
         caption_patterns=[],
         camera_patterns=[],
@@ -138,6 +160,28 @@ def test_gemini_analysis_limits_semantic_shot_sequence_to_six(monkeypatch):
             "summary": "reference summary",
             "hook_patterns": ["hook"],
             "shot_sequence": ["HOOK", "RESULT"],
+            "segments": [
+                {
+                    "sequence": 1,
+                    "start_sec": 0.0,
+                    "end_sec": 1.0,
+                    "scene_role": "HOOK",
+                    "description": "결과를 먼저 보여준다.",
+                    "shot_type": "CLOSE_UP",
+                    "transition_out": "HARD_CUT",
+                    "evidence": "0.0-1.0초 결과 클로즈업",
+                },
+                {
+                    "sequence": 2,
+                    "start_sec": 1.0,
+                    "end_sec": 2.0,
+                    "scene_role": "RESULT",
+                    "description": "완성 결과를 유지한다.",
+                    "shot_type": "MEDIUM",
+                    "transition_out": None,
+                    "evidence": "1.0-2.0초 완성 결과",
+                },
+            ],
             "pacing": {
                 "tempo": "FAST",
                 "median_cut_sec": 1.0,
@@ -168,3 +212,5 @@ def test_gemini_analysis_limits_semantic_shot_sequence_to_six(monkeypatch):
         captured["schema"]["properties"]["shot_sequence"]["maxItems"]
         == MAX_SHOOTING_GUIDE_CUTS
     )
+    assert captured["schema"]["properties"]["segments"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
+    assert "segments" in prompt["task"]

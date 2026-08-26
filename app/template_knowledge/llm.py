@@ -139,7 +139,9 @@ class OpenAITemplateCandidateGenerator:
                 "gemini_video_insights": [item.model_dump(mode="json") for item in insights],
                 "guide_authoring_rules": [
                     f"Create at most {MAX_SHOOTING_GUIDE_CUTS} ordered shooting-guide scenes and at most {MAX_SHOOTING_GUIDE_CUTS} matching tasks.",
-                    "When the reference contains more segments, merge adjacent segments into semantic filming cuts without changing their order or dropping their evidence.",
+                    "Treat gemini_video_insights[].segments as the authoritative cut plan.",
+                    "Create exactly one shooting-guide scene and one matching task for each authoritative segment, preserving sequence and semantic role.",
+                    "Include each segment's observed start/end timestamps and evidence in its scene description or task instructions so the cut boundary remains auditable.",
                     "Use Gemini's reference-original shot order and segment context as the target editing grammar.",
                     "When Gemini observes SHAKE, VIBRATION, ROTATION/TILT, ZOOM, POSITION_MOVE, FLASH, or COLOR, summarize when and why it occurs in existing scene_description/tasks; do not add schema fields.",
                     "Keep measurable effect values such as angle, amplitude, duration frames, scale, direction and damping in concise existing text fields when supported by evidence.",
@@ -306,9 +308,14 @@ class GeminiYouTubeVideoAnalyzer:
                     "effect happens semantically (for example PRODUCT_REVEAL or IMPACT), not only "
                     "its appearance. Do not recommend TTS, generated narration, still-photo scenes, "
                     "platform UI reproduction, or unobserved content. Divide the complete reference "
-                    f"into no more than {MAX_SHOOTING_GUIDE_CUTS} ordered semantic filming cuts in "
-                    "shot_sequence. If it contains more visual segments, merge only adjacent segments "
-                    "while preserving their evidence and original order."
+                    f"into no more than {MAX_SHOOTING_GUIDE_CUTS} ordered semantic filming cuts. "
+                    "Return every cut in segments with explicit sequence, start_sec, end_sec, "
+                    "scene_role, description, shot_type, transition_out and timestamped evidence. "
+                    "segments is the authoritative cut plan; shot_sequence must contain the same "
+                    "number of items in the same order. If the video contains more visual shots, "
+                    "merge only adjacent shots while preserving their evidence and original order. "
+                    "Cuts must not overlap and must cover the observed content from the opening hook "
+                    "through the final meaningful frame."
                 ),
                 "trend_id": trend_id,
                 "youtube_url": youtube_url,
@@ -317,6 +324,12 @@ class GeminiYouTubeVideoAnalyzer:
                     "SEGMENT|id=seg_02|role=PROCESS|start=2.10s|end=4.80s|subject=drink|composition=close-up",
                     "EFFECT|segment=seg_03|event=PRODUCT_REVEAL|type=SHAKE|start=5.40s|duration=4f|x=1.8%|y=0.7%|rotation=0.5deg|scale=1.018|damping=true",
                     "EFFECT|segment=seg_01|event=HOOK|type=ROTATION|start=0.20s|duration=8f|rotation=-1.2deg",
+                ],
+                "cut_boundary_rules": [
+                    "Start a new cut only at an observable shot change, action-state change, subject change, or intentional transition boundary.",
+                    "Use timestamps from the supplied video; do not invent evenly spaced cuts.",
+                    "Do not overlap segments or reverse their order.",
+                    "Record the visual observation that justifies every boundary in segments[].evidence.",
                 ],
                 "allowed_audio_roles": ["PLATFORM_MUSIC", "ORIGINAL_AMBIENCE", "NONE"],
             },

@@ -101,6 +101,21 @@ class FakeVideoAnalyzer:
             summary="완성 메뉴를 첫 2초에 보여주고 제조 장면을 빠르게 연결합니다.",
             hook_patterns=["0-2초 결과 선공개"],
             shot_sequence=["RESULT", "PROCESS", "DETAIL", "CTA"],
+            segments=[
+                {
+                    "sequence": index,
+                    "start_sec": float(index - 1),
+                    "end_sec": float(index),
+                    "scene_role": role,
+                    "description": f"{role} 장면",
+                    "shot_type": "CLOSE_UP",
+                    "transition_out": "HARD_CUT" if index < 4 else None,
+                    "evidence": f"{index - 1}.0-{index}.0초 {role}",
+                }
+                for index, role in enumerate(
+                    ["RESULT", "PROCESS", "DETAIL", "CTA"], start=1
+                )
+            ],
             pacing={"median_cut_sec": 1.4, "tempo": "FAST", "opening_hook_sec": 2.0},
             caption_patterns=["짧은 핵심 자막"],
             camera_patterns=["클로즈업", "고정 구도"],
@@ -283,6 +298,69 @@ def test_trend_video_analysis_generates_editing_candidate_and_uses_cache():
         assert video.calls == 1
 
 
+def test_rebuild_from_scratch_ignores_base_and_forces_fresh_video_analysis():
+    class CaptureGenerator(FakeGenerator):
+        def __init__(self) -> None:
+            self.base_payloads = []
+
+        def generate_editing(self, **kwargs) -> VideoEditingDBContent:
+            self.base_payloads.append(kwargs["base_payload"])
+            return super().generate_editing(**kwargs)
+
+    generator = CaptureGenerator()
+    video = FakeVideoAnalyzer()
+    service = TemplateKnowledgeService(generator=generator, video_analyzer=video)
+    with SessionLocal() as db:
+        db.add(
+            Challenge(
+                id="trend_rebuild",
+                automatic_name="처음부터 재작성",
+                category="meme",
+                automatic_rank=1,
+                automatic_score=95.0,
+                lifecycle="RISING",
+                kr_affinity=0.9,
+                confidence=0.9,
+                automatic_representative_youtube_url=(
+                    "https://www.youtube.com/watch?v=rebuild001"
+                ),
+                representative_video_metadata={},
+                raw_details={},
+            )
+        )
+        db.commit()
+        service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="edit_rebuild",
+            payload=video_editing_db_payload(),
+            source_evidence={"seed": True},
+            generation_model="seed",
+            requires_human_approval=False,
+        )
+
+        service.create_editing_candidate(
+            db,
+            EditingCandidateCreate(
+                template_id="edit_rebuild",
+                trend_ids=["trend_rebuild"],
+            ),
+        )
+        rebuilt = service.create_editing_candidate(
+            db,
+            EditingCandidateCreate(
+                template_id="edit_rebuild",
+                trend_ids=["trend_rebuild"],
+                rebuild_from_scratch=True,
+            ),
+        )
+
+        assert generator.base_payloads[0] is not None
+        assert generator.base_payloads[1] is None
+        assert video.calls == 2
+        assert rebuilt.source_evidence["generation_mode"] == "REBUILD_FROM_SCRATCH"
+
+
 def test_trade_area_analysis_uses_active_template_and_persists_result():
     service, _ = _service()
     with SessionLocal() as db:
@@ -456,3 +534,4 @@ def test_video_editing_schemas_limit_generated_cuts_to_six():
         insight_schema["properties"]["shot_sequence"]["maxItems"]
         == MAX_SHOOTING_GUIDE_CUTS
     )
+    assert insight_schema["properties"]["segments"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
