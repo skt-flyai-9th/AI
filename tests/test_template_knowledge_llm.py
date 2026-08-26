@@ -87,7 +87,7 @@ def test_openai_template_generator_uses_strict_structured_output(monkeypatch):
     assert result.name == "오피스 상권 분석 테스트"
 
 
-def test_editing_generator_instructs_gpt_to_keep_guides_within_six_cuts(monkeypatch):
+def test_editing_generator_preserves_physical_edit_cut_boundaries(monkeypatch):
     captured = {}
     generator = OpenAITemplateCandidateGenerator()
 
@@ -143,13 +143,15 @@ def test_editing_generator_instructs_gpt_to_keep_guides_within_six_cuts(monkeypa
 
     rules = captured["payload"]["guide_authoring_rules"]
     assert any(f"at most {MAX_SHOOTING_GUIDE_CUTS}" in rule for rule in rules)
+    assert any("natural Korean" in rule for rule in rules)
+    assert any("visible edit discontinuity" in rule for rule in rules)
     schema = captured["schema_model"].model_json_schema()
     guide = schema["$defs"]["EditingShootingGuide"]["properties"]
     assert guide["scenes"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
     assert guide["tasks"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
 
 
-def test_gemini_analysis_limits_semantic_shot_sequence_to_six(monkeypatch):
+def test_gemini_analysis_requires_frame_discontinuity_cut_boundaries(monkeypatch):
     captured = {}
 
     def fake_call(**kwargs):
@@ -208,6 +210,10 @@ def test_gemini_analysis_limits_semantic_shot_sequence_to_six(monkeypatch):
 
     prompt = json.loads(captured["user_prompt"])
     assert f"no more than {MAX_SHOOTING_GUIDE_CUTS}" in prompt["task"]
+    assert "object suddenly appears" in prompt["task"]
+    assert "pose or screen position jumps" in prompt["task"]
+    assert any("food item popping" in rule for rule in prompt["cut_boundary_rules"])
+    assert any("person disappearing" in rule for rule in prompt["cut_boundary_rules"])
     assert (
         captured["schema"]["properties"]["shot_sequence"]["maxItems"]
         == MAX_SHOOTING_GUIDE_CUTS

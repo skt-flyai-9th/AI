@@ -122,7 +122,7 @@ class OpenAITemplateCandidateGenerator:
             schema_model=VideoEditingDBContent,
             schema_name="video_editing_db_candidate",
             instructions=(
-                "You maintain the SARILS video-editing DB. Generate one version candidate "
+                "You maintain the REALS video-editing DB. Generate one version candidate "
                 "grounded only in the supplied trendcluster records and Gemini video insights. "
                 "The video-editing DB schema is fixed: never add fields or columns. Preserve the "
                 "reference-original segment context and reusable effect guidance inside existing "
@@ -141,6 +141,8 @@ class OpenAITemplateCandidateGenerator:
                     f"Create at most {MAX_SHOOTING_GUIDE_CUTS} ordered shooting-guide scenes and at most {MAX_SHOOTING_GUIDE_CUTS} matching tasks.",
                     "Treat gemini_video_insights[].segments as the authoritative cut plan.",
                     "Create exactly one shooting-guide scene and one matching task for each authoritative segment, preserving sequence and semantic role.",
+                    "Never merge segments across a visible edit discontinuity, even when adjacent segments have the same subject, action, or semantic role.",
+                    "Write every user-facing name, recommendation, scene description, subtitle, task title, and instruction in natural Korean; keep only machine identifiers and effect IDs in English.",
                     "Include each segment's observed start/end timestamps and evidence in its scene description or task instructions so the cut boundary remains auditable.",
                     "Use Gemini's reference-original shot order and segment context as the target editing grammar.",
                     "When Gemini observes SHAKE, VIBRATION, ROTATION/TILT, ZOOM, POSITION_MOVE, FLASH, or COLOR, summarize when and why it occurs in existing scene_description/tasks; do not add schema fields.",
@@ -297,7 +299,7 @@ class GeminiYouTubeVideoAnalyzer:
                 "task": (
                     "Analyze the supplied public YouTube video as reference-original editing evidence "
                     "for a Korean small-business short-form video-editing database. Preserve the "
-                    "original shot/segment order and describe the meaning of every segment. Analyze "
+                    "original edit-cut order and describe the meaning of every cut. Analyze "
                     "observable hooks, pacing, captions, composition, camera motion, cut-transition "
                     "points and effects. For SHAKE, VIBRATION, ROTATION/TILT, ZOOM, POSITION_MOVE, "
                     "FLASH and COLOR, estimate measurable parameters when visually supportable: "
@@ -307,13 +309,19 @@ class GeminiYouTubeVideoAnalyzer:
                     "and evidence_notes; the output schema must not be expanded. Describe when an "
                     "effect happens semantically (for example PRODUCT_REVEAL or IMPACT), not only "
                     "its appearance. Do not recommend TTS, generated narration, still-photo scenes, "
-                    "platform UI reproduction, or unobserved content. Divide the complete reference "
-                    f"into no more than {MAX_SHOOTING_GUIDE_CUTS} ordered semantic filming cuts. "
+                    "platform UI reproduction, or unobserved content. First perform a frame-to-frame "
+                    "discontinuity audit, then divide the complete reference "
+                    f"into no more than {MAX_SHOOTING_GUIDE_CUTS} ordered edit cuts. "
                     "Return every cut in segments with explicit sequence, start_sec, end_sec, "
                     "scene_role, description, shot_type, transition_out and timestamped evidence. "
                     "segments is the authoritative cut plan; shot_sequence must contain the same "
-                    "number of items in the same order. If the video contains more visual shots, "
-                    "merge only adjacent shots while preserving their evidence and original order. "
+                    "number of items in the same order. Do not merge two physical edit cuts merely "
+                    "because they share one semantic role. A new segment is mandatory whenever an "
+                    "object suddenly appears or disappears (including a food reveal), a person "
+                    "suddenly enters or leaves, a person's pose or screen position jumps without "
+                    "continuous motion, the background or camera framing discontinuously resets, "
+                    "or a transition effect bridges two shots. These remain cut boundaries even "
+                    "when the subject and action are otherwise unchanged. "
                     "Cuts must not overlap and must cover the observed content from the opening hook "
                     "through the final meaningful frame."
                 ),
@@ -326,7 +334,11 @@ class GeminiYouTubeVideoAnalyzer:
                     "EFFECT|segment=seg_01|event=HOOK|type=ROTATION|start=0.20s|duration=8f|rotation=-1.2deg",
                 ],
                 "cut_boundary_rules": [
-                    "Start a new cut only at an observable shot change, action-state change, subject change, or intentional transition boundary.",
+                    "Start a new cut at every observable shot change, action-state discontinuity, subject change, or intentional transition boundary.",
+                    "Treat a prop or food item popping into or out of view between adjacent frames as a mandatory cut boundary.",
+                    "Treat a person disappearing, reappearing, teleporting, or jumping instantly to a different pose or screen position as a mandatory cut boundary.",
+                    "A continuous action may stay in one cut only when the motion between frames is visually continuous.",
+                    "Do not collapse multiple physical edit cuts into one semantic chapter.",
                     "Use timestamps from the supplied video; do not invent evenly spaced cuts.",
                     "Do not overlap segments or reverse their order.",
                     "Record the visual observation that justifies every boundary in segments[].evidence.",
