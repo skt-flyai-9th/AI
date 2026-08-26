@@ -161,7 +161,11 @@ class RepairingFakeLLM:
 
 
 class SourceGapFakeLLM:
+    def __init__(self) -> None:
+        self.plan_count = 0
+
     def plan_recipe(self, **kwargs):
+        self.plan_count += 1
         return EditingPlanDecision(
             outcome="SOURCE_GAP",
             recipe=None,
@@ -337,10 +341,11 @@ def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
         assert db.get(EditingRun, completed.id).recipe == original_recipe
 
 
-def test_editing_pipeline_returns_source_gap_without_rendering():
+def test_editing_pipeline_renders_ordered_fallback_after_source_gap():
     renderer = FakeRenderer()
+    llm = SourceGapFakeLLM()
     service = EditingAgentService(
-        llm=SourceGapFakeLLM(),
+        llm=llm,
         video_context_builder=FakeVideoContextBuilder(),
         renderer=renderer,
     )
@@ -350,37 +355,14 @@ def test_editing_pipeline_returns_source_gap_without_rendering():
         result = service.execute(db, run.id)
         payload = service.result(result)
 
-        assert result.status == EditingRunStatus.SOURCE_GAP.value
+        assert result.status == EditingRunStatus.COMPLETED.value
         assert payload.missing_scene_roles == ["RESULT"]
-        assert set(payload.available_options) == {
-            "USE_REDUCED_STRUCTURE",
-            "ADD_MORE_VIDEO",
-        }
-        assert payload.recipe is None
-        assert renderer.calls == []
-
-        refreshed = [
-            video.model_copy(update={"footage_url": f"https://cdn.example/new/{video.video_id}"})
-            for video in _request().videos
-        ]
-        refreshed.append(
-            refreshed[-1].model_copy(
-                update={
-                    "video_id": "take_503",
-                    "footage_url": "https://cdn.example/new/take_503",
-                    "shooting_scene_order": 3,
-                }
-            )
-        )
-        revision = service.create_revision(
-            db,
-            result.id,
-            EditingRevisionRequest(
-                revision_action="추가 촬영한 영상도 사용해줘",
-                videos=refreshed,
-            ),
-        )
-        assert len(revision.request_snapshot["videos"]) == 3
+        assert payload.available_options == []
+        assert payload.recipe is not None
+        assert [clip.video_id for clip in payload.recipe.timeline] == ["take_501", "take_502"]
+        assert len(renderer.calls) == 1
+        assert llm.plan_count == 2
+        assert any("SOURCE_ROLE_MATCH_FALLBACK" in item for item in payload.warnings)
 
 
 @dataclass

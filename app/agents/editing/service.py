@@ -33,6 +33,8 @@ from app.schemas.editing import (
     EditingRunStage,
     EditingRunStatus,
     PublishingResult,
+    RecipeClip,
+    RecipeCta,
     SelectedShortform,
 )
 
@@ -205,15 +207,45 @@ class EditingAgentService:
 
             decision = EditingPlanDecision.model_validate(result["decision"])
             if decision.outcome == "SOURCE_GAP":
-                run.status = EditingRunStatus.SOURCE_GAP.value
-                run.stage = EditingRunStage.COMPLETED.value
-                run.progress = 100
+                # A visual role mismatch must not strand the client waiting for a
+                # render that will never exist. First ask the planner to use the
+                # supported reduced structure; if it still refuses or produces an
+                # invalid plan, fall back to a deterministic shooting-order edit.
                 run.missing_scene_roles = decision.missing_scene_roles
-                run.available_options = decision.available_options
-                run.finished_at = datetime.now(timezone.utc)
-                db.commit()
-                db.refresh(run)
-                return run
+                run.warnings = [
+                    *(run.warnings or []),
+                    "SOURCE_ROLE_MATCH_FALLBACK: 장면 매칭이 부족하여 촬영 순서 기반 편집을 적용했습니다.",
+                ]
+                try:
+                    reduced = self.graph.invoke(
+                        {
+                            "domain_context": self.domain_context,
+                            "project": request.project.model_dump(mode="json"),
+                            "selected_shortform": request.selected_shortform.model_dump(mode="json"),
+                            "video_editing_db": database_payload,
+                            "videos": [video.model_dump(mode="json") for video in request.videos],
+                            "video_contexts": [context.model_dump(mode="json") for context in contexts],
+                            "parent_recipe": parent_recipe,
+                            "revision_action": "USE_REDUCED_STRUCTURE",
+                            "max_repair_attempts": self.settings.editing_max_repair_attempts,
+                            "repair_attempts": 0,
+                            "stage_callback": update_graph_stage,
+                        }
+                    )
+                    if reduced.get("exhausted"):
+                        decision = self._build_ordered_fallback(
+                            request, database_payload, contexts
+                        )
+                    else:
+                        decision = EditingPlanDecision.model_validate(reduced["decision"])
+                        if decision.outcome == "SOURCE_GAP":
+                            decision = self._build_ordered_fallback(
+                                request, database_payload, contexts
+                            )
+                except Exception:
+                    decision = self._build_ordered_fallback(
+                        request, database_payload, contexts
+                    )
 
             recipe = EditRecipe.model_validate(decision.recipe)
             publishing = PublishingResult.model_validate(decision.publishing).model_copy(
@@ -248,6 +280,96 @@ class EditingAgentService:
                 failed.finished_at = datetime.now(timezone.utc)
                 db.commit()
             raise
+
+    def _build_ordered_fallback(
+        self,
+        request: EditingRunCreateRequest,
+        video_editing_db: dict[str, Any],
+        contexts: list[Any],
+    ) -> EditingPlanDecision:
+        """Build a conservative renderable recipe without scene-role inference."""
+        rules = video_editing_db.get("editing_rules") or {}
+        min_cut_ms = max(300, int(rules.get("min_cut_duration_ms") or 0))
+        max_duration_ms = min(
+            int(float(rules.get("max_duration_sec") or 90) * 1000),
+            self.settings.editing_max_output_duration_seconds * 1000,
+        )
+        usable = [
+            context
+            for context in sorted(contexts, key=lambda item: item.shooting_scene_order)
+            if context.duration_ms >= min_cut_ms
+        ]
+        max_clip_count = max(1, max_duration_ms // min_cut_ms)
+        usable = usable[:max_clip_count]
+        if not usable:
+            raise EditingDomainError(
+                "EDITING_SOURCE_TOO_SHORT",
+                "No uploaded video is long enough to produce a valid fallback edit.",
+                status_code=422,
+            )
+
+        target_per_clip_ms = max(
+            min_cut_ms,
+            min(3_000, max_duration_ms // len(usable)),
+        )
+        timeline: list[RecipeClip] = []
+        cursor = 0
+        for index, context in enumerate(usable, start=1):
+            remaining = max_duration_ms - cursor
+            duration = min(context.duration_ms, target_per_clip_ms, remaining)
+            if duration < min_cut_ms:
+                break
+            timeline.append(
+                RecipeClip(
+                    clip_order=index,
+                    video_id=context.video_id,
+                    source_start_ms=0,
+                    source_end_ms=duration,
+                    timeline_start_ms=cursor,
+                    speed=1.0,
+                    crop_mode="SUBJECT_CENTER",
+                    transition_in=None,
+                    transition_out="CUT",
+                    caption=None,
+                    effects=[],
+                )
+            )
+            cursor += duration
+
+        subject = request.project.promotion_subject
+        subject_name = str(subject.get("name") or "오늘의 추천")[:40]
+        recipe = EditRecipe(
+            recipe_version=1,
+            editing_template_id=request.selected_shortform.editing_template_id,
+            editing_template_version=request.selected_shortform.editing_template_version,
+            source_type="VIDEO_ONLY",
+            timeline=timeline,
+            cta=RecipeCta(text="지금 확인해 보세요"),
+        )
+        validation_errors = self.validator.validate(
+            recipe,
+            selected_shortform=request.selected_shortform,
+            video_editing_db=video_editing_db,
+            video_contexts=contexts,
+        )
+        if validation_errors:
+            errors = "; ".join(_format_validation_issue(item) for item in validation_errors)
+            raise EditingDomainError(
+                "EDITING_FALLBACK_INVALID",
+                "Fallback recipe validation failed: " + errors,
+                status_code=500,
+            )
+        return EditingPlanDecision(
+            outcome="RECIPE",
+            recipe=recipe,
+            publishing=PublishingResult(
+                caption=f"{subject_name}, 영상으로 확인해 보세요.",
+                hashtags=[],
+            ),
+            missing_scene_roles=[],
+            available_options=[],
+            rationale="장면 역할 매칭 실패 후 촬영 순서 기반 자동 축소 편집",
+        )
 
     @staticmethod
     def mark_enqueue_failed(db: Session, run: EditingRun) -> None:
