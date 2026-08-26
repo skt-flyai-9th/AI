@@ -844,7 +844,12 @@ def _requirements(
         "Caption scale must remain 1.0; use an approved style_id for visual emphasis.",
         "Use only renderer capabilities and the video-editing DB editing_rules.",
         "Keep captions at most 40 characters each and at most 8 captions total.",
-        "Publishing post_note must tell the user to add music in the platform.",
+        "Publishing title and caption are separate: title is a short hook and caption is the post body.",
+        "Publishing title, caption, and video CTA must contain marketing copy only; never put music, upload, platform, or other operational instructions in them.",
+        "Return 5 to 20 unique hashtags. Every hashtag must begin with # and contain no whitespace.",
+        "Never guess a song title or artist. Use FIXED only for verified metadata; otherwise use SUGGESTED with a concise platform search_keyword derived from the selected trend/template.",
+        "Audio start_sec and end_sec must be null until source-song audio matching is available.",
+        "Publishing post_note must tell the user how to add music in the platform and, for SUGGESTED audio, include track.search_keyword verbatim.",
         "Match reference-original composition/effect grammar using the frame-exact user evidence; do not copy unsupported content.",
         "Timed effect params start_ms/end_ms are relative to the host clip after speed and must align to analyzed semantic events.",
     ]

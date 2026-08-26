@@ -7,6 +7,7 @@ from app.core.config import Settings
 from app.schemas.editing import (
     EditRecipe,
     PublishingResult,
+    PublishingTrack,
     RecipeClip,
     RecipeCta,
     SelectedShortform,
@@ -199,7 +200,12 @@ def test_recipe_decision_keeps_publishing_payload() -> None:
     decision = EditingPlanDecision(
         outcome="RECIPE",
         recipe=_recipe(_clip()),
-        publishing=PublishingResult(caption="신상품 소개", hashtags=["#신상품"]),
+        publishing=PublishingResult(
+            title="신상품 소개",
+            caption="새로 나온 상품을 소개합니다.",
+            hashtags=["#신상품", "#상품소개", "#추천", "#쇼츠", "#릴스"],
+            track=PublishingTrack(mode="FIXED", title="검증된 음원"),
+        ),
         missing_scene_roles=[],
         available_options=[],
         rationale="촬영본으로 편집 가능합니다.",

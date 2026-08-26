@@ -18,6 +18,7 @@ from app.schemas.editing import (
     EditingRunCreateRequest,
     EditingRunStatus,
     PublishingResult,
+    RecipeCta,
 )
 
 
@@ -107,10 +108,37 @@ def _recipe(*, invalid_timeline: bool = False) -> EditRecipe:
 
 def _publishing() -> PublishingResult:
     return PublishingResult(
+        title="오늘의 딸기 크림 라떼",
         caption="딸기 크림 라떼를 만나보세요.",
-        hashtags=["#딸기라떼", "#카페신메뉴"],
-        post_note="음원은 게시 시 플랫폼 내에서 추가해주세요.",
+        hashtags=["#딸기라떼", "#카페신메뉴", "#카페추천", "#신메뉴", "#숏폼"],
+        track={
+            "mode": "SUGGESTED",
+            "title": None,
+            "artist": None,
+            "start_sec": None,
+            "end_sec": None,
+            "mood": None,
+            "search_keyword": "딸기 라떼 릴스",
+        },
+        post_note="플랫폼 음원 검색에서 ‘딸기 라떼 릴스’을 검색해 직접 추가해주세요.",
     )
+
+
+def test_publishing_contract_requires_five_hashtags_and_search_keyword():
+    payload = _publishing().model_dump(mode="json")
+    payload["hashtags"] = payload["hashtags"][:4]
+    with pytest.raises(ValueError, match="at least 5 items"):
+        PublishingResult.model_validate(payload)
+
+    payload = _publishing().model_dump(mode="json")
+    payload["track"]["search_keyword"] = None
+    with pytest.raises(ValueError, match="search_keyword"):
+        PublishingResult.model_validate(payload)
+
+
+def test_video_cta_rejects_platform_music_instructions():
+    with pytest.raises(ValueError, match="operational music/upload instructions"):
+        RecipeCta(text="음악은 플랫폼에서 직접 추가하세요")
 
 
 class FakeVideoContextBuilder:
@@ -302,7 +330,7 @@ def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
         assert completed.progress == 100
         assert completed.recipe["timeline"][0]["timeline_start_ms"] == 0
         assert completed.render_result["output_video_url"].endswith("final.mp4")
-        assert completed.publishing_result["post_note"].startswith("음원은")
+        assert "딸기 라떼 릴스" in completed.publishing_result["post_note"]
         assert llm.repair_count == 1
         assert stages == [
             "PREPARING_VIDEO_CONTEXT",
