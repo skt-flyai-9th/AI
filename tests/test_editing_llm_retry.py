@@ -1,0 +1,177 @@
+from __future__ import annotations
+
+import copy
+import json
+from dataclasses import dataclass
+from typing import Any
+
+import pytest
+
+from app.agents.editing.llm import EditingLLMError, OpenAIEditingLLM
+from app.agents.editing import structured_output
+from app.agents.editing.types import EditingPlanDecision
+
+
+@dataclass
+class _FakeResponse:
+    status_code: int
+    payload: dict[str, Any]
+
+    def json(self) -> dict[str, Any]:
+        return self.payload
+
+
+def _planner() -> OpenAIEditingLLM:
+    planner = OpenAIEditingLLM()
+    planner.api_key = "test-key"
+    planner.model = "test-model"
+    planner.max_output_tokens = 5000
+    planner.max_request_attempts = 3
+    return planner
+
+
+def _source_gap_payload() -> dict[str, Any]:
+    return EditingPlanDecision(
+        outcome="SOURCE_GAP",
+        recipe=None,
+        publishing=None,
+        missing_scene_roles=["RESULT"],
+        available_options=["USE_REDUCED_STRUCTURE", "ADD_MORE_VIDEO"],
+        rationale="result footage is missing",
+    ).model_dump(mode="json")
+
+
+def _output(payload: dict[str, Any], *, status: str = "completed") -> dict[str, Any]:
+    return {
+        "status": status,
+        "output": [
+            {
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": json.dumps(payload, ensure_ascii=False),
+                    }
+                ]
+            }
+        ],
+    }
+
+
+def _install_responses(monkeypatch, responses: list[_FakeResponse]) -> list[dict[str, Any]]:
+    requests: list[dict[str, Any]] = []
+
+    def fake_post(**kwargs):
+        requests.append(copy.deepcopy(kwargs["request_payload"]))
+        return responses.pop(0)
+
+    monkeypatch.setattr(structured_output, "_post_responses_api", fake_post)
+    monkeypatch.setattr(structured_output, "_wait_before_retry", lambda _attempt: None)
+    return requests
+
+
+def test_invalid_structured_output_retries_only_the_failed_model_call(monkeypatch):
+    requests = _install_responses(
+        monkeypatch,
+        [
+            _FakeResponse(200, _output({})),
+            _FakeResponse(200, _output(_source_gap_payload())),
+        ],
+    )
+
+    result = _planner()._request_model(
+        schema_model=EditingPlanDecision,
+        instructions="Plan an edit.",
+        user_payload={"project": "test"},
+        schema_name="editing_plan",
+    )
+
+    assert result.outcome == "SOURCE_GAP"
+    assert len(requests) == 2
+    assert [item["max_output_tokens"] for item in requests] == [5000, 10000]
+    assert "previous response could not be validated" in requests[1]["instructions"]
+
+
+def test_incomplete_output_increases_token_limit_before_retry(monkeypatch):
+    requests = _install_responses(
+        monkeypatch,
+        [
+            _FakeResponse(
+                200,
+                {
+                    "status": "incomplete",
+                    "incomplete_details": {"reason": "max_output_tokens"},
+                    "output": [],
+                },
+            ),
+            _FakeResponse(200, _output(_source_gap_payload())),
+        ],
+    )
+
+    result = _planner()._request_model(
+        schema_model=EditingPlanDecision,
+        instructions="Plan an edit.",
+        user_payload={},
+        schema_name="editing_plan",
+    )
+
+    assert result.outcome == "SOURCE_GAP"
+    assert requests[1]["max_output_tokens"] == 10000
+    assert "incomplete_max_output_tokens" in requests[1]["instructions"]
+
+
+def test_invalid_output_fails_only_after_bounded_retries(monkeypatch):
+    requests = _install_responses(
+        monkeypatch,
+        [_FakeResponse(200, _output({})) for _ in range(3)],
+    )
+
+    with pytest.raises(EditingLLMError) as captured:
+        _planner()._request_model(
+            schema_model=EditingPlanDecision,
+            instructions="Plan an edit.",
+            user_payload={},
+            schema_name="editing_plan",
+        )
+
+    assert len(requests) == 3
+    assert captured.value.retryable is False
+    assert "schema=editing_plan" in str(captured.value)
+    assert "schema_validation" in str(captured.value)
+    assert "attempt=3/3" in str(captured.value)
+
+
+def test_non_retryable_http_error_still_fails_immediately(monkeypatch):
+    requests = _install_responses(monkeypatch, [_FakeResponse(400, {})])
+
+    with pytest.raises(EditingLLMError) as captured:
+        _planner()._request_model(
+            schema_model=EditingPlanDecision,
+            instructions="Plan an edit.",
+            user_payload={},
+            schema_name="editing_plan",
+        )
+
+    assert len(requests) == 1
+    assert captured.value.retryable is False
+    assert "reason=http_400" in str(captured.value)
+
+
+def test_rate_limit_response_is_retried(monkeypatch):
+    requests = _install_responses(
+        monkeypatch,
+        [
+            _FakeResponse(429, {}),
+            _FakeResponse(200, _output(_source_gap_payload())),
+        ],
+    )
+
+    result = _planner()._request_model(
+        schema_model=EditingPlanDecision,
+        instructions="Plan an edit.",
+        user_payload={},
+        schema_name="editing_plan",
+    )
+
+    assert result.outcome == "SOURCE_GAP"
+    assert len(requests) == 2
+    assert requests[1]["max_output_tokens"] == 5000
