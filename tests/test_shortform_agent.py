@@ -135,6 +135,7 @@ def _seed_video_editing_db(
     trend_ids: list[str] | None = None,
     requires_face: bool = False,
     metadata_overrides: dict | None = None,
+    evidence_summary: dict | None = None,
 ) -> None:
     with SessionLocal() as db:
         recommendation_metadata = {
@@ -181,6 +182,7 @@ def _seed_video_editing_db(
                 },
                 editing_rules={},
                 trend_ids=trend_ids or [],
+                evidence_summary=evidence_summary or {},
             )
         )
         db.commit()
@@ -256,7 +258,11 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
                 "display_order": 1,
                 "task_title": "완성된 메뉴를 화면 중앙에 촬영합니다.",
                 "scene_index": 0,
-                "guide": {"instructions": ["완성된 메뉴를 화면 중앙에 촬영합니다."]},
+                "guide": {
+                    "instructions": ["완성된 메뉴를 화면 중앙에 촬영합니다."],
+                    "start_ms": 0,
+                    "end_ms": 3000,
+                },
             }
         ]
         assert "task_type" not in guide.json()["tasks"][0]
@@ -269,6 +275,39 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
         assert deleted.status_code == 204
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)
+
+
+def test_shooting_guide_exposes_reference_video_interval_ms(client, auth_headers):
+    _seed_video_editing_db(
+        "dance_reference",
+        title="안무 참고 영상",
+        evidence_summary={
+            "video_insights": [
+                {
+                    "segments": [
+                        {
+                            "sequence": 1,
+                            "start_sec": 1.8,
+                            "end_sec": 4.3,
+                            "scene_role": "HOOK",
+                        }
+                    ]
+                }
+            ]
+        },
+    )
+
+    response = client.get(
+        "/api/v1/editing-templates/dance_reference/versions/1/shooting-guide",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["tasks"][0]["guide"] == {
+        "instructions": ["완성된 메뉴를 화면 중앙에 촬영합니다."],
+        "start_ms": 1800,
+        "end_ms": 4300,
+    }
 
 
 def test_shortform_promotion_guide_exposes_only_v21_categories(client, auth_headers):

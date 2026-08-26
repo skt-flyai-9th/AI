@@ -235,7 +235,8 @@ GET /api/v1/editing-templates/{template_id}/versions/{version}/shooting-guide
 ```
 
 `tasks`는 장면 순서와 촬영 안내만 반환한다. `scene_index`는 `scenes`의 0-based
-인덱스이며, `task_type`과 `guide_type`은 계약에 포함하지 않는다.
+인덱스이며, `task_type`과 `guide_type`은 계약에 포함하지 않는다. `guide.start_ms`와
+`guide.end_ms`는 사용자 촬영물의 트림 구간이 아니라 참고 영상에서 해당 태스크를 보여줄 절대 구간이다.
 
 ```json
 {
@@ -243,7 +244,9 @@ GET /api/v1/editing-templates/{template_id}/versions/{version}/shooting-guide
   "task_title": "첫 번째 손짓 변환 촬영",
   "scene_index": 0,
   "guide": {
-    "instructions": ["손짓 직후 메뉴가 등장하도록 촬영하세요."]
+    "instructions": ["손짓 직후 메뉴가 등장하도록 촬영하세요."],
+    "start_ms": 0,
+    "end_ms": 1500
   }
 }
 ```

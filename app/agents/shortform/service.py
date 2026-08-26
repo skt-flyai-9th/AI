@@ -361,12 +361,24 @@ class ShortformAgentService:
             if not instructions and legacy_description:
                 instructions = [legacy_description[:500]]
 
+            start_ms, end_ms = _shooting_task_interval_ms(
+                task=task,
+                scenes=scenes,
+                scene_index=int(scene_index),
+                display_order=display_order,
+                evidence_summary=template.evidence_summary or {},
+            )
+
             tasks.append(
                 {
                     "display_order": display_order,
                     "task_title": task_title,
                     "scene_index": int(scene_index),
-                    "guide": {"instructions": instructions},
+                    "guide": {
+                        "instructions": instructions,
+                        "start_ms": start_ms,
+                        "end_ms": end_ms,
+                    },
                 }
             )
 
@@ -768,6 +780,120 @@ class ShortformAgentService:
             state["promotion_category"] = None
         session.project_state = state
         return session
+
+
+_SCENE_INTERVAL_PATTERN = re.compile(
+    r"(?P<start>\d+(?:\.\d+)?)\s*(?:~|[-–—])\s*"
+    r"(?P<end>\d+(?:\.\d+)?)\s*초"
+)
+_SEGMENT_INTERVAL_PATTERN = re.compile(
+    r"start=(?P<start>\d+(?:\.\d+)?)s\|end=(?P<end>\d+(?:\.\d+)?)s"
+)
+
+
+def _shooting_task_interval_ms(
+    *,
+    task: dict[str, Any],
+    scenes: list[dict[str, Any]],
+    scene_index: int,
+    display_order: int,
+    evidence_summary: dict[str, Any],
+) -> tuple[int, int]:
+    """Resolve an absolute reference-video interval for one shooting task."""
+    raw_guide = task.get("guide") if isinstance(task.get("guide"), dict) else {}
+    direct = _valid_interval_ms(raw_guide.get("start_ms"), raw_guide.get("end_ms"))
+    if direct is not None:
+        return direct
+
+    scene = scenes[scene_index] if 0 <= scene_index < len(scenes) else {}
+    scene_role = str(scene.get("scene_role") or "").strip()
+    evidence = _evidence_interval_ms(
+        evidence_summary,
+        display_order=display_order,
+        scene_role=scene_role,
+    )
+    if evidence is not None:
+        return evidence
+
+    description = str(scene.get("scene_description") or "")
+    for pattern in (_SEGMENT_INTERVAL_PATTERN, _SCENE_INTERVAL_PATTERN):
+        match = pattern.search(description)
+        if match is not None:
+            parsed = _seconds_interval_ms(match.group("start"), match.group("end"))
+            if parsed is not None:
+                return parsed
+
+    cursor_ms = 0
+    for index, candidate in enumerate(scenes):
+        duration_ms = max(
+            1,
+            int(round(float(candidate.get("target_duration_sec") or 0) * 1000)),
+        )
+        if index == scene_index:
+            return cursor_ms, cursor_ms + duration_ms
+        cursor_ms += duration_ms
+
+    # Legacy-corrupt data may contain a task without a matching scene. Keep the
+    # response contract deterministic while exposing a visibly synthetic range.
+    return max(0, display_order - 1) * 1000, max(1, display_order) * 1000
+
+
+def _evidence_interval_ms(
+    evidence_summary: dict[str, Any],
+    *,
+    display_order: int,
+    scene_role: str,
+) -> tuple[int, int] | None:
+    insights = evidence_summary.get("video_insights")
+    if not isinstance(insights, list):
+        return None
+    for insight in insights:
+        if not isinstance(insight, dict):
+            continue
+        segments = insight.get("segments")
+        if not isinstance(segments, list):
+            continue
+        ordered_match: dict[str, Any] | None = None
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+            if int(segment.get("sequence") or 0) == display_order:
+                ordered_match = segment
+            if scene_role and str(segment.get("scene_role") or "").strip() == scene_role:
+                parsed = _seconds_interval_ms(
+                    segment.get("start_sec"),
+                    segment.get("end_sec"),
+                )
+                if parsed is not None:
+                    return parsed
+        if ordered_match is not None:
+            parsed = _seconds_interval_ms(
+                ordered_match.get("start_sec"),
+                ordered_match.get("end_sec"),
+            )
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def _seconds_interval_ms(start: Any, end: Any) -> tuple[int, int] | None:
+    try:
+        start_ms = int(round(float(start) * 1000))
+        end_ms = int(round(float(end) * 1000))
+    except (TypeError, ValueError):
+        return None
+    return _valid_interval_ms(start_ms, end_ms)
+
+
+def _valid_interval_ms(start: Any, end: Any) -> tuple[int, int] | None:
+    try:
+        start_ms = int(start)
+        end_ms = int(end)
+    except (TypeError, ValueError):
+        return None
+    if start_ms < 0 or end_ms <= start_ms:
+        return None
+    return start_ms, end_ms
 
 
 def _initial_project_state() -> dict[str, Any]:
