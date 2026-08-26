@@ -31,6 +31,12 @@ def test_checked_in_trendcluster_matches_provided_video_editing_db():
         item["representative_youtube_url"] == item["guide_youtube_url"]
         for item in checked_in["results"]
     )
+    assert checked_in["results"][0]["representative_youtube_url"] == (
+        "https://www.youtube.com/shorts/02afQgwCDSc"
+    )
+    assert checked_in["results"][0]["guide_youtube_url"] == (
+        "https://www.youtube.com/shorts/02afQgwCDSc"
+    )
     assert checked_in["results"][1]["representative_youtube_url"] == (
         "https://www.youtube.com/shorts/OWnLiuJU8Ks"
     )
