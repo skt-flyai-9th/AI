@@ -218,6 +218,20 @@ class ShortformAgentService:
     ) -> ShootingGuideResponse:
         template = db.get(VideoEditingDBRecord, (template_id, version))
         if template is None:
+            active_templates = db.scalars(
+                select(VideoEditingDBRecord)
+                .where(VideoEditingDBRecord.status == "ACTIVE")
+                .order_by(VideoEditingDBRecord.version.desc())
+            )
+            template = next(
+                (
+                    row
+                    for row in active_templates
+                    if template_id in (row.trend_ids or [])
+                ),
+                None,
+            )
+        if template is None:
             raise ShortformDomainError(
                 "EDITING_TEMPLATE_NOT_FOUND",
                 "Editing template was not found.",
