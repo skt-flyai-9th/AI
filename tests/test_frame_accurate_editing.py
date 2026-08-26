@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import math
 from pathlib import Path
 
 from app.agents.editing.llm import (
@@ -9,6 +10,7 @@ from app.agents.editing.llm import (
     _map_cut_analysis_to_produced,
     _normalize_source_cut_plan,
     _resolve_shoot_mode,
+    _sample_video_frames,
 )
 from app.agents.editing.reals import RealsRegistry
 from app.agents.editing.types import (
@@ -49,6 +51,10 @@ class _ProbePlanner:
 
     def _analyze_video_frames(self, *, context, frames, purpose, **kwargs):
         self.calls.append((purpose, [item.frame_index for item in frames]))
+        on_batch_complete = kwargs.get("on_batch_complete")
+        if on_batch_complete is not None:
+            for _ in range(math.ceil(len(frames) / getattr(self, "analysis_batch_frames", 24))):
+                on_batch_complete()
         return {
             "video_id": context.video_id,
             "shooting_scene_order": context.shooting_scene_order,
@@ -86,7 +92,7 @@ class _ProbePlanner:
         )
 
 
-def test_one_take_reads_stride_three_then_every_frame():
+def test_one_take_analyzes_sampled_frames_once():
     planner = _ProbePlanner()
     context = _context("take_1", 1, count=10)
 
@@ -99,10 +105,7 @@ def test_one_take_reads_stride_three_then_every_frame():
         shoot_mode="ONE_TAKE",
     )
 
-    assert planner.calls == [
-        ("ONE_TAKE_GLOBAL_EVERY_3_FRAMES", [0, 3, 6, 9]),
-        ("ONE_TAKE_FINAL_FRAME_EXACT", list(range(10))),
-    ]
+    assert planner.calls == [("ONE_TAKE_SAMPLED_EXACT_FRAMES", list(range(10)))]
     assert result["source_preparation"]["mode"] == "ONE_TAKE_PASSTHROUGH"
     assert len(result["produced_frame_context"]["observations"]) == 10
 
@@ -122,11 +125,58 @@ def test_multi_cut_reads_each_raw_cut_every_frame_without_reread():
     )
 
     assert planner.calls == [
-        ("MULTI_CUT_SOURCE_FRAME_EXACT", list(range(12))),
-        ("MULTI_CUT_SOURCE_FRAME_EXACT", list(range(12))),
+        ("MULTI_CUT_SAMPLED_EXACT_FRAMES", list(range(12))),
+        ("MULTI_CUT_SAMPLED_EXACT_FRAMES", list(range(12))),
     ]
     assert result["source_preparation"]["mode"] == "MULTI_CUT"
     assert result["produced_frame_context"]["mode"] == "MULTI_CUT"
+
+
+def test_frame_sampling_caps_each_video_and_total_while_retaining_endpoints():
+    contexts = [
+        _context("cut_1", 1, count=123),
+        _context("cut_2", 2, count=182),
+        _context("cut_3", 3, count=224),
+    ]
+
+    sampled = _sample_video_frames(contexts, max_per_video=48, max_total=120)
+
+    assert sum(len(frames) for frames in sampled.values()) == 120
+    assert all(len(frames) <= 48 for frames in sampled.values())
+    for context in contexts:
+        frames = sampled[context.video_id]
+        assert frames[0].frame_index == 0
+        assert frames[-1].frame_index == len(context.keyframes) - 1
+        assert [frame.frame_index for frame in frames] == sorted(
+            frame.frame_index for frame in frames
+        )
+
+
+def test_frame_analysis_reports_progress_for_each_bounded_batch():
+    planner = _ProbePlanner()
+    planner.analysis_batch_frames = 24
+    planner.analysis_max_frames_per_video = 48
+    planner.analysis_max_total_frames = 120
+    contexts = [
+        _context("cut_1", 1, count=123),
+        _context("cut_2", 2, count=182),
+        _context("cut_3", 3, count=224),
+    ]
+    progress: list[int] = []
+
+    OpenAIEditingLLM._prepare_frame_analysis(
+        planner,
+        video_contexts=contexts,
+        video_editing_db={},
+        reference_context={},
+        revision_action=None,
+        shoot_mode="MULTI_CUT",
+        progress_callback=progress.append,
+    )
+
+    assert len(progress) == 6
+    assert progress == sorted(progress)
+    assert progress[-1] == 58
 
 
 def test_cut_plan_is_snapped_to_real_frames_and_capture_order():

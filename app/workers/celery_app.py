@@ -35,6 +35,7 @@ else:
     )
     celery_app.conf.update(
         task_track_started=True,
+        worker_prefetch_multiplier=1,
         task_time_limit=settings.pipeline_timeout_seconds,
         task_soft_time_limit=max(60, settings.pipeline_timeout_seconds - 30),
         task_always_eager=settings.celery_task_always_eager,
@@ -65,6 +66,11 @@ else:
                     hour=settings.database_maintenance_hour_kst,
                     minute=settings.database_maintenance_minute_kst,
                 ),
+                "args": (),
+            },
+            "recover-orphaned-editing-runs": {
+                "task": "app.workers.tasks.recover_orphaned_editing_runs",
+                "schedule": settings.editing_orphan_recovery_interval_seconds,
                 "args": (),
             },
         },
