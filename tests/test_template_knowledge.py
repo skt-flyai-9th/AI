@@ -135,8 +135,14 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
         )
         assert imported_editing is not None
         assert imported_editing.version == 4
-        assert len(imported_editing.shooting_guide["tasks"]) == 17
+        assert len(imported_editing.shooting_guide["tasks"]) == 3
+        assert len(imported_editing.shooting_guide["scenes"]) == 3
         assert len(imported_editing.evidence_summary["reference_segments"]) == 17
+        assert imported_editing.evidence_summary["shooting_task_intervals"]["source_rows"] == [
+            5,
+            6,
+            7,
+        ]
         first_task = imported_editing.shooting_guide["tasks"][0]
         assert first_task["display_order"] == 1
         assert first_task["scene_index"] == 0
@@ -144,6 +150,19 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
         assert first_task["guide"]["instructions"]
         assert "task_type" not in first_task
         assert "guide_type" not in first_task["guide"]
+        assert all(
+            scene["scene_subtitle"] is None
+            for scene in imported_editing.shooting_guide["scenes"]
+        )
+        task_counts = {
+            record.template_id: len(record.shooting_guide["tasks"])
+            for record in db.scalars(select(VideoEditingDBRecord))
+        }
+        assert task_counts == {
+            "gt_jujutsu_transition": 3,
+            "gt_otsukare_summer": 5,
+            "gt_cafe_recommendation": 6,
+        }
         assert len(list(db.scalars(select(TemplateSourceBundle)))) == 2
         assert db.scalar(select(TemplateSourceRecord)) is not None
         assert result["trade_area"]["status"] == "ACTIVE"
@@ -154,9 +173,13 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
             )
         )
 
+        imported_editing.shooting_guide = {"scenes": [], "tasks": []}
+        db.commit()
         second = seed_template_library(db, service=service)
+        db.refresh(imported_editing)
         assert second["created"] == []
         assert len(second["skipped"]) == 5
+        assert len(imported_editing.shooting_guide["tasks"]) == 3
 
 
 def test_candidate_lifecycle_creates_new_version_and_archives_base():

@@ -189,12 +189,12 @@ class FakeRenderer:
         )
 
 
-def _seed_video_editing_db(db) -> None:
+def _seed_video_editing_db(db, *, status: str = "ACTIVE") -> None:
     db.add(
         VideoEditingDBRecord(
             template_id="video_editing_db_014",
             version=3,
-            status="ACTIVE",
+            status=status,
             name="메뉴 공개",
             recommendation_title="한눈에 보는 신메뉴",
             recommendation_concept="과정과 완성 컷을 빠르게 보여줍니다.",
@@ -210,6 +210,19 @@ def _seed_video_editing_db(db) -> None:
         )
     )
     db.commit()
+
+
+def test_archived_pinned_database_version_remains_executable():
+    service = EditingAgentService(
+        llm=RepairingFakeLLM(),
+        video_context_builder=FakeVideoContextBuilder(),
+        renderer=FakeRenderer(),
+    )
+    with SessionLocal() as db:
+        _seed_video_editing_db(db, status="ARCHIVED")
+        run = service.create_run(db, _request())
+
+    assert run.status == EditingRunStatus.QUEUED.value
 
 
 def test_editing_run_rejects_more_videos_than_free_tier_limit():

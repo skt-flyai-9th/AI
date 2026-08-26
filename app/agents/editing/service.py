@@ -295,10 +295,10 @@ class EditingAgentService:
                 "The selected video-editing DB version was not found.",
                 status_code=404,
             )
-        if database_record.status != "ACTIVE":
+        if database_record.status not in {"ACTIVE", "ARCHIVED"}:
             raise EditingDomainError(
                 "VIDEO_EDITING_DB_INACTIVE",
-                "The selected video-editing DB version is not ACTIVE.",
+                "The selected video-editing DB version is not executable.",
                 status_code=409,
             )
         return database_record
