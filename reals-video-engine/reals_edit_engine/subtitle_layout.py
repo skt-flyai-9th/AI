@@ -7,6 +7,8 @@
 - 줄바꿈·크기는 Pretendard 실제 메트릭(PIL freetype)으로 계산한다.
 """
 from __future__ import annotations
+
+import math
 import unicodedata
 from dataclasses import dataclass, field
 
@@ -23,9 +25,13 @@ STYLE_SPECS = {
     "CAPTION_EMPHASIS": {"size": 80, "primary": "&H0024E8FF", "outline_c": "&H00000000",
                          "outline": 6, "shadow": 0, "border_style": 1},
     "HOOK":             {"size": 92, "primary": "&H00FFFFFF", "outline_c": "&H00000000",
-                         "outline": 7, "shadow": 0, "border_style": 1, "tilt": -4},
-    "CTA_BOX":          {"size": 64, "primary": "&H00FFFFFF", "outline_c": "&H6E101010",
-                         "outline": 16, "shadow": 0, "border_style": 3},
+                         "outline": 7, "shadow": 0, "border_style": 1},
+    # 배경을 쓰는 유일한 자막 스타일. libass BorderStyle=3의 각진 반투명
+    # 박스 대신 별도 벡터 레이어로 불투명 검정 라운드 박스를 그린다.
+    "CTA_BOX":          {"size": 64, "primary": "&H00FFFFFF", "outline_c": "&H00000000",
+                         "outline": 0, "shadow": 0, "border_style": 1,
+                         "background": "SOLID_BLACK", "padding_x": 24,
+                         "padding_y": 14, "corner_radius": 14},
     "TEXT_2D":          {"size": 88, "primary": "&H00FFFFFF", "outline_c": "&H00000000",
                          "outline": 6, "shadow": 1, "border_style": 1},
 }
@@ -46,6 +52,8 @@ class PlacedOverlay:
     font_px: int = 64
     lines: list[str] = field(default_factory=list)
     band_label: str = ""
+    text_width_px: int = 0
+    text_height_px: int = 0
 
 
 class LayoutError(Exception):
@@ -123,7 +131,6 @@ def layout_overlay(o: Overlay, out_start: int, out_end: int, reg: Registries,
     top_ui = next((b for b in blocked if b["id"] == "TOP_UI"), {"y": 0, "h": 0})
     bottom = next((b for b in blocked if b["id"] == "BOTTOM_CAPTION"),
                   {"y": canvas_h, "h": 0})
-    right = next((b for b in blocked if b["id"] == "RIGHT_ACTIONS"), None)
     margin = pol["caption_margin_px"]
 
     # 연속 y-탐색: 3개 고정 밴드 대신 허용 구간 전체를 40px 간격으로 훑는다.
@@ -151,13 +158,10 @@ def layout_overlay(o: Overlay, out_start: int, out_end: int, reg: Registries,
         line_h = int(size * LINE_SPACING)
         for cy in range(y_top, y_bot + 1, 40):
             label = band_label(cy)
-            # 이 밴드가 RIGHT_ACTIONS와 세로로 겹치면 사용 가능 폭 축소
+            # 가로 좌표는 모든 자막에서 캔버스 중앙으로 고정한다. 오른쪽 UI와
+            # 겹치면 x를 이동하지 않고 다른 y/글자 크기를 선택한다.
             max_w = canvas_w - 2 * margin
             x_center = canvas_w // 2
-            if right and not (cy + 200 < right["y"] or cy - 200 > right["y"] + right["h"]):
-                usable_r = right["x"] - margin
-                max_w = usable_r - margin
-                x_center = (margin + usable_r) // 2
             lines = _wrap(font, o.text_content, max_w)
             if not lines or len(lines) > pol["max_caption_lines"]:
                 continue
@@ -177,16 +181,17 @@ def layout_overlay(o: Overlay, out_start: int, out_end: int, reg: Registries,
             pen = _overlap_penalty(bx, by, int(bw), bh, avoid, out_start, out_end)
             score = pen + DIST_WEIGHT * abs(cy - pref_y)
             if best is None or score < best[0]:
-                best = (score, label, x_center, cy, size, lines)
+                best = (score, label, x_center, cy, size, lines, int(math.ceil(bw)), bh)
         # 하드 회피 성공(순수 거리 비용뿐)이면 현재 크기 유지하고 종료
         if best is not None and best[0] <= DIST_WEIGHT * (y_bot - y_top):
             break
         size -= 8
     if best is None:
         raise LayoutError(f"{o.overlay_id}: 배치 가능한 밴드 없음 — 문구 축소 필요")
-    _, label, x, cy, fsize, lines = best
+    _, label, x, cy, fsize, lines, text_width, text_height = best
     return PlacedOverlay(overlay=o, out_start_ms=out_start, out_end_ms=out_end,
-                         x=x, y=cy, font_px=fsize, lines=lines, band_label=label)
+                         x=x, y=cy, font_px=fsize, lines=lines, band_label=label,
+                         text_width_px=text_width, text_height_px=text_height)
 
 
 # ── ASS 생성 ─────────────────────────────────────────────────────────
@@ -227,6 +232,62 @@ def _ass_text(value: str) -> str:
     return value.replace("\n", "\\N")
 
 
+def _rounded_rect_path(width: int, height: int, radius: int) -> str:
+    """Return a centered ASS vector path with gently rounded corners."""
+    half_w = max(1, width // 2)
+    half_h = max(1, height // 2)
+    radius = max(1, min(radius, half_w, half_h))
+    left, right = -half_w, half_w
+    top, bottom = -half_h, half_h
+    control = int(round(radius * 0.55228475))
+    return (
+        f"m {left + radius} {top} "
+        f"l {right - radius} {top} "
+        f"b {right - radius + control} {top} {right} {top + radius - control} "
+        f"{right} {top + radius} "
+        f"l {right} {bottom - radius} "
+        f"b {right} {bottom - radius + control} {right - radius + control} {bottom} "
+        f"{right - radius} {bottom} "
+        f"l {left + radius} {bottom} "
+        f"b {left + radius - control} {bottom} {left} {bottom - radius + control} "
+        f"{left} {bottom - radius} "
+        f"l {left} {top + radius} "
+        f"b {left} {top + radius - control} {left + radius - control} {top} "
+        f"{left + radius} {top}"
+    )
+
+
+def _motion_tags(motion_id: MotionId) -> str:
+    if motion_id == MotionId.POP:
+        return (
+            "\\fscx74\\fscy74"
+            "\\t(0,100,\\fscx108\\fscy108)"
+            "\\t(100,170,\\fscx100\\fscy100)\\fad(40,70)"
+        )
+    if motion_id == MotionId.FADE:
+        return "\\fad(140,140)"
+    return ""
+
+
+def _background_event(p: PlacedOverlay, spec: dict, center_x: int) -> str | None:
+    if spec.get("background") != "SOLID_BLACK":
+        return None
+    width = p.text_width_px + 2 * int(spec["padding_x"])
+    height = p.text_height_px + 2 * int(spec["padding_y"])
+    if width <= 0 or height <= 0:
+        return None
+    path = _rounded_rect_path(width, height, int(spec["corner_radius"]))
+    tags = (
+        f"{{\\an5\\pos({center_x},{p.y})\\frz0\\p1\\bord0\\shad0"
+        f"{_motion_tags(p.overlay.motion_id)}"
+        "\\1c&H000000&\\1a&H00&}"
+    )
+    return (
+        f"Dialogue: 0,{_ts(p.out_start_ms)},{_ts(p.out_end_ms)},"
+        f"{p.overlay.style_id},,0,0,0,,{tags}{path}"
+    )
+
+
 def build_ass(placed: list[PlacedOverlay], reg: Registries, canvas=(1080, 1920)) -> str:
     used_styles = {}
     for p in placed:
@@ -254,21 +315,17 @@ def build_ass(placed: list[PlacedOverlay], reg: Registries, canvas=(1080, 1920))
              "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
 
     events = []
+    center_x = canvas[0] // 2
     for p in placed:
         o = p.overlay
-        tags = [f"\\pos({p.x},{p.y})", "\\blur0.7"]
         spec2 = STYLE_SPECS[o.style_id]
+        background = _background_event(p, spec2, center_x)
+        if background is not None:
+            events.append(background)
+        tags = [f"\\pos({center_x},{p.y})", "\\frz0", "\\blur0.7"]
         if p.font_px != spec2["size"]:
             tags.append(f"\\fs{p.font_px}")
-        if spec2.get("tilt"):
-            tags.append(f"\\frz{(360 + spec2['tilt']) % 360}")
-        if o.motion_id == MotionId.POP:
-            # 오버슈트 팝: 74% → 108% → 100%
-            tags.append("\\fscx74\\fscy74"
-                        "\\t(0,100,\\fscx108\\fscy108)"
-                        "\\t(100,170,\\fscx100\\fscy100)\\fad(40,70)")
-        elif o.motion_id == MotionId.FADE:
-            tags.append("\\fad(140,140)")
+        tags.append(_motion_tags(o.motion_id))
         tag_text = "{" + "".join(tags) + "}"
         if o.motion_id == MotionId.TYPEWRITER:
             units = _graphemes("\n".join(p.lines))
@@ -288,12 +345,12 @@ def build_ass(placed: list[PlacedOverlay], reg: Registries, canvas=(1080, 1920))
                 if hidden:
                     text += "{\\alpha&HFF&\\3a&HFF&}" + hidden
                 events.append(
-                    f"Dialogue: 0,{_ts(event_start)},{_ts(event_end)},"
+                    f"Dialogue: 1,{_ts(event_start)},{_ts(event_end)},"
                     f"{o.style_id},,0,0,0,,{text}"
                 )
             continue
         text = tag_text + "\\N".join(p.lines)
-        events.append(f"Dialogue: 0,{_ts(p.out_start_ms)},{_ts(p.out_end_ms)},"
+        events.append(f"Dialogue: 1,{_ts(p.out_start_ms)},{_ts(p.out_end_ms)},"
                       f"{o.style_id},,0,0,0,,{text}")
     return "\n".join(head + events) + "\n"
 
