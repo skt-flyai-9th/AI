@@ -126,6 +126,8 @@ X-Internal-API-Key: <INTERNAL_API_KEY>
 
 매장명·업종·홍보 대상·목적·메뉴명·얼굴 노출 여부를 query parameter로 함께 전달할 수 있습니다. 저장된 템플릿의 명시적 placeholder만 치환하며 요청마다 LLM을 호출하지 않습니다. `scene_dialogue`는 공백 포함 9자 이하이고 예상 촬영 시간은 최종 장면 길이에서 다시 계산합니다.
 
+정보형 숏폼은 내부의 23개 편집 컷을 사용자에게 노출하지 않고 `shooting_elements`만 반환합니다. 촬영 요소는 최대 5개이며 `instruction`은 공백 포함 50자 이하입니다. 밈·챌린지는 기존 `scenes`/`tasks` 컷 단위 가이드를 유지합니다.
+
 ## 영상 편집 파이프라인
 
 ```text
@@ -133,13 +135,15 @@ X-Internal-API-Key: <INTERNAL_API_KEY>
   → ffprobe 메타데이터 확인
   → 프레임 샘플 추출
   → GPT-4.1 mini 기반 장면·동작 분석
-  → 템플릿 근거와 촬영 순서 매칭
+  → 템플릿 근거와 촬영 구간 매칭
   → EditRecipe 생성
   → REALS registry 기반 검증·제한 수정
   → Renderer 호출
   → FFmpeg 렌더링과 QC
   → MP4 URL + 게시 문구 반환
 ```
+
+정보형은 하나의 긴 촬영 영상에서 여러 비중복 구간을 추출할 수 있습니다. 같은 `video_id`를 여러 편집 컷에 사용할 수 있지만 원본 시간 구간은 겹칠 수 없고, 최종 타임라인은 참조 영상의 편집 컷 순서를 따릅니다.
 
 현재 운영 제한:
 

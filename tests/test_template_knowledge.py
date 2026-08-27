@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
@@ -177,8 +179,18 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
         assert task_counts == {
             "gt_jujutsu_transition": 3,
             "gt_otsukare_summer": 5,
-            "gt_cafe_recommendation": 6,
+            "gt_cafe_recommendation": 23,
         }
+        information_record = db.get(VideoEditingDBRecord, ("gt_cafe_recommendation", 2))
+        assert information_record is not None
+        assert information_record.recommendation_metadata["format_type"] == "정보형"
+        assert len(information_record.shooting_guide["shooting_elements"]) == 4
+        assigned_sequences = sorted(
+            sequence
+            for element in information_record.shooting_guide["shooting_elements"]
+            for sequence in element["reference_segment_sequences"]
+        )
+        assert assigned_sequences == list(range(1, 24))
         assert len(list(db.scalars(select(TemplateSourceBundle)))) == 2
         assert db.scalar(select(TemplateSourceRecord)) is not None
         assert result["trade_area"]["status"] == "ACTIVE"
@@ -300,7 +312,29 @@ def test_editing_candidate_rejects_wrong_shooting_task_order_and_scene_index():
         codes = {item["code"] for item in candidate.validation_errors}
         assert candidate.status == "INVALID"
         assert "SHOOTING_TASK_ORDER_INVALID" in codes
-        assert "SHOOTING_TASK_SCENE_INDEX_INVALID" in codes
+    assert "SHOOTING_TASK_SCENE_INDEX_INVALID" in codes
+
+
+def test_information_template_requires_max_five_short_shooting_elements():
+    payload = video_editing_db_payload()
+    payload["recommendation_metadata"]["format_type"] = "정보형"
+    payload["shooting_guide"]["shooting_elements"] = [
+        {
+            "element_id": "ELEMENT_01",
+            "display_order": 1,
+            "title": "대표 메뉴",
+            "instruction": "메뉴 전체와 세부 모습을 여러 각도로 촬영하세요.",
+            "minimum_recording_sec": 10,
+            "reference_segment_sequences": [1],
+        }
+    ]
+
+    content = VideoEditingDBContent.model_validate(payload)
+    assert content.shooting_guide.shooting_elements[0].instruction.endswith("촬영하세요.")
+
+    payload["shooting_guide"]["shooting_elements"][0]["instruction"] = "가" * 51
+    with pytest.raises(ValidationError):
+        VideoEditingDBContent.model_validate(payload)
 
 
 def test_trend_video_analysis_generates_editing_candidate_and_uses_cache():

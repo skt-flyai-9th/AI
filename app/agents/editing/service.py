@@ -559,6 +559,7 @@ def _database_payload(database_record: VideoEditingDBRecord) -> dict[str, Any]:
         "name": database_record.name,
         "recommendation_title": database_record.recommendation_title,
         "recommendation_concept": database_record.recommendation_concept,
+        "recommendation_metadata": database_record.recommendation_metadata or {},
         "shooting_guide": database_record.shooting_guide or {},
         "editing_rules": database_record.editing_rules or {},
         # Existing DB column only: Gemini reference-video evidence is preserved

@@ -158,6 +158,7 @@ class EditRecipeValidator:
 
         expected_start = 0.0
         scene_orders: list[int] = []
+        source_ranges_by_video: dict[str, list[tuple[int, int, str]]] = {}
         caption_count = 1  # CTA is rendered as a caption overlay.
         typewriter_count = 0
         for index, clip in enumerate(recipe.timeline):
@@ -171,6 +172,9 @@ class EditRecipeValidator:
                 )
                 continue
             scene_orders.append(order_by_video[clip.video_id])
+            source_ranges_by_video.setdefault(clip.video_id, []).append(
+                (clip.source_start_ms, clip.source_end_ms, path)
+            )
             if clip.source_start_ms >= clip.source_end_ms:
                 add(
                     "SOURCE_RANGE_INVALID",
@@ -319,12 +323,26 @@ class EditRecipeValidator:
                         source="REALS_REGISTRY",
                     )
 
-        if scene_orders != sorted(scene_orders):
+        metadata = video_editing_db.get("recommendation_metadata") or {}
+        is_information = str(metadata.get("format_type") or "") == "정보형"
+        if not is_information and scene_orders != sorted(scene_orders):
             add(
                 "SHOOTING_ORDER_CHANGED",
                 "timeline",
                 "Timeline must preserve shooting_scene_order.",
             )
+        for video_id, ranges in source_ranges_by_video.items():
+            ordered_ranges = sorted(ranges)
+            for previous, current in zip(
+                ordered_ranges, ordered_ranges[1:], strict=False
+            ):
+                if current[0] < previous[1]:
+                    add(
+                        "SOURCE_RANGE_OVERLAP",
+                        current[2],
+                        f"Source ranges must not overlap for video_id={video_id}.",
+                        repairable=False,
+                    )
         max_captions = int(policies.get("max_captions_per_video", 8))
         if caption_count > max_captions:
             add(

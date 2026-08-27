@@ -50,6 +50,7 @@ _TRADE_AREA_APPROVAL_DATASETS = {
 
 _EDITING_SCOPE_ADAPTERS: dict[str, dict[str, Any]] = {
     "jujutsu_transition": {
+        "format_type": "밈",
         "supported_subject_types": ["MENU", "PRODUCT"],
         "supported_objectives": ["awareness", "new_customer", "visit", "sales"],
         "supported_filming_times": ["within_10m", "within_20m", "30m_plus"],
@@ -58,6 +59,7 @@ _EDITING_SCOPE_ADAPTERS: dict[str, dict[str, Any]] = {
         "requires_face": False,
     },
     "otsukare_summer_challenge": {
+        "format_type": "챌린지",
         "supported_subject_types": ["STORE", "SERVICE"],
         "supported_objectives": ["awareness", "new_customer", "visit", "trust"],
         "supported_filming_times": ["within_10m", "within_20m", "30m_plus"],
@@ -66,6 +68,7 @@ _EDITING_SCOPE_ADAPTERS: dict[str, dict[str, Any]] = {
         "requires_face": True,
     },
     "cafe_recommendation_reels": {
+        "format_type": "정보형",
         "supported_subject_types": ["MENU", "STORE"],
         "supported_objectives": ["awareness", "new_customer", "visit", "trust"],
         "supported_filming_times": ["within_20m", "30m_plus"],
@@ -362,6 +365,9 @@ def _import_video_editing_db(
 ) -> dict[str, list[str]]:
     guide_rows = payload["datasets"]["03_GUIDE_TEMPLATES"]["records"]
     challenge_rows = payload["datasets"]["02_INPUT_GUIDES"]["records"]
+    element_rows = payload["datasets"].get("03A_SHOOTING_ELEMENTS", {}).get(
+        "records", []
+    )
     challenge_names = {row["id"]: row["name"] for row in challenge_rows}
     challenges_by_id = {row["id"]: row for row in challenge_rows}
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -389,7 +395,18 @@ def _import_video_editing_db(
         content = _editing_content(
             rows,
             challenge_name=challenge_names.get(rows[0]["challenge_id"], rows[0]["challenge_id"]),
+            format_type=str(
+                challenges_by_id.get(rows[0]["challenge_id"], {}).get("format_type")
+                or _EDITING_SCOPE_ADAPTERS[rows[0]["challenge_id"]]["format_type"]
+            ),
             task_intervals=task_intervals,
+            shooting_element_rows=[
+                item
+                for item in element_rows
+                if item.get("guide_template_id") == source_template_id
+                and item.get("validation_status") == "PASS"
+                and item.get("template_status") == "ACTIVE"
+            ],
         )
         errors = validator.validate(
             TemplateType.VIDEO_EDITING,
@@ -458,7 +475,9 @@ def _editing_content(
     rows: list[dict[str, Any]],
     *,
     challenge_name: str,
+    format_type: str,
     task_intervals: list[dict[str, Any]],
+    shooting_element_rows: list[dict[str, Any]],
 ) -> VideoEditingDBContent:
     challenge_id = str(rows[0]["challenge_id"])
     active_rows = [row for row in rows if row["template_status"] == "ACTIVE"]
@@ -469,46 +488,98 @@ def _editing_content(
         raise TemplateSourceImportError(
             f"Recommendation scope adapter is required for provided challenge {challenge_id}."
         )
+    adapter = {**adapter, "format_type": format_type}
     production_minutes = max(int(row["estimated_production_minutes"]) for row in active_rows)
     scenes = []
     tasks = []
-    for order, interval in enumerate(task_intervals, start=1):
-        duration = max(
-            0.1,
-            (float(interval["end_ms"]) - float(interval["start_ms"])) / 1000,
-        )
-        instructions = [
-            _bounded(str(item), 500) for item in interval.get("instructions", []) if str(item).strip()
-        ]
-        if not instructions:
-            raise TemplateSourceImportError(
-                f"Shooting interval {challenge_id}:{order} has no instructions."
+    if adapter["format_type"] == "정보형":
+        for order, row in enumerate(active_rows, start=1):
+            duration = max(
+                0.1,
+                (float(row["end_ms"]) - float(row["start_ms"])) / 1000,
             )
-        description = _bounded(
-            f"{interval['task_title']} — {' '.join(instructions)}",
-            500,
-        )
-        scenes.append(
-            {
-                "scene_order": order,
-                "scene_role": _bounded(str(interval["scene_role"]), 80),
-                "scene_description": description,
-                "scene_dialogue": None,
-                "scene_subtitle": None,
-                "shot_type": "가이드 구간 재현",
-                "target_duration_sec": min(duration, 30),
-            }
-        )
-        tasks.append(
-            {
-                "display_order": order,
-                "task_title": _bounded(str(interval["task_title"]), 200),
-                "scene_index": order - 1,
-                "guide": {
-                    "instructions": instructions,
-                },
-            }
-        )
+            summary = _bounded(str(row["scene_summary"]), 500)
+            scenes.append(
+                {
+                    "scene_order": order,
+                    "scene_role": _bounded(str(row["narrative_role"]), 80),
+                    "scene_description": summary,
+                    "scene_dialogue": None,
+                    "scene_subtitle": None,
+                    "shot_type": _bounded(str(row["action_pattern"]), 80),
+                    "target_duration_sec": min(duration, 30),
+                }
+            )
+            tasks.append(
+                {
+                    "display_order": order,
+                    "task_title": _bounded(str(row["narrative_role"]), 200),
+                    "scene_index": order - 1,
+                    "guide": {"instructions": [summary]},
+                }
+            )
+    else:
+        for order, interval in enumerate(task_intervals, start=1):
+            duration = max(
+                0.1,
+                (float(interval["end_ms"]) - float(interval["start_ms"])) / 1000,
+            )
+            instructions = [
+                _bounded(str(item), 500)
+                for item in interval.get("instructions", [])
+                if str(item).strip()
+            ]
+            if not instructions:
+                raise TemplateSourceImportError(
+                    f"Shooting interval {challenge_id}:{order} has no instructions."
+                )
+            description = _bounded(
+                f"{interval['task_title']} — {' '.join(instructions)}",
+                500,
+            )
+            scenes.append(
+                {
+                    "scene_order": order,
+                    "scene_role": _bounded(str(interval["scene_role"]), 80),
+                    "scene_description": description,
+                    "scene_dialogue": None,
+                    "scene_subtitle": None,
+                    "shot_type": "가이드 구간 재현",
+                    "target_duration_sec": min(duration, 30),
+                }
+            )
+            tasks.append(
+                {
+                    "display_order": order,
+                    "task_title": _bounded(str(interval["task_title"]), 200),
+                    "scene_index": order - 1,
+                    "guide": {"instructions": instructions},
+                }
+            )
+    shooting_elements = []
+    if adapter["format_type"] == "정보형":
+        if not shooting_element_rows:
+            raise TemplateSourceImportError(
+                f"Information-form shooting elements are missing for {challenge_id}."
+            )
+        for item in sorted(
+            shooting_element_rows, key=lambda value: int(value["display_order"])
+        ):
+            sequences = [
+                int(value.strip())
+                for value in str(item["reference_segment_sequences"]).split(",")
+                if value.strip()
+            ]
+            shooting_elements.append(
+                {
+                    "element_id": str(item["shooting_element_id"]),
+                    "display_order": int(item["display_order"]),
+                    "title": _bounded(str(item["title"]), 30),
+                    "instruction": _bounded(str(item["instruction"]), 50),
+                    "minimum_recording_sec": int(item["minimum_recording_sec"]),
+                    "reference_segment_sequences": sequences,
+                }
+            )
     concept = _bounded(
         " → ".join(str(row["scene_summary"]) for row in active_rows),
         2000,
@@ -534,6 +605,7 @@ def _editing_content(
                 "difficulty": "중" if production_minutes <= 10 else "상",
                 "scenes": scenes,
                 "tasks": tasks,
+                "shooting_elements": shooting_elements,
             },
             "editing_rules": {
                 "source_type": "VIDEO_ONLY",

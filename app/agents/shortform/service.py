@@ -332,6 +332,37 @@ class ShortformAgentService:
             if value is not None and str(value).strip()
         }
         guide = _personalize_guide_value(dict(template.shooting_guide or {}), normalized_context)
+        format_type = str(
+            (template.recommendation_metadata or {}).get("format_type") or "밈"
+        )
+        shooting_elements = []
+        if format_type == "정보형":
+            for index, item in enumerate(guide.get("shooting_elements") or [], start=1):
+                element = dict(item)
+                instruction = str(element.get("instruction") or "").strip()
+                if not instruction or len(instruction) > 50:
+                    raise ShortformDomainError(
+                        "SHOOTING_ELEMENT_INSTRUCTION_INVALID",
+                        "정보형 촬영 요소 설명은 공백 포함 50자 이하여야 합니다.",
+                        status_code=422,
+                    )
+                shooting_elements.append(
+                    {
+                        "element_id": str(element.get("element_id") or f"ELEMENT_{index:02d}"),
+                        "display_order": int(element.get("display_order") or index),
+                        "title": str(element.get("title") or "촬영 요소").strip(),
+                        "instruction": instruction,
+                        "minimum_recording_sec": max(
+                            int(element.get("minimum_recording_sec") or 1), 1
+                        ),
+                    }
+                )
+            if not 1 <= len(shooting_elements) <= 5:
+                raise ShortformDomainError(
+                    "SHOOTING_ELEMENT_COUNT_INVALID",
+                    "정보형 촬영 요소는 1개 이상 5개 이하여야 합니다.",
+                    status_code=422,
+                )
         scenes = []
         for item in guide.get("scenes") or []:
             scene = dict(item)
@@ -415,8 +446,10 @@ class ShortformAgentService:
                 or template.recommendation_metadata.get("difficulty")
                 or "중"
             ),
-            scenes=scenes,
-            tasks=tasks,
+            format_type=format_type,
+            shooting_elements=shooting_elements,
+            scenes=[] if format_type == "정보형" else scenes,
+            tasks=[] if format_type == "정보형" else tasks,
             context_applied=normalized_context,
         )
 
