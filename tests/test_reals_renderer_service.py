@@ -9,7 +9,11 @@ from pydantic import BaseModel, ConfigDict
 from app.agents.editing.reals import RealsRecipeAdapter
 from app.core.config import Settings
 from app.renderer import service as renderer_service_module
-from app.renderer.service import NativeRealsModules, RealsRendererService
+from app.renderer.service import (
+    NativeRealsModules,
+    RealsRendererService,
+    _fit_recipe_to_produced_duration,
+)
 from tests.test_editing_agent import _recipe, _request
 from tests.test_reals_editing_integration import _contexts, _video_editing_db
 
@@ -153,6 +157,52 @@ def test_renderer_app_exposes_real_render_route():
 
     paths = {route.path for route in app.routes}
     assert {"/renders", "/files", "/health/live", "/health/ready"} <= paths
+
+
+def test_renderer_clamps_only_frame_sized_produced_duration_drift():
+    facade = RealsRecipeAdapter().build_request(
+        run_id="duration-drift-test",
+        recipe=_recipe(),
+        videos=_request().videos,
+        video_contexts=_contexts(),
+        video_editing_db=_video_editing_db(),
+    )
+    recipe = facade.final_render.edit_recipe
+    original_end = recipe.segments[-1].trim_out_ms
+
+    fitted = _fit_recipe_to_produced_duration(
+        recipe,
+        duration_ms=original_end - 4,
+        fps=30,
+    )
+
+    assert fitted.segments[-1].trim_out_ms == original_end - 4
+    assert recipe.segments[-1].trim_out_ms == original_end
+    assert all(
+        overlay.end_ms <= original_end - 4
+        for overlay in fitted.overlays
+        if overlay.produced_segment_id == fitted.segments[-1].produced_segment_id
+    )
+
+
+def test_renderer_leaves_large_duration_overrun_for_native_validation():
+    facade = RealsRecipeAdapter().build_request(
+        run_id="invalid-duration-test",
+        recipe=_recipe(),
+        videos=_request().videos,
+        video_contexts=_contexts(),
+        video_editing_db=_video_editing_db(),
+    )
+    recipe = facade.final_render.edit_recipe
+    original_end = recipe.segments[-1].trim_out_ms
+
+    fitted = _fit_recipe_to_produced_duration(
+        recipe,
+        duration_ms=original_end - 100,
+        fps=30,
+    )
+
+    assert fitted.segments[-1].trim_out_ms == original_end
 
 
 def test_renderer_builds_the_native_reals_final_render_contract(tmp_path):
