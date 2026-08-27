@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     internal_api_key: str = ""
     admin_api_token: str = ""
+    cors_allowed_origins: str = ""
 
     database_url: str = "sqlite:///./runtime-data/challenge-ranker.db"
     redis_url: str = "redis://localhost:6379/0"
@@ -54,6 +55,7 @@ class Settings(BaseSettings):
     shortform_openai_model: str = "gpt-4.1-mini"
     shortform_request_timeout_seconds: int = Field(default=12, ge=2, le=60)
     shortform_max_output_tokens: int = Field(default=1800, ge=256, le=10000)
+    shortform_max_request_attempts: int = Field(default=2, ge=1, le=4)
     shortform_max_photo_inputs: int = Field(default=4, ge=0, le=10)
 
     # Database Knowledge Manager. GPT generates version candidates and trade-area
@@ -85,9 +87,14 @@ class Settings(BaseSettings):
     editing_analysis_batch_frames: int = Field(default=24, ge=6, le=40)
     editing_analysis_max_frames_per_video: int = Field(default=48, ge=6, le=240)
     editing_analysis_max_total_frames: int = Field(default=120, ge=12, le=720)
-    editing_orphan_recovery_enabled: bool = True
-    editing_orphan_stale_seconds: int = Field(default=900, ge=60, le=14400)
+    editing_orphan_recovery_enabled: bool = False
+    editing_orphan_stale_seconds: int = Field(default=2400, ge=60, le=14400)
     editing_orphan_recovery_interval_seconds: int = Field(default=300, ge=60, le=3600)
+    editing_orphan_max_recovery_attempts: int = Field(default=2, ge=0, le=10)
+    editing_estimated_seconds_per_run: int = Field(default=900, ge=30, le=7200)
+    editing_task_timeout_seconds: int = Field(default=2400, ge=60, le=7200)
+    editing_input_cost_per_million_usd: float = Field(default=0.0, ge=0.0)
+    editing_output_cost_per_million_usd: float = Field(default=0.0, ge=0.0)
     editing_max_videos_per_run: int = Field(default=6, ge=1, le=20)
     editing_max_output_duration_seconds: int = Field(default=15, ge=1, le=60)
     editing_max_source_duration_seconds: int = Field(default=30, ge=1, le=300)
@@ -112,6 +119,14 @@ class Settings(BaseSettings):
     @property
     def effective_internal_api_key(self) -> str:
         return (self.internal_api_key or self.admin_api_token).strip()
+
+    @property
+    def cors_allowed_origins_list(self) -> list[str]:
+        return [
+            origin.strip()
+            for origin in self.cors_allowed_origins.split(",")
+            if origin.strip()
+        ]
 
     @property
     def shortform_llm_ready(self) -> bool:

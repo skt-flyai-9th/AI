@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.agents.editing.service import (
@@ -11,6 +14,7 @@ from app.agents.editing.service import (
     validate_editing_runtime,
 )
 from app.core.security import require_internal_api_key
+from app.core.config import get_settings
 from app.db.session import get_db
 from app.models.editing_run import EditingRun
 from app.schemas.editing import (
@@ -53,11 +57,41 @@ def create_editing_run(
 
 
 @router.get("/{run_id}", response_model=EditingRunRead)
-def get_editing_run(run_id: str, db: Session = Depends(get_db)) -> EditingRun:
+def get_editing_run(run_id: str, db: Session = Depends(get_db)) -> EditingRunRead:
     run = db.get(EditingRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Editing run not found")
-    return run
+    queue_position: int | None = None
+    estimated_wait_sec: int | None = None
+    if run.status == EditingRunStatus.QUEUED.value:
+        ahead = db.scalar(
+            select(func.count())
+            .select_from(EditingRun)
+            .where(
+                EditingRun.status.in_(["RUNNING", "QUEUED"]),
+                EditingRun.created_at < run.created_at,
+            )
+        ) or 0
+        queue_position = int(ahead) + 1
+        estimated_wait_sec = int(ahead) * get_settings().editing_estimated_seconds_per_run
+    elif run.status == EditingRunStatus.RUNNING.value:
+        queue_position = 0
+        estimated_wait_sec = 0
+
+    started = run.stage_started_at or run.started_at or run.created_at
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    ended = run.finished_at or datetime.now(timezone.utc)
+    if ended.tzinfo is None:
+        ended = ended.replace(tzinfo=timezone.utc)
+    stage_elapsed_sec = max(0, int((ended - started).total_seconds()))
+    return EditingRunRead.model_validate(run).model_copy(
+        update={
+            "queue_position": queue_position,
+            "estimated_wait_sec": estimated_wait_sec,
+            "stage_elapsed_sec": stage_elapsed_sec,
+        }
+    )
 
 
 @router.get("/{run_id}/result", response_model=EditingRunResultResponse)

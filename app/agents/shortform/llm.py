@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Protocol
 
 import httpx
@@ -57,6 +58,7 @@ class OpenAIShortformLLM:
         self.model = settings.shortform_openai_model.strip()
         self.timeout = settings.shortform_request_timeout_seconds
         self.max_output_tokens = settings.shortform_max_output_tokens
+        self.max_request_attempts = settings.shortform_max_request_attempts
 
     def decide_turn(
         self,
@@ -194,20 +196,7 @@ class OpenAIShortformLLM:
             "store": False,
         }
 
-        try:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(
-                    f"{self.base_url}/responses",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                )
-        except httpx.TimeoutException as exc:
-            raise ShortformLLMError("Shortform GPT request timed out.", status_code=503) from exc
-        except httpx.HTTPError as exc:
-            raise ShortformLLMError("Shortform GPT request failed.", status_code=503) from exc
+        response = self._post_with_retry(payload)
 
         if response.status_code >= 400:
             if response.status_code == 429:
@@ -239,6 +228,43 @@ class OpenAIShortformLLM:
         if not isinstance(parsed, dict):
             raise ShortformLLMError("OpenAI structured output must be a JSON object.")
         return parsed
+
+    def _post_with_retry(self, payload: dict[str, Any]) -> httpx.Response:
+        last_error: Exception | None = None
+        for attempt in range(1, self.max_request_attempts + 1):
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    response = client.post(
+                        f"{self.base_url}/responses",
+                        headers={
+                            "Authorization": f"Bearer {self.api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json=payload,
+                    )
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                last_error = exc
+                if attempt >= self.max_request_attempts:
+                    message = (
+                        "Shortform GPT request timed out."
+                        if isinstance(exc, httpx.TimeoutException)
+                        else "Shortform GPT request failed."
+                    )
+                    raise ShortformLLMError(message, status_code=503) from exc
+                time.sleep(min(0.5 * (2 ** (attempt - 1)), 2.0))
+                continue
+
+            retryable_status = response.status_code in {408, 409, 429} or response.status_code >= 500
+            if retryable_status and attempt < self.max_request_attempts:
+                retry_after = response.headers.get("retry-after")
+                try:
+                    delay = float(retry_after) if retry_after else 0.0
+                except ValueError:
+                    delay = 0.0
+                time.sleep(max(delay, min(0.5 * (2 ** (attempt - 1)), 2.0)))
+                continue
+            return response
+        raise ShortformLLMError("Shortform GPT request failed.", status_code=503) from last_error
 
 
 def _extract_output_text(payload: dict[str, Any]) -> str:

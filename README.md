@@ -124,7 +124,7 @@ GET /api/v1/editing-templates/{template_id}/versions/{version}/shooting-guide
 X-Internal-API-Key: <INTERNAL_API_KEY>
 ```
 
-응답에는 예상 촬영 시간, 필요 인원, 준비물, 난이도, 장면 정보와 촬영 태스크가 포함됩니다. 태스크 묶음은 `영상편집DB_원본구간.xlsx`에서 확정된 원본 구간을 기준으로 생성합니다.
+매장명·업종·홍보 대상·목적·메뉴명·얼굴 노출 여부를 query parameter로 함께 전달할 수 있습니다. 저장된 템플릿의 명시적 placeholder만 치환하며 요청마다 LLM을 호출하지 않습니다. `scene_dialogue`는 공백 포함 9자 이하이고 예상 촬영 시간은 최종 장면 길이에서 다시 계산합니다.
 
 ## 영상 편집 파이프라인
 
@@ -169,7 +169,7 @@ SOURCE_GAP 감지
 
 순서 기반 폴백은 업로드 영상을 촬영 순서대로 정렬하고 각 영상에서 최대 3초를 사용해 단순 컷 편집을 만듭니다. 매칭되지 않은 역할은 `missing_scene_roles`와 `warnings`에 진단 정보로 남지만 렌더링을 중단하지 않습니다.
 
-파일 손상, 최소 컷 길이 미달, 런타임 의존성 장애, Renderer 오류처럼 실제로 결과 생성이 불가능한 경우에는 `FAILED`로 종료합니다. 작업이 `RUNNING`에 영구적으로 남지 않도록 고아 작업 복구도 활성화되어 있습니다.
+파일 손상, 최소 컷 길이 미달, 런타임 의존성 장애, Renderer 오류처럼 실제로 결과 생성이 불가능한 경우에는 `FAILED`로 종료합니다. 고아 작업 복구는 기본적으로 비활성화되어 있으며, 운영에서 켜더라도 run당 최대 2회만 재큐잉하고 이후 `FAILED`로 종료합니다.
 
 ## 주요 API
 
@@ -179,7 +179,7 @@ SOURCE_GAP 감지
 X-Internal-API-Key: <INTERNAL_API_KEY>
 ```
 
-루트 호환 헬스 엔드포인트(`/health`, `/health/live`, `/health/ready`)는 인증 없이 사용할 수 있습니다.
+루트 호환 헬스 엔드포인트(`/health`, `/health/live`, `/health/ready`)와 `/api/v1/health/ready`는 최소 상태만 공개합니다. API 키·Agent·편집 런타임 상세 정보는 내부 인증이 필요한 `/api/v1/health/diagnostics`에서 확인합니다.
 
 ### 시스템
 
@@ -187,7 +187,8 @@ X-Internal-API-Key: <INTERNAL_API_KEY>
 |---|---|---|
 | GET | `/` | 서비스 정보와 주요 링크 |
 | GET | `/api/v1/health/live` | API 프로세스 상태 |
-| GET | `/api/v1/health/ready` | Agent, API 키, 편집 런타임 준비 상태 |
+| GET | `/api/v1/health/ready` | DB 포함 최소 준비 상태 |
+| GET | `/api/v1/health/diagnostics` | Agent, API 키, 편집 런타임 상세 상태(내부 인증) |
 | GET | `/api/v1/agents` | 등록된 Agent 목록 |
 
 ### 트렌드
@@ -296,7 +297,7 @@ docker compose up -d --build
 
 ```bash
 curl http://localhost:8000/health
-curl http://localhost:8000/api/v1/health/ready \
+curl http://localhost:8000/api/v1/health/diagnostics \
   -H "X-Internal-API-Key: $INTERNAL_API_KEY"
 docker compose ps
 ```
@@ -343,7 +344,7 @@ RENDERER_PUBLIC_BASE_URL=http://localhost:8080
 
 전체 기본값은 [`.env.example`](.env.example)에 있습니다. 실제 `.env`, API 키, 사용자 영상, 렌더 결과와 모델 가중치는 Git에 커밋하지 않습니다.
 
-OpenAI 잔액이 소진되면 추천·편집 요청은 provider의 `429 insufficient_quota`를 명확한 오류로 반환합니다. `/api/v1/health/ready`의 `openai: true`는 키 설정 여부와 런타임 구성을 뜻하며 계정 잔액을 보장하지 않습니다.
+OpenAI 잔액이 소진되면 추천·편집 요청은 provider의 `429 insufficient_quota`를 명확한 오류로 반환합니다. `/api/v1/health/diagnostics`의 `openai: true`는 키 설정 여부와 런타임 구성을 뜻하며 계정 잔액을 보장하지 않습니다.
 
 ## AWS 운영
 
@@ -396,11 +397,10 @@ reals-video-engine/
 
 ## 운영상 주의사항
 
-- 백엔드는 `/health`가 아니라 실제 준비 상태 확인에 `/api/v1/health/ready`를 사용합니다.
-- `200/202` 응답만으로 최종 영상 생성이 완료된 것은 아닙니다. 비동기 실행의 `status`, `stage`, `progress`를 확인해야 합니다.
-- 편집 결과 URL은 `RENDERER_PUBLIC_BASE_URL`을 기준으로 생성되므로 앱과 백엔드에서 접근 가능한 주소를 설정해야 합니다.
+- 백엔드는 최소 준비 확인에 `/api/v1/health/ready`, 운영 진단에 인증된 `/api/v1/health/diagnostics`를 사용합니다.
+- `200/202` 응답만으로 최종 영상 생성이 완료된 것은 아닙니다. 비동기 실행의 `status`, `stage`, `progress`, `queue_position`, `estimated_wait_sec`를 확인해야 합니다.
+- 편집 결과 URL은 백엔드만 접근하며 `/files/...` 요청에도 `X-Internal-API-Key`가 필요합니다.
 - `SOURCE_GAP`은 내부 LLM 결정 스키마에 남아 있지만 신규 편집 실행은 자동 축소·순서 기반 폴백으로 렌더링을 계속합니다.
-- GPU 기반 고급 보호 영역 분석은 `reals-video-engine`에서 지원하지만 현재 AWS 운영 프로필은 `REALS_FORCE_CPU=1`입니다.
 - 자동 수집 데이터와 플랫폼 사용 정책은 운영 전에 별도로 검토해야 합니다.
 
 ## 문서

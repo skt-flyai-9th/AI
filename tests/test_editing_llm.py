@@ -72,3 +72,31 @@ def test_normal_editing_keeps_source_gap_detection_policy(monkeypatch):
 
     assert captured["source_gap_policy"] == {"mode": "DETECT_REQUIRED_ROLE_GAPS"}
     assert not any("return RECIPE" in item for item in captured["requirements"])
+
+
+def test_restored_analysis_checkpoint_skips_frame_reanalysis(monkeypatch):
+    planner = OpenAIEditingLLM()
+    shoot_mode = llm_module._resolve_shoot_mode({}, [])
+    cache_key = llm_module._analysis_cache_key({}, [], shoot_mode)
+    planner.restore_analysis_checkpoint(
+        {"cache_key": cache_key, "prepared": _prepared_analysis()}
+    )
+    monkeypatch.setattr(llm_module, "_renderer_capabilities", lambda: {})
+    monkeypatch.setattr(
+        planner,
+        "_prepare_frame_analysis",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("analysis reran")),
+    )
+    monkeypatch.setattr(planner, "_request_model", lambda **_kwargs: _source_gap_decision())
+
+    result = planner.plan_recipe(
+        domain_context="context",
+        project={},
+        selected_shortform={},
+        video_editing_db={},
+        video_contexts=[],
+        parent_recipe=None,
+        revision_action=None,
+    )
+
+    assert result.outcome == "SOURCE_GAP"

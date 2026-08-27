@@ -37,6 +37,7 @@ class EditingLLM(Protocol):
         parent_recipe: dict[str, Any] | None,
         revision_action: str | None,
         progress_callback: Callable[[int], None] | None = None,
+        checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> EditingPlanDecision: ...
 
     def repair_recipe(
@@ -52,6 +53,7 @@ class EditingLLM(Protocol):
         parent_recipe: dict[str, Any] | None,
         revision_action: str | None,
         progress_callback: Callable[[int], None] | None = None,
+        checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> EditingPlanDecision: ...
 
 
@@ -93,6 +95,7 @@ class OpenAIEditingLLM:
         parent_recipe: dict[str, Any] | None,
         revision_action: str | None,
         progress_callback: Callable[[int], None] | None = None,
+        checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> EditingPlanDecision:
         reduced_structure = _is_reduced_structure_revision(revision_action)
         if reduced_structure:
@@ -105,15 +108,19 @@ class OpenAIEditingLLM:
         reference_context = video_editing_db.get("reference_evidence") or {}
         shoot_mode = _resolve_shoot_mode(project, video_contexts)
         cache_key = _analysis_cache_key(selected_shortform, video_contexts, shoot_mode)
-        prepared = self._prepare_frame_analysis(
-            video_contexts=video_contexts,
-            video_editing_db=video_editing_db,
-            reference_context=reference_context,
-            revision_action=revision_action,
-            shoot_mode=shoot_mode,
-            progress_callback=progress_callback,
-        )
-        self._analysis_cache[cache_key] = prepared
+        prepared = self._analysis_cache.get(cache_key)
+        if prepared is None:
+            prepared = self._prepare_frame_analysis(
+                video_contexts=video_contexts,
+                video_editing_db=video_editing_db,
+                reference_context=reference_context,
+                revision_action=revision_action,
+                shoot_mode=shoot_mode,
+                progress_callback=progress_callback,
+            )
+            self._analysis_cache[cache_key] = prepared
+            if checkpoint_callback is not None:
+                checkpoint_callback({"cache_key": cache_key, "prepared": prepared})
         editing_context = build_editing_context(
             project=project,
             selected_shortform=selected_shortform,
@@ -181,6 +188,7 @@ class OpenAIEditingLLM:
         parent_recipe: dict[str, Any] | None,
         revision_action: str | None,
         progress_callback: Callable[[int], None] | None = None,
+        checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> EditingPlanDecision:
         shoot_mode = _resolve_shoot_mode(project, video_contexts)
         cache_key = _analysis_cache_key(selected_shortform, video_contexts, shoot_mode)
@@ -195,6 +203,8 @@ class OpenAIEditingLLM:
                 progress_callback=progress_callback,
             )
             self._analysis_cache[cache_key] = prepared
+            if checkpoint_callback is not None:
+                checkpoint_callback({"cache_key": cache_key, "prepared": prepared})
         editing_context = build_editing_context(
             project=project,
             selected_shortform=selected_shortform,
@@ -235,6 +245,14 @@ class OpenAIEditingLLM:
             produced_frame_context=prepared["produced_frame_context"],
             video_editing_db=video_editing_db,
         )
+
+    def restore_analysis_checkpoint(self, checkpoint: dict[str, Any] | None) -> None:
+        if not checkpoint:
+            return
+        cache_key = str(checkpoint.get("cache_key") or "")
+        prepared = checkpoint.get("prepared")
+        if cache_key and isinstance(prepared, dict):
+            self._analysis_cache[cache_key] = prepared
 
     def _prepare_frame_analysis(
         self,

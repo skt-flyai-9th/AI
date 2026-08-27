@@ -524,6 +524,9 @@ def test_editing_api_contract(client, auth_headers, monkeypatch):
     )
     assert status_response.status_code == 200
     assert status_response.json()["stage"] == "QUEUED"
+    assert status_response.json()["queue_position"] == 1
+    assert status_response.json()["estimated_wait_sec"] == 0
+    assert status_response.json()["stage_elapsed_sec"] >= 0
 
     result_response = client.get(
         f"/api/v1/editing-runs/{created['run_id']}/result", headers=auth_headers

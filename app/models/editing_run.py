@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -21,9 +21,16 @@ class EditingRun(Base):
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     warnings: Mapped[list] = mapped_column(JSON, default=list)
+    recovery_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    stage_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    llm_request_count: Mapped[int] = mapped_column(Integer, default=0)
+    llm_input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    llm_output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    llm_estimated_cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
 
     request_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
     video_context: Mapped[list] = mapped_column(JSON, default=list)
+    analysis_checkpoint: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     recipe: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     render_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     publishing_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)

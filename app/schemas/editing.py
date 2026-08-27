@@ -105,6 +105,14 @@ class EditingRunRead(BaseModel):
     celery_task_id: str | None
     error_message: str | None
     warnings: list[str]
+    queue_position: int | None = None
+    estimated_wait_sec: int | None = None
+    stage_elapsed_sec: int = 0
+    recovery_attempts: int = 0
+    llm_request_count: int = 0
+    llm_input_tokens: int = 0
+    llm_output_tokens: int = 0
+    llm_estimated_cost_usd: float = 0.0
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None

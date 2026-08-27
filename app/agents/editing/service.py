@@ -8,12 +8,15 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.editing.effect_planner import EffectPlanner
 from app.agents.editing.graph import build_editing_graph
 from app.agents.editing.llm import EditingLLM, OpenAIEditingLLM
+from app.agents.editing.structured_output import EditingLLMError
+from app.agents.editing.telemetry import reset_usage, usage_snapshot
 from app.agents.editing.renderer import EditingRenderer, HttpEditingRenderer
 from app.agents.editing.reals import RealsRegistryError, get_reals_registry
 from app.agents.editing.types import (
@@ -82,6 +85,7 @@ class EditingAgentService:
             status=EditingRunStatus.QUEUED.value,
             stage=EditingRunStage.QUEUED.value,
             progress=0,
+            stage_started_at=datetime.now(timezone.utc),
             request_snapshot=request_snapshot,
             revision_action=request.revision,
             warnings=[],
@@ -149,6 +153,7 @@ class EditingAgentService:
             status=EditingRunStatus.QUEUED.value,
             stage=EditingRunStage.QUEUED.value,
             progress=0,
+            stage_started_at=datetime.now(timezone.utc),
             request_snapshot=revision_snapshot,
             revision_action=request.revision_action,
             warnings=[],
@@ -177,6 +182,7 @@ class EditingAgentService:
         if run.status != EditingRunStatus.QUEUED.value:
             return run
 
+        reset_usage()
         try:
             raw_snapshot = dict(run.request_snapshot or {})
             shortform_context = raw_snapshot.pop("_shortform_context", {})
@@ -194,6 +200,14 @@ class EditingAgentService:
             self._set_stage(db, run, EditingRunStage.PREPARING_VIDEO_CONTEXT, 10)
             contexts = self.video_context_builder.build(request.videos)
             run.video_context = [persistable_video_context(context) for context in contexts]
+            restore_checkpoint = getattr(self.llm, "restore_analysis_checkpoint", None)
+            if callable(restore_checkpoint):
+                restore_checkpoint(run.analysis_checkpoint)
+
+            def save_analysis_checkpoint(checkpoint: dict[str, Any]) -> None:
+                run.analysis_checkpoint = checkpoint
+                self._sync_usage(run)
+                db.commit()
 
             def update_graph_stage(stage: str, progress: int) -> None:
                 self._set_stage(
@@ -216,6 +230,7 @@ class EditingAgentService:
                     "max_repair_attempts": self.settings.editing_max_repair_attempts,
                     "repair_attempts": 0,
                     "stage_callback": update_graph_stage,
+                    "checkpoint_callback": save_analysis_checkpoint,
                 }
             )
             if result.get("exhausted"):
@@ -251,6 +266,7 @@ class EditingAgentService:
                             "max_repair_attempts": self.settings.editing_max_repair_attempts,
                             "repair_attempts": 0,
                             "stage_callback": update_graph_stage,
+                            "checkpoint_callback": save_analysis_checkpoint,
                         }
                     )
                     if reduced.get("exhausted"):
@@ -263,7 +279,7 @@ class EditingAgentService:
                             decision = self._build_ordered_fallback(
                                 request, database_payload, contexts, shortform_context
                             )
-                except Exception:
+                except (EditingLLMError, ValidationError, ValueError, TypeError):
                     decision = self._build_ordered_fallback(
                         request, database_payload, contexts, shortform_context
                     )
@@ -285,6 +301,7 @@ class EditingAgentService:
             run.stage = EditingRunStage.COMPLETED.value
             run.progress = 100
             run.finished_at = datetime.now(timezone.utc)
+            self._sync_usage(run)
             db.commit()
             db.refresh(run)
             return run
@@ -297,6 +314,7 @@ class EditingAgentService:
                 failed.progress = min(failed.progress, 99)
                 failed.error_message = _safe_error_message(exc)
                 failed.finished_at = datetime.now(timezone.utc)
+                self._sync_usage(failed)
                 db.commit()
             raise
 
@@ -441,16 +459,32 @@ class EditingAgentService:
             available_options=run.available_options or [],
         )
 
-    @staticmethod
     def _set_stage(
+        self,
         db: Session,
         run: EditingRun,
         stage: EditingRunStage,
         progress: int,
     ) -> None:
+        if run.stage != stage.value:
+            run.stage_started_at = datetime.now(timezone.utc)
         run.stage = stage.value
         run.progress = progress
+        self._sync_usage(run)
         db.commit()
+
+    def _sync_usage(self, run: EditingRun) -> None:
+        usage = usage_snapshot()
+        run.llm_request_count = usage.request_count
+        run.llm_input_tokens = usage.input_tokens
+        run.llm_output_tokens = usage.output_tokens
+        run.llm_estimated_cost_usd = round(
+            usage.input_tokens * self.settings.editing_input_cost_per_million_usd / 1_000_000
+            + usage.output_tokens
+            * self.settings.editing_output_cost_per_million_usd
+            / 1_000_000,
+            8,
+        )
 
     @staticmethod
     def _get_active_database(

@@ -7,6 +7,8 @@ from typing import Any, TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from app.agents.editing.telemetry import record_request, record_response
+
 
 class EditingLLMError(RuntimeError):
     def __init__(self, message: str, *, retryable: bool = True) -> None:
@@ -48,6 +50,7 @@ def request_structured_model(
     for attempt in range(1, max_attempts + 1):
         request_payload["max_output_tokens"] = output_token_limit
         try:
+            record_request()
             response = _post_responses_api(
                 base_url=base_url,
                 api_key=api_key,
@@ -120,6 +123,7 @@ def request_structured_model(
             if not isinstance(raw_response_payload, dict):
                 raise TypeError("Responses API payload must be an object.")
             response_payload = raw_response_payload
+            record_response(response_payload)
             if _response_requires_retry(response_payload):
                 raise ValueError("Responses API did not complete with structured output.")
             output_text = _extract_output_text(response_payload)
