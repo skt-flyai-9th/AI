@@ -202,7 +202,6 @@ class OpenAITemplateCandidateGenerator:
                     "strict": True,
                 }
             },
-            "reasoning": {"effort": "low"},
             "max_output_tokens": self.max_output_tokens,
             "store": False,
         }

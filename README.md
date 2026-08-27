@@ -12,9 +12,9 @@ FLY AI Service (this repository)
 Apify / Gemini / YouTube / NAVER API HUB
 ```
 
-이 저장소는 여러 AI Agent를 독립 경계로 제공하는 서버입니다. 현재 `challenge-ranking`, `shortform`, `editing` 세 Agent를 사용할 수 있습니다.
+이 저장소는 여러 AI Agent를 독립 경계로 제공하는 서버입니다. 현재 `challenge-ranking`, `shortform`, `editing` 세 Agent를 사용할 수 있습니다. OpenAI를 사용하는 모든 Agent와 Database Knowledge Manager의 기본 모델은 `gpt-4.1-mini`로 통일합니다.
 
-두 데이터베이스를 함께 관리하는 `Database Knowledge Manager`도 구현되어 있습니다. 상권 근거를 GPT로 비교해 `상권분석DB` 후보를 만들고, `trendcluster`의 대표 YouTube 영상을 Gemini가 직접 분석해 `영상편집DB` 후보를 만듭니다. 모든 후보는 diff와 결정론적 검증을 거치며 기본값에서는 사람 승인 후에만 새 ACTIVE 버전이 됩니다. 자세한 내용은 [`docs/DATABASE_KNOWLEDGE_MANAGER.md`](docs/DATABASE_KNOWLEDGE_MANAGER.md)를 참고합니다.
+두 데이터베이스를 함께 관리하는 `Database Knowledge Manager`도 구현되어 있습니다. 상권 근거를 GPT-4.1 mini로 비교해 `상권분석DB` 후보를 만들고, `trendcluster`의 대표 YouTube 영상을 Gemini가 직접 분석해 `영상편집DB` 후보를 만듭니다. 모든 후보는 diff와 결정론적 검증을 거치며 기본값에서는 사람 승인 후에만 새 ACTIVE 버전이 됩니다. 자세한 내용은 [`docs/DATABASE_KNOWLEDGE_MANAGER.md`](docs/DATABASE_KNOWLEDGE_MANAGER.md)를 참고합니다.
 
 Agent와 별도로, 검증된 GPU 기반 숏폼 렌더링 파이프라인은 [`reals-video-engine/`](reals-video-engine/)에 독립 모듈로 포함되어 있습니다.
 

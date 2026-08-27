@@ -56,14 +56,14 @@ class Settings(BaseSettings):
     # GPT-powered components share the same underlying OpenAI model family.
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
-    shortform_openai_model: str = "gpt-5.4-mini-2026-03-17"
+    shortform_openai_model: str = "gpt-4.1-mini"
     shortform_request_timeout_seconds: int = Field(default=12, ge=2, le=60)
     shortform_max_output_tokens: int = Field(default=1800, ge=256, le=10000)
     shortform_max_photo_inputs: int = Field(default=4, ge=0, le=10)
 
     # Database Knowledge Manager. GPT generates version candidates and trade-area
     # analyses; Gemini inspects public YouTube reference videos from trendcluster.
-    database_openai_model: str = "gpt-5.4-mini-2026-03-17"
+    database_openai_model: str = "gpt-4.1-mini"
     database_request_timeout_seconds: int = Field(default=60, ge=5, le=300)
     database_max_output_tokens: int = Field(default=6000, ge=512, le=30000)
     database_gemini_model: str = "auto"
@@ -77,7 +77,7 @@ class Settings(BaseSettings):
 
     # Editing Agent has its own prompt/schema and turns video into a bounded
     # timestamped context before calling the model.
-    editing_openai_model: str = "gpt-5.4-mini-2026-03-17"
+    editing_openai_model: str = "gpt-4.1-mini"
     editing_request_timeout_seconds: int = Field(default=30, ge=5, le=180)
     editing_max_output_tokens: int = Field(default=5000, ge=512, le=20000)
     editing_max_repair_attempts: int = Field(default=2, ge=0, le=5)
