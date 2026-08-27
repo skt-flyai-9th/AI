@@ -202,12 +202,23 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
         )
 
         imported_editing.shooting_guide = {"scenes": [], "tasks": []}
+        information_record.recommendation_metadata = {
+            **information_record.recommendation_metadata,
+            "format_type": "밈",
+        }
+        information_record.shooting_guide = {
+            **information_record.shooting_guide,
+            "shooting_elements": [],
+        }
         db.commit()
         second = seed_template_library(db, service=service)
         db.refresh(imported_editing)
+        db.refresh(information_record)
         assert second["created"] == []
         assert len(second["skipped"]) == 5
         assert len(imported_editing.shooting_guide["tasks"]) == 3
+        assert information_record.recommendation_metadata["format_type"] == "정보형"
+        assert len(information_record.shooting_guide["shooting_elements"]) == 4
 
 
 def test_candidate_lifecycle_creates_new_version_and_archives_base():
