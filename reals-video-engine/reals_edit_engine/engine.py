@@ -33,6 +33,11 @@ def _idem_key(*parts: str) -> str:
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:24]
 
 
+def _artifact_key(idempotency_key: str) -> str:
+    """Return a stable filename-safe key for FFmpeg and temporary render artifacts."""
+    return hashlib.sha256(idempotency_key.encode()).hexdigest()[:32]
+
+
 class VideoEditEngine:
     def __init__(self, root: str | pathlib.Path,
                  segmenter: SemanticSegmenter | None = None,
@@ -88,6 +93,7 @@ class VideoEditEngine:
             recipe.model_dump_json().encode()).hexdigest()
         key = req.idempotency_key or _idem_key(
             req.produced_video.sha256, recipe_hash, ENGINE_VERSION)
+        artifact_key = _artifact_key(key)
 
         # 1. preflight + Recipe Validator — 실패 시 렌더 진입 금지
         try:
@@ -139,7 +145,7 @@ class VideoEditEngine:
                 t1 = map_produced_to_output_ms(recipe, o.produced_segment_id, o.end_ms)
                 placed.append(layout_overlay(o, t0, t1, self.reg, safe, avoid))
             if placed:
-                ass_path = self.workdir / f"subs_{key}.ass"
+                ass_path = self.workdir / f"subs_{artifact_key}.ass"
                 ass_path.write_text(build_ass(placed, self.reg,
                                               (rp["width"], rp["height"])),
                                     encoding="utf-8")
@@ -180,7 +186,7 @@ class VideoEditEngine:
             recipe_for_graph, src.path, str(ass_path) if ass_path else None,
             sfx_items, out_path, rp, amix, expected_ms,
             fonts_dir=str(self.root / "assets" / "fonts"),
-            workdir=str(self.workdir), key=key)
+            workdir=str(self.workdir), key=artifact_key)
         _log(f"FFmpeg 렌더 시작 — {len(cmds)}단계 "
              f"(구간 {len(recipe.segments)}개 → concat → 마감)")
         try:

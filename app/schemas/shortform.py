@@ -14,6 +14,7 @@ class ShortformAction(StrEnum):
     RESOLVE_CONFLICT = "RESOLVE_CONFLICT"
     CONFIRM = "CONFIRM"
     RECOMMEND = "RECOMMEND"
+    OUT_OF_SCOPE = "OUT_OF_SCOPE"
 
 
 class ShortformSessionStatus(StrEnum):
@@ -28,6 +29,17 @@ class TurnInputType(StrEnum):
     TEXT = "TEXT"
     OPTION = "OPTION"
     CONFIRM = "CONFIRM"
+
+
+class ShortformEntryMode(StrEnum):
+    PROMOTION_GUIDE = "promotion_guide"
+    FREE_INPUT = "free_input"
+
+
+class PromotionCategory(StrEnum):
+    MENU = "menu"
+    SPACE = "space"
+    EVENT = "event"
 
 
 class PromotionObjective(StrEnum):
@@ -120,7 +132,8 @@ class ShortformOption(BaseModel):
 
 
 class ShortformProjectState(BaseModel):
-    promotion_category: str | None = None
+    entry_mode: ShortformEntryMode | None = None
+    promotion_category: PromotionCategory | None = None
     promotion_subject: PromotionSubject | None = None
     promotion_objective: PromotionObjective | None = None
     filming_time: FilmingTime | None = None
@@ -130,7 +143,9 @@ class ShortformProjectState(BaseModel):
     facts_from_user: dict[str, str] = Field(default_factory=dict)
     store_context_conflicts: list[dict[str, Any]] = Field(default_factory=list)
     missing_required_fields: list[str] = Field(default_factory=list)
+    current_question: str | None = None
     ready_for_confirmation: bool = False
+    ready_for_recommendation: bool = False
     brief_confirmed: bool = False
 
 
@@ -168,8 +183,8 @@ class ShortformRecommendation(BaseModel):
     project_title: str
     title: str
     concept: str
-    video_editing_db_id: str
-    video_editing_db_version: int
+    editing_template_id: str
+    editing_template_version: int
 
 
 class ShortformTurnResponse(BaseModel):
@@ -184,15 +199,17 @@ class ShortformTurnResponse(BaseModel):
 class NextRecommendationResponse(BaseModel):
     session_id: str
     recommendation: ShortformRecommendation
-    shown_video_editing_db_ids: list[str]
+    shown_template_ids: list[str]
 
 
 class ShootingGuideResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    video_editing_db_id: str
-    video_editing_db_version: int
-    estimated_shooting_sec: int | None = None
-    difficulty: str | None = None
+    template_id: str
+    version: int
+    estimated_shooting_sec: int = Field(ge=1)
+    required_people: int = Field(ge=1)
+    props: list[str] = Field(default_factory=list)
+    difficulty: str
     scenes: list[dict[str, Any]] = Field(default_factory=list)
     tasks: list[dict[str, Any]] = Field(default_factory=list)

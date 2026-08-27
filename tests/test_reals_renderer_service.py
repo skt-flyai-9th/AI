@@ -9,7 +9,11 @@ from pydantic import BaseModel, ConfigDict
 from app.agents.editing.reals import RealsRecipeAdapter
 from app.core.config import Settings
 from app.renderer import service as renderer_service_module
-from app.renderer.service import NativeRealsModules, RealsRendererService
+from app.renderer.service import (
+    NativeRealsModules,
+    RealsRendererService,
+    _fit_recipe_to_produced_duration,
+)
 from tests.test_editing_agent import _recipe, _request
 from tests.test_reals_editing_integration import _contexts, _video_editing_db
 
@@ -84,47 +88,14 @@ class _FakeEngineResult:
         }
 
 
-class _StreamResponse:
-    headers = {"content-length": "5"}
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return False
-
-    @staticmethod
-    def raise_for_status() -> None:
-        return None
-
-    @staticmethod
-    def iter_bytes():
-        yield b"video"
-
-
-class _HttpClient:
-    def __init__(self, captured: list[str], **_: Any) -> None:
-        self.captured = captured
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return False
-
-    def stream(self, method: str, url: str):
-        assert method == "GET"
-        self.captured.append(url)
-        return _StreamResponse()
-
-
 def test_renderer_service_downloads_assembles_and_invokes_final_render(tmp_path, monkeypatch):
     captured_downloads: list[str] = []
-    monkeypatch.setattr(
-        renderer_service_module.httpx,
-        "Client",
-        lambda **kwargs: _HttpClient(captured_downloads, **kwargs),
-    )
+
+    def download(url, target, **_kwargs):
+        captured_downloads.append(url)
+        target.write_bytes(b"video")
+
+    monkeypatch.setattr(renderer_service_module, "download_source_asset", download)
 
     def media_ref(file_id: str, path: str | Path) -> _MediaRef:
         duration = 4000 if file_id.endswith("_produced") else 5000
@@ -188,6 +159,52 @@ def test_renderer_app_exposes_real_render_route():
     assert {"/renders", "/files", "/health/live", "/health/ready"} <= paths
 
 
+def test_renderer_clamps_only_frame_sized_produced_duration_drift():
+    facade = RealsRecipeAdapter().build_request(
+        run_id="duration-drift-test",
+        recipe=_recipe(),
+        videos=_request().videos,
+        video_contexts=_contexts(),
+        video_editing_db=_video_editing_db(),
+    )
+    recipe = facade.final_render.edit_recipe
+    original_end = recipe.segments[-1].trim_out_ms
+
+    fitted = _fit_recipe_to_produced_duration(
+        recipe,
+        duration_ms=original_end - 4,
+        fps=30,
+    )
+
+    assert fitted.segments[-1].trim_out_ms == original_end - 4
+    assert recipe.segments[-1].trim_out_ms == original_end
+    assert all(
+        overlay.end_ms <= original_end - 4
+        for overlay in fitted.overlays
+        if overlay.produced_segment_id == fitted.segments[-1].produced_segment_id
+    )
+
+
+def test_renderer_leaves_large_duration_overrun_for_native_validation():
+    facade = RealsRecipeAdapter().build_request(
+        run_id="invalid-duration-test",
+        recipe=_recipe(),
+        videos=_request().videos,
+        video_contexts=_contexts(),
+        video_editing_db=_video_editing_db(),
+    )
+    recipe = facade.final_render.edit_recipe
+    original_end = recipe.segments[-1].trim_out_ms
+
+    fitted = _fit_recipe_to_produced_duration(
+        recipe,
+        duration_ms=original_end - 100,
+        fps=30,
+    )
+
+    assert fitted.segments[-1].trim_out_ms == original_end
+
+
 def test_renderer_builds_the_native_reals_final_render_contract(tmp_path):
     engine_root = Path("reals-video-engine").resolve()
     native = renderer_service_module._load_native_reals(engine_root)
@@ -239,3 +256,14 @@ def test_cpu_encoder_honors_free_tier_preset_override(monkeypatch):
     )
 
     assert args[args.index("-preset") + 1] == "veryfast"
+
+
+def test_native_engine_artifact_key_is_ffmpeg_path_safe():
+    renderer_service_module._load_native_reals(Path("reals-video-engine").resolve())
+    from reals_edit_engine.engine import _artifact_key
+
+    value = _artifact_key("editing:edit_123:recipe/hash with spaces")
+
+    assert len(value) == 32
+    assert value.isalnum()
+    assert value == _artifact_key("editing:edit_123:recipe/hash with spaces")

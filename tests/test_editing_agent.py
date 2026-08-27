@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +12,7 @@ from app.agents.editing.video_context import FFmpegVideoContextBuilder, VideoCon
 from app.core.config import Settings
 from app.db.session import SessionLocal
 from app.models.editing_run import EditingRun
+from app.models.shortform_session import ShortformSession
 from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.schemas.editing import (
     EditRecipe,
@@ -18,6 +21,7 @@ from app.schemas.editing import (
     EditingRunCreateRequest,
     EditingRunStatus,
     PublishingResult,
+    RecipeCta,
 )
 
 
@@ -37,8 +41,8 @@ def _request() -> EditingRunCreateRequest:
             },
             "selected_shortform": {
                 "recommendation_id": "rec_123",
-                "video_editing_db_id": "video_editing_db_014",
-                "video_editing_db_version": 3,
+                "editing_template_id": "video_editing_db_014",
+                "editing_template_version": 3,
             },
             "videos": [
                 {
@@ -61,8 +65,8 @@ def _recipe(*, invalid_timeline: bool = False) -> EditRecipe:
     return EditRecipe.model_validate(
         {
             "recipe_version": 1,
-            "video_editing_db_id": "video_editing_db_014",
-            "video_editing_db_version": 3,
+            "editing_template_id": "video_editing_db_014",
+            "editing_template_version": 3,
             "source_type": "VIDEO_ONLY",
             "timeline": [
                 {
@@ -80,7 +84,8 @@ def _recipe(*, invalid_timeline: bool = False) -> EditRecipe:
                         "start_ms": 0,
                         "end_ms": 1500,
                         "position": "BOTTOM",
-                        "style_id": "CAPTION",
+                        "style_id": "HOOK",
+                        "motion_id": "TYPEWRITER",
                         "font_weight": "SEMIBOLD",
                         "scale": 1.0,
                     },
@@ -96,7 +101,16 @@ def _recipe(*, invalid_timeline: bool = False) -> EditRecipe:
                     "crop_mode": "SUBJECT_CENTER",
                     "transition_in": None,
                     "transition_out": "CUT",
-                    "caption": None,
+                    "caption": {
+                        "text": "한눈에 만나는 특별한 메뉴",
+                        "start_ms": 2000,
+                        "end_ms": 3500,
+                        "position": "MIDDLE",
+                        "style_id": "CAPTION_EMPHASIS",
+                        "motion_id": "POP",
+                        "font_weight": "BOLD",
+                        "scale": 1.0,
+                    },
                     "effects": [],
                 },
             ],
@@ -107,10 +121,37 @@ def _recipe(*, invalid_timeline: bool = False) -> EditRecipe:
 
 def _publishing() -> PublishingResult:
     return PublishingResult(
+        title="오늘의 딸기 크림 라떼",
         caption="딸기 크림 라떼를 만나보세요.",
-        hashtags=["#딸기라떼", "#카페신메뉴"],
-        post_note="음원은 게시 시 플랫폼 내에서 추가해주세요.",
+        hashtags=["#딸기라떼", "#카페신메뉴", "#카페추천", "#신메뉴", "#숏폼"],
+        track={
+            "mode": "SUGGESTED",
+            "title": None,
+            "artist": None,
+            "start_sec": None,
+            "end_sec": None,
+            "mood": None,
+            "search_keyword": "딸기 라떼 릴스",
+        },
+        post_note="플랫폼 음원 검색에서 ‘딸기 라떼 릴스’을 검색해 직접 추가해주세요.",
     )
+
+
+def test_publishing_contract_requires_five_hashtags_and_search_keyword():
+    payload = _publishing().model_dump(mode="json")
+    payload["hashtags"] = payload["hashtags"][:4]
+    with pytest.raises(ValueError, match="at least 5 items"):
+        PublishingResult.model_validate(payload)
+
+    payload = _publishing().model_dump(mode="json")
+    payload["track"]["search_keyword"] = None
+    with pytest.raises(ValueError, match="search_keyword"):
+        PublishingResult.model_validate(payload)
+
+
+def test_video_cta_rejects_platform_music_instructions():
+    with pytest.raises(ValueError, match="operational music/upload instructions"):
+        RecipeCta(text="음악은 플랫폼에서 직접 추가하세요")
 
 
 class FakeVideoContextBuilder:
@@ -134,10 +175,12 @@ class RepairingFakeLLM:
         self.repair_count = 0
         self.seen_parent_recipe = None
         self.seen_revision_action = None
+        self.seen_project = None
 
     def plan_recipe(self, **kwargs):
         self.seen_parent_recipe = kwargs["parent_recipe"]
         self.seen_revision_action = kwargs["revision_action"]
+        self.seen_project = kwargs["project"]
         return EditingPlanDecision(
             outcome="RECIPE",
             recipe=_recipe(invalid_timeline=kwargs["revision_action"] is None),
@@ -161,7 +204,11 @@ class RepairingFakeLLM:
 
 
 class SourceGapFakeLLM:
+    def __init__(self) -> None:
+        self.plan_count = 0
+
     def plan_recipe(self, **kwargs):
+        self.plan_count += 1
         return EditingPlanDecision(
             outcome="SOURCE_GAP",
             recipe=None,
@@ -189,12 +236,12 @@ class FakeRenderer:
         )
 
 
-def _seed_video_editing_db(db) -> None:
+def _seed_video_editing_db(db, *, status: str = "ACTIVE") -> None:
     db.add(
         VideoEditingDBRecord(
             template_id="video_editing_db_014",
             version=3,
-            status="ACTIVE",
+            status=status,
             name="메뉴 공개",
             recommendation_title="한눈에 보는 신메뉴",
             recommendation_concept="과정과 완성 컷을 빠르게 보여줍니다.",
@@ -210,6 +257,61 @@ def _seed_video_editing_db(db) -> None:
         )
     )
     db.commit()
+
+
+def _seed_shortform_session(db) -> None:
+    db.add(
+        ShortformSession(
+            id="shortform_123",
+            status="WAITING_RECOMMENDATION_ACTION",
+            store_id="store_123",
+            store_context={
+                "store": {
+                    "store_id": "store_123",
+                    "store_name": "사릴스 카페",
+                    "category": "카페",
+                    "store_photos": [{"asset_id": "photo_1", "asset_url": "private"}],
+                },
+                "representative_menus": [
+                    {"menu_id": "menu_001", "name": "딸기 크림 라떼", "price": 6500}
+                ],
+            },
+            project_state={
+                "promotion_subject": {"type": "MENU", "name": "딸기 크림 라떼"},
+                "promotion_objective": "sales",
+                "creative_preferences": ["상큼하고 빠른 분위기"],
+                "secondary_information": ["매일 아침 직접 만든 딸기청"],
+                "facts_from_user": {"taste": "생딸기가 씹히는 상큼한 맛"},
+                "brief_confirmed": True,
+            },
+            conversation=[
+                {"role": "user", "content": "수제 딸기청을 꼭 강조해줘"},
+                {"role": "assistant", "content": "알겠습니다"},
+            ],
+            shown_video_editing_db_ids=["video_editing_db_014"],
+            current_recommendation={
+                "recommendation_id": "rec_123",
+                "title": "딸기 포인트 공개",
+                "concept": "수제 딸기청을 빠르게 강조",
+                "editing_template_id": "video_editing_db_014",
+                "editing_template_version": 3,
+            },
+        )
+    )
+    db.commit()
+
+
+def test_archived_pinned_database_version_remains_executable():
+    service = EditingAgentService(
+        llm=RepairingFakeLLM(),
+        video_context_builder=FakeVideoContextBuilder(),
+        renderer=FakeRenderer(),
+    )
+    with SessionLocal() as db:
+        _seed_video_editing_db(db, status="ARCHIVED")
+        run = service.create_run(db, _request())
+
+    assert run.status == EditingRunStatus.QUEUED.value
 
 
 def test_editing_run_rejects_more_videos_than_free_tier_limit():
@@ -241,6 +343,10 @@ def test_video_context_rejects_source_over_cpu_profile_limit(monkeypatch):
     builder = FFmpegVideoContextBuilder()
     builder.max_source_duration_ms = 30_000
     monkeypatch.setattr(
+        "app.agents.editing.video_context.download_source_asset",
+        lambda _url, target, **_kwargs: target.write_bytes(b"video"),
+    )
+    monkeypatch.setattr(
         builder,
         "_probe",
         lambda *_: {"duration_ms": 30_001, "width": 1080, "height": 1920, "fps": 30.0},
@@ -253,6 +359,31 @@ def test_video_context_rejects_source_over_cpu_profile_limit(monkeypatch):
 
     with pytest.raises(VideoContextError, match="30000ms limit"):
         builder._build_one(_request().videos[0])
+
+
+def test_video_context_normalizes_source_after_initial_frame_extraction_failure(monkeypatch):
+    builder = FFmpegVideoContextBuilder()
+    commands: list[list[str]] = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        if len(commands) == 1:
+            return subprocess.CompletedProcess(command, 1, stderr=b"non-monotonic timestamp")
+        if len(commands) == 2:
+            Path(command[-1]).write_bytes(b"normalized-video")
+            return subprocess.CompletedProcess(command, 0, stderr=b"")
+        pattern = Path(command[-1])
+        (pattern.parent / "frame-000001.jpg").write_bytes(b"jpeg")
+        return subprocess.CompletedProcess(command, 0, stderr=b"")
+
+    monkeypatch.setattr("app.agents.editing.video_context.subprocess.run", run)
+
+    frames = builder._extract_keyframes("source.mp4", "video-1", [0])
+
+    assert len(frames) == 1
+    assert len(commands) == 3
+    assert "+genpts" in commands[1]
+    assert "libx264" in commands[1]
 
 
 def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
@@ -273,7 +404,10 @@ def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
     monkeypatch.setattr(service, "_set_stage", record_stage)
     with SessionLocal() as db:
         _seed_video_editing_db(db)
+        _seed_shortform_session(db)
         run = service.create_run(db, _request())
+        assert run.request_snapshot["_shortform_context"]["session_id"] == "shortform_123"
+        assert "store_photos" not in run.request_snapshot["_shortform_context"]["store_context"]["store"]
         completed = service.execute(db, run.id)
 
         assert completed.status == EditingRunStatus.COMPLETED.value
@@ -281,7 +415,7 @@ def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
         assert completed.progress == 100
         assert completed.recipe["timeline"][0]["timeline_start_ms"] == 0
         assert completed.render_result["output_video_url"].endswith("final.mp4")
-        assert completed.publishing_result["post_note"].startswith("음원은")
+        assert "딸기 라떼 릴스" in completed.publishing_result["post_note"]
         assert llm.repair_count == 1
         assert stages == [
             "PREPARING_VIDEO_CONTEXT",
@@ -293,6 +427,9 @@ def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
         ]
         assert len(renderer.calls) == 1
         assert "image_url" not in completed.video_context[0]["keyframes"][0]
+        assert llm.seen_project["shortform_context"]["project_state"]["facts_from_user"] == {
+            "taste": "생딸기가 씹히는 상큼한 맛"
+        }
 
         original_recipe = completed.recipe
         refreshed_videos = [
@@ -312,6 +449,9 @@ def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
         assert [
             video["footage_url"] for video in revision.request_snapshot["videos"]
         ] == [video.footage_url for video in refreshed_videos]
+        assert revision.request_snapshot["_shortform_context"] == completed.request_snapshot[
+            "_shortform_context"
+        ]
         revised = service.execute(db, revision.id)
         assert revised.status == EditingRunStatus.COMPLETED.value
         assert revised.parent_run_id == completed.id
@@ -320,50 +460,35 @@ def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
         assert db.get(EditingRun, completed.id).recipe == original_recipe
 
 
-def test_editing_pipeline_returns_source_gap_without_rendering():
+def test_editing_pipeline_renders_ordered_fallback_after_source_gap():
     renderer = FakeRenderer()
+    llm = SourceGapFakeLLM()
     service = EditingAgentService(
-        llm=SourceGapFakeLLM(),
+        llm=llm,
         video_context_builder=FakeVideoContextBuilder(),
         renderer=renderer,
     )
     with SessionLocal() as db:
         _seed_video_editing_db(db)
+        _seed_shortform_session(db)
         run = service.create_run(db, _request())
         result = service.execute(db, run.id)
         payload = service.result(result)
 
-        assert result.status == EditingRunStatus.SOURCE_GAP.value
+        assert result.status == EditingRunStatus.COMPLETED.value
         assert payload.missing_scene_roles == ["RESULT"]
-        assert set(payload.available_options) == {
-            "USE_REDUCED_STRUCTURE",
-            "ADD_MORE_VIDEO",
-        }
-        assert payload.recipe is None
-        assert renderer.calls == []
-
-        refreshed = [
-            video.model_copy(update={"footage_url": f"https://cdn.example/new/{video.video_id}"})
-            for video in _request().videos
-        ]
-        refreshed.append(
-            refreshed[-1].model_copy(
-                update={
-                    "video_id": "take_503",
-                    "footage_url": "https://cdn.example/new/take_503",
-                    "shooting_scene_order": 3,
-                }
-            )
-        )
-        revision = service.create_revision(
-            db,
-            result.id,
-            EditingRevisionRequest(
-                revision_action="추가 촬영한 영상도 사용해줘",
-                videos=refreshed,
-            ),
-        )
-        assert len(revision.request_snapshot["videos"]) == 3
+        assert payload.available_options == []
+        assert payload.recipe is not None
+        assert [clip.video_id for clip in payload.recipe.timeline] == ["take_501", "take_502"]
+        assert all(clip.caption is not None for clip in payload.recipe.timeline)
+        assert payload.recipe.timeline[0].caption.style_id == "HOOK"
+        assert payload.recipe.timeline[0].caption.motion_id == "TYPEWRITER"
+        assert payload.recipe.timeline[1].caption.style_id == "CAPTION_EMPHASIS"
+        assert payload.recipe.timeline[1].caption.text == "생딸기가 씹히는 상큼한 맛"
+        assert "딸기 크림 라떼" in payload.recipe.cta.text
+        assert len(renderer.calls) == 1
+        assert llm.plan_count == 2
+        assert any("SOURCE_ROLE_MATCH_FALLBACK" in item for item in payload.warnings)
 
 
 @dataclass

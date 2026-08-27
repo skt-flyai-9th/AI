@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -40,8 +41,8 @@ def _contexts() -> list[VideoContext]:
 
 def _video_editing_db() -> dict:
     return {
-        "video_editing_db_id": "video_editing_db_014",
-        "video_editing_db_version": 3,
+        "editing_template_id": "video_editing_db_014",
+        "editing_template_version": 3,
         "editing_rules": {
             "min_cut_duration_ms": 300,
             "max_duration_sec": 30,
@@ -100,8 +101,11 @@ def test_reals_adapter_builds_multicut_assembly_and_engine_recipe():
     assert [effect.effect_id for effect in final.edit_recipe.segments[0].effects] == [
         "PUNCH_ZOOM"
     ]
-    caption, cta = final.edit_recipe.overlays
-    assert (caption.start_ms, caption.end_ms) == (0, 1500)
+    caption, reveal_caption, cta = final.edit_recipe.overlays
+    assert (caption.start_ms, caption.end_ms, caption.style_id) == (0, 1500, "HOOK")
+    assert caption.motion_id == "TYPEWRITER"
+    assert reveal_caption.style_id == "CAPTION_EMPHASIS"
+    assert reveal_caption.motion_id == "POP"
     assert (cta.start_ms, cta.end_ms, cta.style_id) == (2000, 4000, "CTA_BOX")
 
 
@@ -170,6 +174,94 @@ def test_validator_returns_structured_issues_from_reals_registry():
     capabilities = validator.registry.llm_capabilities()
     assert set(capabilities["effects"]) == validator.registry.creative_effect_ids
     assert capabilities["max_caption_chars"] == 40
+    assert "TYPEWRITER" in capabilities["caption_motion_ids"]
+
+
+def test_validator_rejects_promotional_video_without_regular_captions():
+    recipe = _recipe().model_copy(deep=True)
+    for clip in recipe.timeline:
+        clip.caption = None
+    validator = EditRecipeValidator()
+
+    issues = validator.validate(
+        recipe,
+        selected_shortform=_request().selected_shortform,
+        video_editing_db=_video_editing_db(),
+        video_contexts=_contexts(),
+        project=_request().project.model_dump(mode="json"),
+    )
+
+    codes = {issue.code for issue in issues}
+    assert "PROMOTIONAL_CAPTIONS_MISSING" in codes
+    assert "PROMOTIONAL_HOOK_MISSING" in codes
+    assert "PROMOTIONAL_REVEAL_CAPTION_MISSING" in codes
+
+
+def test_validator_rejects_typewriter_without_animation_hold_time():
+    recipe = _recipe().model_copy(deep=True)
+    recipe.timeline[0].caption.end_ms = 500
+    validator = EditRecipeValidator()
+
+    issues = validator.validate(
+        recipe,
+        selected_shortform=_request().selected_shortform,
+        video_editing_db=_video_editing_db(),
+        video_contexts=_contexts(),
+        project=_request().project.model_dump(mode="json"),
+    )
+
+    assert any(issue.code == "TYPEWRITER_CAPTION_TOO_SHORT" for issue in issues)
+
+
+def test_typewriter_ass_reveals_complete_korean_characters():
+    engine_root = Path(__file__).resolve().parents[1] / "reals-video-engine"
+    if str(engine_root) not in sys.path:
+        sys.path.insert(0, str(engine_root))
+
+    from reals_edit_engine.contracts import (
+        FontWeight,
+        MotionId,
+        Overlay,
+        OverlayType,
+        PlacementId,
+    )
+    from reals_edit_engine.subtitle_layout import PlacedOverlay, _graphemes, build_ass
+
+    assert _graphemes("가") == ["가"]
+    overlay = Overlay(
+        overlay_id="ov_typewriter",
+        produced_segment_id="ps_001",
+        overlay_type=OverlayType.CAPTION,
+        text_content="홍대 맛집",
+        style_id="HOOK",
+        start_ms=0,
+        end_ms=1500,
+        placement_id=PlacementId.UPPER_SAFE,
+        motion_id=MotionId.TYPEWRITER,
+        font_weight=FontWeight.BOLD,
+    )
+    placed = PlacedOverlay(
+        overlay=overlay,
+        out_start_ms=0,
+        out_end_ms=1500,
+        x=540,
+        y=400,
+        font_px=92,
+        lines=["홍대 맛집"],
+    )
+
+    class StubFontRegistry:
+        @staticmethod
+        def resolve_font(_font_asset_id: str, _weight: str) -> dict[str, object]:
+            return {"ass_family": "Pretendard", "ass_bold": -1}
+
+    ass = build_ass([placed], StubFontRegistry())
+    dialogues = [line for line in ass.splitlines() if line.startswith("Dialogue:")]
+
+    assert len(dialogues) == 4
+    assert "0:00:00.00,0:00:00.08" in dialogues[0]
+    assert "{\\alpha&HFF&\\3a&HFF&}" in dialogues[0]
+    assert dialogues[-1].endswith("홍대 맛집")
 
 
 def test_free_tier_profile_limits_duration_and_disables_heavy_effect():

@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.agents.shortform.llm import ShortformLLMError
 from app.agents.shortform.service import ShortformAgentService, get_shortform_agent_service
 from app.agents.shortform.types import (
+    DecisionOption,
     DecisionPromotionSubject,
     StateUpdates,
     ShortformTurnDecision,
@@ -13,7 +14,7 @@ from app.db.session import SessionLocal
 from app.main import app
 from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.models.shortform_session import ShortformSession
-from app.schemas.shortform import ShortformAction
+from app.schemas.shortform import PromotionCategory, ShortformAction
 
 
 class FakeShortformLLM:
@@ -24,7 +25,7 @@ class FakeShortformLLM:
                 "이렇게 이해했어요. 딸기 크림 라떼 판매를 늘리고, 10분 안에 얼굴 없이 촬영할게요."
             ),
             state_updates=StateUpdates(
-                promotion_category="MENU",
+                promotion_category="menu",
                 promotion_subject=DecisionPromotionSubject(
                     type="MENU",
                     name="딸기 크림 라떼",
@@ -65,6 +66,39 @@ class FailingRecommendationLLM(FakeShortformLLM):
         )
 
 
+class MultiQuestionLLM(FakeShortformLLM):
+    def decide_turn(self, **kwargs) -> ShortformTurnDecision:
+        return ShortformTurnDecision(
+            action=ShortformAction.ASK,
+            assistant_message=(
+                "메뉴 홍보를 원하시는군요. 어떤 메뉴를 홍보할까요? "
+                "촬영 시간은 얼마나 되나요?"
+            ),
+            state_updates=StateUpdates(
+                promotion_category=None,
+                promotion_subject=None,
+                promotion_objective=None,
+                filming_time=None,
+                face_exposure=None,
+                creative_preferences=[],
+                secondary_information=[],
+                facts_from_user=[],
+            ),
+            options=[
+                DecisionOption(id="review", label="후기·신뢰·전문성"),
+                DecisionOption(id="trust", label="신뢰 높이기"),
+            ],
+            missing_required_fields=[
+                "promotion_subject",
+                "promotion_objective",
+                "filming_time",
+                "face_exposure",
+            ],
+            conflicts=[],
+            ready_for_confirmation=False,
+        )
+
+
 def _store_context() -> dict:
     return {
         "store_context": {
@@ -97,8 +131,11 @@ def _seed_video_editing_db(
     template_id: str,
     *,
     title: str,
+    version: int = 1,
+    trend_ids: list[str] | None = None,
     requires_face: bool = False,
     metadata_overrides: dict | None = None,
+    evidence_summary: dict | None = None,
 ) -> None:
     with SessionLocal() as db:
         recommendation_metadata = {
@@ -117,7 +154,7 @@ def _seed_video_editing_db(
         db.add(
             VideoEditingDBRecord(
                 template_id=template_id,
-                version=1,
+                version=version,
                 status="ACTIVE",
                 name=title,
                 recommendation_title=title,
@@ -136,10 +173,16 @@ def _seed_video_editing_db(
                             "target_duration_sec": 3,
                         }
                     ],
-                    "tasks": [],
+                    "tasks": [
+                        {
+                            "task_order": 1,
+                            "description": "완성된 메뉴를 화면 중앙에 촬영합니다.",
+                        }
+                    ],
                 },
                 editing_rules={},
-                trend_ids=[],
+                trend_ids=trend_ids or [],
+                evidence_summary=evidence_summary or {},
             )
         )
         db.commit()
@@ -187,8 +230,8 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
         assert recommend.status_code == 200
         first = recommend.json()["recommendation"]
         assert recommend.json()["action"] == "RECOMMEND"
-        assert first["video_editing_db_id"] == "video_editing_db_014"
-        assert first["video_editing_db_id"] != "face_only"
+        assert first["editing_template_id"] == "video_editing_db_014"
+        assert first["editing_template_id"] != "face_only"
 
         next_response = client.post(
             f"/api/v1/shortform-sessions/{session_id}/recommendations/next",
@@ -197,19 +240,33 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
         )
         assert next_response.status_code == 200
         second = next_response.json()["recommendation"]
-        assert second["video_editing_db_id"] == "video_editing_db_028"
-        assert next_response.json()["shown_video_editing_db_ids"] == [
+        assert second["editing_template_id"] == "video_editing_db_028"
+        assert next_response.json()["shown_template_ids"] == [
             "video_editing_db_014",
             "video_editing_db_028",
         ]
 
         guide = client.get(
-            "/api/v1/video-editing-db/video_editing_db_028/versions/1/shooting-guide",
+            "/api/v1/editing-templates/video_editing_db_028/versions/1/shooting-guide",
             headers=auth_headers,
         )
         assert guide.status_code == 200
-        assert guide.json()["video_editing_db_id"] == "video_editing_db_028"
+        assert guide.json()["template_id"] == "video_editing_db_028"
         assert guide.json()["scenes"][0]["scene_order"] == 1
+        assert guide.json()["tasks"] == [
+            {
+                "display_order": 1,
+                "task_title": "완성된 메뉴를 화면 중앙에 촬영합니다.",
+                "scene_index": 0,
+                "guide": {
+                    "instructions": ["완성된 메뉴를 화면 중앙에 촬영합니다."],
+                    "start_ms": 0,
+                    "end_ms": 3000,
+                },
+            }
+        ]
+        assert "task_type" not in guide.json()["tasks"][0]
+        assert "guide_type" not in guide.json()["tasks"][0]["guide"]
 
         deleted = client.delete(
             f"/api/v1/shortform-sessions/{session_id}",
@@ -220,9 +277,155 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
         app.dependency_overrides.pop(get_shortform_agent_service, None)
 
 
+def test_shooting_guide_exposes_reference_video_interval_ms(client, auth_headers):
+    _seed_video_editing_db(
+        "dance_reference",
+        title="안무 참고 영상",
+        evidence_summary={
+            "video_insights": [
+                {
+                    "segments": [
+                        {
+                            "sequence": 1,
+                            "start_sec": 1.8,
+                            "end_sec": 4.3,
+                            "scene_role": "HOOK",
+                        }
+                    ]
+                }
+            ]
+        },
+    )
+
+    response = client.get(
+        "/api/v1/editing-templates/dance_reference/versions/1/shooting-guide",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["tasks"][0]["guide"] == {
+        "instructions": ["완성된 메뉴를 화면 중앙에 촬영합니다."],
+        "start_ms": 1800,
+        "end_ms": 4300,
+    }
+
+
+def test_shortform_promotion_guide_exposes_only_v21_categories(client, auth_headers):
+    fake_service = ShortformAgentService(llm=FakeShortformLLM())
+    app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
+    try:
+        created = client.post(
+            "/api/v1/shortform-sessions",
+            headers=auth_headers,
+            json=_store_context(),
+        )
+        assert created.status_code == 200
+        body = created.json()
+        assert [item["id"] for item in body["options"]] == [
+            "PROMOTION_GUIDE",
+            "FREE_INPUT",
+        ]
+        assert body["project_state"]["current_question"] == "오늘 어떤 영상을 찍을까요?"
+
+        response = client.post(
+            f"/api/v1/shortform-sessions/{body['session_id']}/turns",
+            headers=auth_headers,
+            json={"input": {"type": "OPTION", "option_id": "PROMOTION_GUIDE"}},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["assistant_message"] == "무엇을 홍보하고 싶으세요?"
+        assert payload["project_state"]["entry_mode"] == "promotion_guide"
+        assert [item["id"] for item in payload["options"]] == [
+            "MENU",
+            "SPACE",
+            "EVENT",
+        ]
+        assert [item["label"] for item in payload["options"]] == [
+            "메뉴",
+            "가게 공간·분위기",
+            "이벤트·혜택·할인",
+        ]
+        assert {item.value for item in PromotionCategory} == {"menu", "space", "event"}
+    finally:
+        app.dependency_overrides.pop(get_shortform_agent_service, None)
+
+
+def test_shortform_filters_removed_categories_and_stores_one_question(
+    client, auth_headers
+):
+    fake_service = ShortformAgentService(llm=MultiQuestionLLM())
+    app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
+    try:
+        created = client.post(
+            "/api/v1/shortform-sessions",
+            headers=auth_headers,
+            json=_store_context(),
+        )
+        session_id = created.json()["session_id"]
+        response = client.post(
+            f"/api/v1/shortform-sessions/{session_id}/turns",
+            headers=auth_headers,
+            json={"input": {"type": "TEXT", "text": "메뉴를 홍보하고 싶어요"}},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["assistant_message"].count("?") == 1
+        assert payload["project_state"]["current_question"].count("?") == 1
+        assert payload["options"] == [
+            {"id": "trust", "label": "신뢰 높이기"}
+        ]
+
+        with SessionLocal() as db:
+            session = db.get(ShortformSession, session_id)
+            assert session is not None
+            assert session.conversation[-1]["content"] == payload["assistant_message"]
+    finally:
+        app.dependency_overrides.pop(get_shortform_agent_service, None)
+
+
 def test_shortform_session_requires_internal_api_key(client):
     response = client.post("/api/v1/shortform-sessions", json=_store_context())
     assert response.status_code == 401
+
+
+def test_shooting_guide_accepts_challenge_id_alias(client, auth_headers):
+    _seed_video_editing_db(
+        "gt_cafe_recommendation",
+        title="카페 추천 리뷰 릴스",
+        version=2,
+        trend_ids=["cafe_recommendation_reels"],
+    )
+
+    response = client.get(
+        "/api/v1/editing-templates/cafe_recommendation_reels/versions/1/shooting-guide",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["template_id"] == "gt_cafe_recommendation"
+    assert response.json()["version"] == 2
+
+
+def test_openapi_preserves_live_legacy_backend_contract(client):
+    schema = client.get("/openapi.json").json()
+    paths = schema["paths"]
+    assert "/api/v1/editing-templates/{template_id}/versions/{version}/shooting-guide" in paths
+    assert not any(path.startswith("/api/v1/video-editing-db/") for path in paths)
+
+    components = schema["components"]["schemas"]
+    challenge_properties = components["ChallengeRead"]["properties"]
+    assert "editing_template_id" in challenge_properties
+    assert "editing_template_version" in challenge_properties
+
+    for name in ("ShortformRecommendation", "SelectedShortform", "EditRecipe"):
+        properties = components[name]["properties"]
+        assert "editing_template_id" in properties
+        assert "editing_template_version" in properties
+        assert "video_editing_db_id" not in properties
+        assert "video_editing_db_version" not in properties
 
 
 def test_next_recommendation_recycles_only_record_when_no_alternative(client, auth_headers):
@@ -257,7 +460,7 @@ def test_next_recommendation_recycles_only_record_when_no_alternative(client, au
         )
         assert next_response.status_code == 200
         replacement = next_response.json()["recommendation"]
-        assert replacement["video_editing_db_id"] == "only_db_record"
+        assert replacement["editing_template_id"] == "only_db_record"
         assert replacement["recommendation_id"] != recommendation_id
 
         with SessionLocal() as db:
@@ -295,7 +498,7 @@ def test_shortform_recommendation_bootstraps_packaged_database(client, auth_head
         )
         assert response.status_code == 200
         assert response.json()["action"] == "RECOMMEND"
-        assert response.json()["recommendation"]["video_editing_db_id"] in {
+        assert response.json()["recommendation"]["editing_template_id"] in {
             "gt_cafe_recommendation_reels",
             "gt_jujutsu_transition",
             "gt_otsukare_summer",
@@ -341,7 +544,7 @@ def test_shortform_recommends_even_when_every_constraint_mismatches(client, auth
         assert response.status_code == 200
         assert response.json()["action"] == "RECOMMEND"
         assert (
-            response.json()["recommendation"]["video_editing_db_id"]
+            response.json()["recommendation"]["editing_template_id"]
             == "face_required_long_template"
         )
     finally:
@@ -373,7 +576,7 @@ def test_shortform_recommendation_uses_stable_fallback_when_selector_fails(clien
 
         assert response.status_code == 200
         recommendation = response.json()["recommendation"]
-        assert recommendation["video_editing_db_id"] == "fallback_template"
+        assert recommendation["editing_template_id"] == "fallback_template"
         assert recommendation["title"] == "항상 반환되는 추천"
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)

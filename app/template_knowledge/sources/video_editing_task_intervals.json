@@ -1,0 +1,152 @@
+{
+  "format_version": 1,
+  "source": {
+    "filename": "영상편집DB.xlsx",
+    "bundled_filename": "영상편집DB_원본구간.xlsx",
+    "sha256": "0EE2350B66F9B878F294B65914DC0EFF67725758CE248869B6560FD5176FE004",
+    "sheet": "03_GUIDE_TEMPLATES",
+    "range": "A5:W19"
+  },
+  "intervals": [
+    {
+      "challenge_id": "jujutsu_transition",
+      "display_order": 1,
+      "start_ms": 0,
+      "end_ms": 3433,
+      "task_title": "첫 번째 손짓 변환 · 디저트와 음료 등장",
+      "scene_role": "TRANSFORM_DEMO_A",
+      "instructions": ["노란 상의 인물이 빈 테이블 앞에서 손가락·손짓을 만들고 모션 피크 직후 실제 디저트와 음료 2잔을 공개한 뒤 결과를 유지"],
+      "source_row_number": 5
+    },
+    {
+      "challenge_id": "jujutsu_transition",
+      "display_order": 2,
+      "start_ms": 3433,
+      "end_ms": 5800,
+      "task_title": "두 번째 팔 스윕 변환 · 붉은 음료 공개",
+      "scene_role": "TRANSFORM_DEMO_B",
+      "instructions": ["흰 상의 인물이 팔로 화면을 가로질러 스윕하고 같은 자리에서 실제 보조 메뉴가 등장한 뒤 짧게 가까워지는 구도를 유지"],
+      "source_row_number": 6
+    },
+    {
+      "challenge_id": "jujutsu_transition",
+      "display_order": 3,
+      "start_ms": 5800,
+      "end_ms": 9300,
+      "task_title": "세 번째 양손 변환 · 피자 공개",
+      "scene_role": "TRANSFORM_DEMO_C",
+      "instructions": ["양손을 모았다가 테이블 쪽으로 여는 동작을 유지하고 손이 열리는 순간 실제 세 번째 메뉴가 나타난 뒤 결과를 충분히 보여줌"],
+      "source_row_number": 7
+    },
+    {
+      "challenge_id": "otsukare_summer_challenge",
+      "display_order": 1,
+      "start_ms": 0,
+      "end_ms": 467,
+      "task_title": "오버헤드 V 포즈 훅",
+      "scene_role": "DANCE_OVERHEAD_HOOK",
+      "instructions": ["한 명의 출연자가 오버헤드 근접 구도에서 V 포즈와 표정으로 시작하고 즉시 메인 안무로 연결"],
+      "source_row_number": 9
+    },
+    {
+      "challenge_id": "otsukare_summer_challenge",
+      "display_order": 2,
+      "start_ms": 467,
+      "end_ms": 3933,
+      "task_title": "와이드 안무 A → 오버헤드 포인트",
+      "scene_role": "DANCE_PHRASE_A",
+      "instructions": ["전신이 보이는 와이드 안무를 연속 수행한 뒤 같은 동작 흐름에서 카메라가 위쪽 가까운 포인트로 이동"],
+      "source_row_number": 10
+    },
+    {
+      "challenge_id": "otsukare_summer_challenge",
+      "display_order": 3,
+      "start_ms": 3933,
+      "end_ms": 7400,
+      "task_title": "와이드 안무 B → 오버헤드 포인트",
+      "scene_role": "DANCE_PHRASE_B",
+      "instructions": ["전신 와이드 안무를 이어가며 팔과 상체 제스처를 보여준 뒤 두 번째 오버헤드 포인트로 연결"],
+      "source_row_number": 11
+    },
+    {
+      "challenge_id": "otsukare_summer_challenge",
+      "display_order": 4,
+      "start_ms": 7400,
+      "end_ms": 10900,
+      "task_title": "와이드 안무 C → 마지막 오버헤드 전환",
+      "scene_role": "DANCE_PHRASE_C",
+      "instructions": ["세 번째 와이드 안무 프레이즈를 이어가고 카메라가 위쪽으로 이동하면서 마지막 포즈를 준비"],
+      "source_row_number": 12
+    },
+    {
+      "challenge_id": "otsukare_summer_challenge",
+      "display_order": 5,
+      "start_ms": 10900,
+      "end_ms": 11500,
+      "task_title": "오버헤드 근접 마지막 포즈",
+      "scene_role": "DANCE_FINAL_POSE",
+      "instructions": ["얼굴과 손동작이 가까워지는 오버헤드 포즈로 안무를 닫고 짧은 CTA를 안전 영역에 표시"],
+      "source_row_number": 13
+    },
+    {
+      "challenge_id": "cafe_recommendation_reels",
+      "display_order": 1,
+      "start_ms": 0,
+      "end_ms": 1250,
+      "task_title": "애정 카페 선언 · 제조 플래시 → 대표 메뉴",
+      "scene_role": "PERSONAL_HOOK",
+      "instructions": ["0.2~0.4초 제조/서빙 동작을 짧게 보여준 뒤 대표 메뉴 Hero로 전환해 1인칭 애정 추천으로 시작"],
+      "source_row_number": 14
+    },
+    {
+      "challenge_id": "cafe_recommendation_reels",
+      "display_order": 2,
+      "start_ms": 1250,
+      "end_ms": 4125,
+      "task_title": "사람/손이 있는 체험 컷 → 매장만의 뷰 증거",
+      "scene_role": "USP_PROOF",
+      "instructions": ["컵을 든 사람 또는 손·POV를 전경에 두고 공간을 즐기는 장면을 보여준 뒤, 차별점이 한눈에 보이는 와이드 뷰로 전환"],
+      "source_row_number": 15
+    },
+    {
+      "challenge_id": "cafe_recommendation_reels",
+      "display_order": 3,
+      "start_ms": 4125,
+      "end_ms": 7375,
+      "task_title": "시그니처 음료 한 장면 위 순차 메뉴 자막",
+      "scene_role": "MENU_PROOF_PRIMARY",
+      "instructions": ["대표 음료를 안정적으로 약 3초 유지하면서 향/맛 설명과 메뉴명을 3~4개의 짧은 자막 이벤트로 순차 교체"],
+      "source_row_number": 16
+    },
+    {
+      "challenge_id": "cafe_recommendation_reels",
+      "display_order": 4,
+      "start_ms": 7375,
+      "end_ms": 9500,
+      "task_title": "제조 디테일 → 디저트/두 번째 메뉴 증거",
+      "scene_role": "MENU_PROOF_SECONDARY",
+      "instructions": ["드립·푸어링·플레이팅 등 짧은 제조 동작을 보여준 뒤 디저트 또는 두 번째 대표 메뉴를 클로즈업"],
+      "source_row_number": 17
+    },
+    {
+      "challenge_id": "cafe_recommendation_reels",
+      "display_order": 5,
+      "start_ms": 9500,
+      "end_ms": 12250,
+      "task_title": "공간 분위기 → 매장명 → 질문형 CTA",
+      "scene_role": "STORE_REVEAL_CTA",
+      "instructions": ["빛·인테리어가 잘 보이는 공간 장면에서 분위기를 한 줄로 설명하고 매장명을 공개한 뒤, 마지막 음료 동작 위에 부드러운 질문 CTA를 표시"],
+      "source_row_number": 18
+    },
+    {
+      "challenge_id": "cafe_recommendation_reels",
+      "display_order": 6,
+      "start_ms": 12250,
+      "end_ms": 12583,
+      "task_title": "공간 배경 위 강한 추천 엔드카드",
+      "scene_role": "END_CARD",
+      "instructions": ["여백 있는 실제 공간 영상 위에 큰 2줄 추천 문구를 표시해 영상을 닫음. 참고 영상의 12.58초 이후 시작 장면 재등장은 루프 리셋으로 제외"],
+      "source_row_number": 19
+    }
+  ]
+}

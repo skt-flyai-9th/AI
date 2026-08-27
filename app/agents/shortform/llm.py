@@ -81,6 +81,13 @@ class OpenAIShortformLLM:
                 "Do not invent factual store/menu/event information.",
                 "When all four required fields are known, use CONFIRM rather than recommending immediately.",
                 "RECOMMEND is only valid after the brief has already been confirmed.",
+                "promotion_category may only be menu, space, or event.",
+                "Never offer person/brand, usage information, or review/trust/expertise as structured promotion categories.",
+                "Use OUT_OF_SCOPE for requests unrelated to supported shortform creation, then redirect with one question.",
+                "Do not include multiple questions in one turn.",
+                "If more information is missing, ask only one question and defer remaining questions.",
+                "Use this assistant_message format when action is ASK or any clarification-style action: "
+                "'[one-sentence summary] [one single question]'.",
                 "Option ids must be short semantic stable ids such as MENU, sales, within_10m, not_allowed, or a real menu_id.",
             ],
         }

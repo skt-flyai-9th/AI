@@ -2,7 +2,7 @@
 from __future__ import annotations
 import hashlib, json, pathlib
 
-ENGINE_VERSION = "reals-edit-engine/0.3.4"
+ENGINE_VERSION = "reals-edit-engine/0.3.5"
 
 
 class RegistryError(Exception):
@@ -61,6 +61,9 @@ class Registries:
 
     def style_ids_for(self, overlay_type: str) -> list[str]:
         return self.effect.get("overlay_types", {}).get(overlay_type, {}).get("style_ids", [])
+
+    def motion_ids_for(self, overlay_type: str) -> list[str]:
+        return self.effect.get("overlay_types", {}).get(overlay_type, {}).get("motion_ids", [])
 
     def sfx_intent_ids(self) -> list[str]:
         return self.effect.get("overlay_types", {}).get("SFX", {}).get("intent_ids", [])

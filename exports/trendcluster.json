@@ -1,27 +1,60 @@
 {
-  "generated_at": "2026-08-24T22:00:00.000Z",
+  "generated_at": "2026-08-24T22:00:00",
   "count": 3,
   "results": [
     {
       "id": "jujutsu_transition",
       "rank": 1,
       "name": "주술회전 트랜지션",
-      "representative_youtube_url": "https://www.youtube.com/shorts/Yc7ZjC0n7oY?si=p0vD4OMH9It_RBk_",
-      "guide_youtube_url": "https://www.youtube.com/shorts/Yc7ZjC0n7oY?si=p0vD4OMH9It_RBk_"
+      "category": "meme",
+      "representative_youtube_url": "https://www.youtube.com/shorts/02afQgwCDSc",
+      "guide_youtube_url": "https://www.youtube.com/shorts/02afQgwCDSc",
+      "format_type": "밈",
+      "expected_duration_sec": 13,
+      "shooting_difficulty": "중",
+      "requires_face": false,
+      "reference_cut_review": {
+        "status": "HUMAN_REVIEWED",
+        "expected_cut_count": 6,
+        "boundary_basis": [
+          "음식이나 음료가 이전 프레임에 없다가 갑자기 등장하면 별도 컷으로 분리",
+          "손동작, 화면 가림, 의상·구도 변경 전후의 프레임 불연속을 각각 컷으로 분리",
+          "의미가 같은 변신 장면이어도 물체·인물·구도가 연속되지 않으면 합치지 않음"
+        ]
+      }
     },
     {
       "id": "cafe_recommendation_reels",
       "rank": 2,
       "name": "카페 추천 리뷰 릴스",
+      "category": "food",
       "representative_youtube_url": "https://www.youtube.com/shorts/OWnLiuJU8Ks",
-      "guide_youtube_url": "https://www.youtube.com/shorts/OWnLiuJU8Ks"
+      "guide_youtube_url": "https://www.youtube.com/shorts/OWnLiuJU8Ks",
+      "format_type": "정보형",
+      "expected_duration_sec": 13,
+      "shooting_difficulty": "중",
+      "requires_face": false
     },
     {
       "id": "otsukare_summer_challenge",
       "rank": 3,
       "name": "오츠카레 썸머 챌린지",
+      "category": "challenge",
       "representative_youtube_url": "https://www.youtube.com/shorts/e-dU9yQfmik?si=fGCn4wuBsTEm2Q-p",
-      "guide_youtube_url": "https://www.youtube.com/shorts/e-dU9yQfmik?si=fGCn4wuBsTEm2Q-p"
+      "guide_youtube_url": "https://www.youtube.com/shorts/e-dU9yQfmik?si=fGCn4wuBsTEm2Q-p",
+      "format_type": "챌린지",
+      "expected_duration_sec": 13,
+      "shooting_difficulty": "중",
+      "requires_face": true,
+      "reference_cut_review": {
+        "status": "HUMAN_REVIEWED",
+        "expected_cut_count": 7,
+        "boundary_basis": [
+          "사람이 갑자기 사라지거나 다시 나타나는 프레임 불연속마다 별도 컷으로 분리",
+          "인물의 자세나 화면 위치가 연속 동작 없이 뚝 바뀌면 별도 컷으로 분리",
+          "같은 안무 구간이어도 점프컷을 하나의 연속 장면으로 합치지 않음"
+        ]
+      }
     }
   ]
 }

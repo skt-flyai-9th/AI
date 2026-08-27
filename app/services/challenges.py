@@ -5,7 +5,9 @@ from datetime import datetime
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
+from app.agents.challenge_ranking.trendcluster import get_video_format_metadata
 from app.models.challenge import Challenge
+from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.schemas.challenge import ChallengeRead, ChallengeUpdate, OverrideImportItem
 
 
@@ -16,7 +18,32 @@ def effective_rank_expression():
     )
 
 
-def to_read(challenge: Challenge) -> ChallengeRead:
+def active_template_refs(
+    db: Session,
+    challenge_ids: set[str],
+) -> dict[str, tuple[str, int]]:
+    if not challenge_ids:
+        return {}
+
+    rows = list(
+        db.scalars(
+            select(VideoEditingDBRecord)
+            .where(VideoEditingDBRecord.status == "ACTIVE")
+            .order_by(VideoEditingDBRecord.version.desc())
+        )
+    )
+    refs: dict[str, tuple[str, int]] = {}
+    for row in rows:
+        for trend_id in row.trend_ids or []:
+            if trend_id in challenge_ids:
+                refs.setdefault(trend_id, (row.template_id, row.version))
+    return refs
+
+
+def to_read(
+    challenge: Challenge,
+    template_ref: tuple[str, int] | None = None,
+) -> ChallengeRead:
     rank = challenge.override_rank if challenge.rank_overridden else challenge.automatic_rank
     name = challenge.override_name if challenge.name_overridden else challenge.automatic_name
     representative = (
@@ -29,12 +56,16 @@ def to_read(challenge: Challenge) -> ChallengeRead:
         if challenge.guide_video_overridden
         else challenge.automatic_guide_youtube_url
     )
+    format_metadata = get_video_format_metadata(challenge.id)
     return ChallengeRead(
         id=challenge.id,
         rank=rank,
         name=name,
         representative_youtube_url=representative,
         guide_youtube_url=guide,
+        **format_metadata,
+        editing_template_id=template_ref[0] if template_ref else None,
+        editing_template_version=template_ref[1] if template_ref else None,
         automatic_rank=challenge.automatic_rank,
         automatic_score=challenge.automatic_score,
         lifecycle=challenge.lifecycle,

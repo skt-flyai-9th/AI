@@ -1,420 +1,307 @@
-# FLY AI Service
+# REALS AI Service
 
-메인 백엔드와 **별도로 배포되는 독립 AI 서버**입니다. 모바일·웹 클라이언트가 이 서버를 직접 호출하는 구조가 아니라, 메인 백엔드가 내부 API로 AI 작업을 요청하고 JSON 결과를 받아 서비스 응답에 활용하는 구조를 전제로 합니다.
+REALS 앱의 숏폼 추천, 촬영 가이드, 영상 편집, 트렌드 데이터를 담당하는 독립 AI 서버입니다.
+
+프론트엔드가 이 서버를 직접 호출하지 않습니다. 앱 요청은 메인 백엔드를 거쳐 전달되며, 모든 내부 API는 `X-Internal-API-Key`로 보호됩니다.
 
 ```text
-Mobile / Web
+Mobile App
     ↓
 Main Backend
     ↓  X-Internal-API-Key
-FLY AI Service (this repository)
-    ↓
-Apify / Gemini / YouTube / NAVER API HUB
+REALS AI Service
+    ├─ Challenge Ranking Agent
+    ├─ Shortform Recommendation Agent
+    ├─ Editing Agent
+    ├─ Database Knowledge Manager
+    └─ REALS Renderer
 ```
 
-이 저장소는 여러 AI Agent를 독립 경계로 제공하는 서버입니다. 현재 `challenge-ranking`, `shortform`, `editing` 세 Agent를 사용할 수 있습니다. OpenAI를 사용하는 모든 Agent와 Database Knowledge Manager의 기본 모델은 `gpt-4.1-mini`로 통일합니다.
+현재 FastAPI 서비스 버전은 `1.6.0`입니다.
 
-두 데이터베이스를 함께 관리하는 `Database Knowledge Manager`도 구현되어 있습니다. 상권 근거를 GPT-4.1 mini로 비교해 `상권분석DB` 후보를 만들고, `trendcluster`의 대표 YouTube 영상을 Gemini가 직접 분석해 `영상편집DB` 후보를 만듭니다. 모든 후보는 diff와 결정론적 검증을 거치며 기본값에서는 사람 승인 후에만 새 ACTIVE 버전이 됩니다. 자세한 내용은 [`docs/DATABASE_KNOWLEDGE_MANAGER.md`](docs/DATABASE_KNOWLEDGE_MANAGER.md)를 참고합니다.
-
-Agent와 별도로, 검증된 GPU 기반 숏폼 렌더링 파이프라인은 [`reals-video-engine/`](reals-video-engine/)에 독립 모듈로 포함되어 있습니다.
+OpenAI를 사용하는 모든 Agent와 Database Knowledge Manager의 기본 모델은 `gpt-4.1-mini`로 통일합니다.
 
 ## 현재 구현 상태
 
-| Agent ID | 상태 | 역할 |
+| 영역 | 상태 | 현재 역할 |
 |---|---|---|
-| `challenge-ranking` | `AVAILABLE` | 국내 유행 챌린지 Top 100 분석, 대표영상·가이드영상 선정 |
-| `shortform` | `AVAILABLE` | 대화로 프로젝트 brief를 확정하고 호환 영상편집DB 버전 1개 추천 |
-| `editing` | `AVAILABLE` | 촬영 영상 컨텍스트 분석, EditRecipe 검증·수정, Renderer 실행 |
+| `challenge-ranking` | `AVAILABLE` | 승인된 트렌드 클러스터 제공, 외부 신호 기반 후보 분석 |
+| `shortform` | `AVAILABLE` | 대화로 프로젝트 조건을 수집하고 ACTIVE 영상편집DB 1개 추천 |
+| `editing` | `AVAILABLE` | 촬영 영상 분석, EditRecipe 생성·검증, 실제 MP4 렌더링 |
+| Database Knowledge Manager | `AVAILABLE` | 상권분석DB·영상편집DB 후보 생성, 검증, 승인, 버전 관리 |
+| REALS Renderer | `AVAILABLE` | FFmpeg 기반 세로형 숏폼 렌더링과 결과 QC |
 
-등록된 Agent는 다음 API에서 확인할 수 있습니다.
+운영 서버는 AWS EC2에서 Docker Compose로 실행합니다. 현재 CPU 운영 프로필은 2 vCPU / 8 GiB 환경을 기준으로 조정되어 있습니다.
 
-```http
-GET /api/v1/agents
-X-Internal-API-Key: <INTERNAL_API_KEY>
+## LangGraph 구조
+
+현재 `shortform`과 `editing` Agent의 제어 흐름은 LangGraph `StateGraph`로 구현되어 있습니다. LLM이 데이터베이스를 직접 변경하지 않고, 서비스 계층이 세션·실행 상태를 저장하며 LangGraph는 한 요청 안의 분기와 검증 흐름만 담당합니다.
+
+```mermaid
+flowchart LR
+    subgraph SF[Shortform Agent]
+        SF_START((START)) --> SF_ROUTE[route_start]
+        SF_ROUTE --> SF_MODE{mode}
+        SF_MODE -->|TURN| SF_TURN[decide_turn]
+        SF_MODE -->|RECOMMEND| SF_SELECT[select_video_editing_db]
+        SF_TURN --> SF_END((END))
+        SF_SELECT --> SF_END
+    end
+
+    subgraph ED[Editing Agent]
+        ED_START((START)) --> ED_PLAN[plan_recipe]
+        ED_PLAN --> ED_VALIDATE[validate_recipe]
+        ED_VALIDATE --> ED_RESULT{validation result}
+        ED_RESULT -->|passed| ED_END((END))
+        ED_RESULT -->|repairable| ED_REPAIR[repair_recipe]
+        ED_REPAIR --> ED_VALIDATE
+        ED_RESULT -->|attempts exhausted| ED_EXHAUSTED[mark_exhausted]
+        ED_EXHAUSTED --> ED_END
+    end
 ```
 
-새 Agent를 추가할 때의 구조와 규칙은 [`docs/ADDING_AN_AGENT.md`](docs/ADDING_AN_AGENT.md)를 참고합니다.
+- `app/agents/shortform/graph.py`: 대화 턴 판단과 영상편집DB 추천 경로 분리
+- `app/agents/editing/graph.py`: 레시피 계획, 결정론적 검증, 제한된 자동 수정 반복
+- PostgreSQL: 대화 세션, 편집 실행, 결과의 영속 상태 관리
+- Celery: 장시간 영상 분석·렌더 작업 실행
 
-## 숏폼 영상 편집 엔진
+LangGraph는 현재 필요한 결정 흐름에만 사용합니다. 챌린지 수집, DB 승인, FFmpeg 렌더링처럼 결정론적 서비스·배치 작업까지 불필요하게 그래프로 감싸지 않습니다.
 
-`reals-video-engine/`는 가이드 분석 결과와 촬영 영상을 받아 세로형 숏폼 MP4를 만드는 **독립 실행형 편집 엔진**입니다. `editing` Agent는 REALS registry 기반 preflight를 통과한 EditRecipe를 `reals-render-job-1.0` 계약으로 변환해 Renderer 서비스 경계로 전달하며, 엔진 내부에는 LLM을 두지 않습니다. 같은 registry manifest의 SHA-256을 AI와 Renderer 양쪽에서 검증해 지원 효과와 정책의 드리프트를 차단합니다.
+## 서비스 범위
+
+AI 서버가 담당하는 기능:
+
+- 트렌드 클러스터와 영상 포맷 데이터 제공
+- 대화형 숏폼 프로젝트 brief 수집
+- 프로젝트 조건에 맞는 영상편집DB 추천
+- 템플릿 버전별 촬영 가이드와 촬영 태스크 제공
+- 촬영 영상 프레임 분석과 편집 레시피 생성
+- REALS Renderer를 통한 최종 MP4 생성
+- 게시 문구, 해시태그, CTA 생성
+- 상권분석DB와 영상편집DB의 버전·후보·승인 관리
+- 비동기 작업 상태와 결과 저장
+
+AI 서버가 담당하지 않는 기능:
+
+- 사용자 로그인과 회원 관리
+- 앱 화면과 네비게이션
+- 매장·프로젝트·촬영 파일의 메인 도메인 관리
+- SNS 계정 로그인 또는 자동 게시
+- 프론트엔드와의 직접 통신
+
+## 대화형 숏폼 추천
+
+숏폼 추천 Agent는 `app/agents/shortform/context.md`의 제품 컨텍스트 v2.1을 사용합니다. 후보 부족 처리만 v1.2 정책을 유지합니다.
+
+현재 대화 정책:
+
+- 첫 진입은 `홍보하고 싶은 게 있어요`, `직접 입력하기` 2개
+- 구조화 카테고리는 `메뉴`, `가게 공간·분위기`, `이벤트·혜택·할인` 3개
+- `사람·브랜드 이야기`, `이용 정보`, `후기·신뢰·전문성`은 구조화 선택지에서 제외
+- 한 응답에서는 질문을 하나만 제시
+- 필수 정보가 충족되기 전에는 추천하지 않음
+- 추천 결과는 한 번에 1개
+- 다시 추천할 때는 이미 보여준 템플릿을 제외하고 다음 1개 제공
+- 확인되지 않은 메뉴, 가격, 시설, 이벤트 정보를 생성하지 않음
+
+대화 흐름:
 
 ```text
-Guide Analysis / Orchestrator
-  ↓ EditRecipe + 촬영 클립
-REALS Video Edit Engine
-  ├─ CUT_ASSEMBLY: 모션·품질 분석 → 순서 보존 트림·결합
-  └─ FINAL_RENDER: Avoid Map → 자막·SFX → FFmpeg → Post-render QC
-  ↓
-MP4 + Cut/Render Manifest + QC 결과
+세션 생성
+  → 홍보 대상·목적·촬영 시간·얼굴 노출 수집
+  → 사실 충돌 확인
+  → 사용자 최종 확인
+  → ACTIVE 영상편집DB 1개 추천
+  → 촬영 가이드 조회
 ```
 
-엔진의 책임:
+## 촬영 가이드
 
-1. 입력 영상 정규화와 테스트용 컷 자동 준비
-2. 촬영 순서를 보존한 컷 분석·트림·결합
-3. SAM 3.1, MediaPipe, YOLO, PP-OCR 기반 보호 영역 분석
-4. 자막·SFX 배치와 1080x1920 H.264/AAC 렌더
-5. 코덱·해상도·길이·블랙 프레임·오디오 Post-render QC
+추천된 템플릿의 정확한 버전으로 촬영 가이드를 조회합니다.
 
-### 현재 검증 상태
-
-| 항목 | 결과 |
-|---|---|
-| GPU 환경 | RTX 4090 Laptop GPU 16GB |
-| SAM 3.1 | 실영상 `person` 분할 및 엔진 통합 통과 |
-| VRAM | 추론 최대 약 5.1GB, 종료 후 정상 해제 |
-| 엔진 E2E | SAM 폴백 없이 최종 렌더 성공 |
-| 출력 QC | 11개 항목 전체 통과 |
-
-빠른 실행:
-
-```bash
-cd reals-video-engine
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python tools/fetch_models.py
-python demo/run_gpu_stack.py --video sample.mp4
+```http
+GET /api/v1/editing-templates/{template_id}/versions/{version}/shooting-guide
+X-Internal-API-Key: <INTERNAL_API_KEY>
 ```
 
-GPU 설치, Hugging Face 승인·로그인, 고정 의존성 및 운영 정책은 [엔진 README](reals-video-engine/README.md)를 참고합니다. 모델 가중치, 사용자 영상, 실행 결과, 토큰은 저장소에 커밋하지 않습니다.
+응답에는 예상 촬영 시간, 필요 인원, 준비물, 난이도, 장면 정보와 촬영 태스크가 포함됩니다. 태스크 묶음은 `영상편집DB_원본구간.xlsx`에서 확정된 원본 구간을 기준으로 생성합니다.
 
-## 이 서버가 담당하는 범위
-
-AI 서버의 책임:
-
-1. 메인 백엔드의 랭킹 분석 요청 수신
-2. Instagram/Apify 기반 후보 자동 발견
-3. Gemini 기반 챌린지 군집화와 false positive 제거
-4. NAVER API HUB 기반 국내 유행 검증
-5. YouTube 대표영상·가이드영상 선정
-6. 작업 상태와 결과를 PostgreSQL에 저장
-7. 메인 백엔드에 JSON API로 결과 제공
-8. 상권분석DB/영상편집DB의 버전 후보·검증·승인·활성화 관리
-
-AI 서버가 담당하지 않는 범위:
-
-- 사용자 로그인·회원 관리
-- 앱용 비즈니스 API
-- 매장·프로젝트·촬영 데이터
-- 프론트엔드 화면
-- 메인 백엔드 DB의 도메인 모델
-- 앱 클라이언트와의 직접 통신
-
-AI 서버의 PostgreSQL은 분석 작업, 관측 데이터, 랭킹 스냅샷, 수동 override를 관리하기 위한 내부 저장소입니다. 메인 백엔드는 필요하면 최종 결과만 자체 DB에 복사하거나 캐시합니다.
-
-## 챌린지 랭킹 Agent
+## 영상 편집 파이프라인
 
 ```text
-Apify Instagram popular reels
-  → hashtag/audio 자동 확장
-  → Gemini 후보 군집화·오탐 제거
-  → Instagram 확산 재검증
-  → NAVER API HUB 국내성 검증
-  → provisional Top 100
-  → YouTube 후보 수집
-  → 대표영상/가이드영상 별도 선정
-  → PostgreSQL 저장
-  → FastAPI JSON API
+촬영 영상 업로드 URL
+  → ffprobe 메타데이터 확인
+  → 프레임 샘플 추출
+  → GPT-4.1 mini 기반 장면·동작 분석
+  → 템플릿 근거와 촬영 순서 매칭
+  → EditRecipe 생성
+  → REALS registry 기반 검증·제한 수정
+  → Renderer 호출
+  → FFmpeg 렌더링과 QC
+  → MP4 URL + 게시 문구 반환
 ```
 
-플랫폼 역할은 다음과 같이 분리합니다.
+현재 운영 제한:
 
-- **Instagram/Apify**: 챌린지 후보 발견 및 실제 참여·확산 검증
-- **Gemini**: 서로 다른 표현·음원·해시태그·영상 패턴 군집화, false positive 제거
-- **NAVER API HUB**: 검색 트렌드·블로그·뉴스를 통한 국내 유행 여부 검증
-- **YouTube**: 교차 플랫폼 확산 검증과 대표·가이드 영상 제공
+| 항목 | 기본값 |
+|---|---:|
+| 실행당 최대 영상 | 6개 |
+| 영상 1개 최대 길이 | 30초 |
+| 최종 영상 최대 길이 | 15초 |
+| Worker 동시성 | 1 |
+| Renderer 타임아웃 | 1,800초 |
+| 비디오 소스 | 영상만 지원 |
+| 음원 | 렌더링에 삽입하지 않고 게시 플랫폼에서 추가 |
 
-TikTok API는 사용하지 않습니다.
+### `SOURCE_GAP` 대응
 
-## 메인 백엔드 연동 요약
+장면 역할을 완전히 매칭하지 못해도 편집 작업을 결과 없이 끝내지 않습니다.
 
-모든 내부 API 호출에는 다음 헤더를 사용합니다.
+```text
+SOURCE_GAP 감지
+  → USE_REDUCED_STRUCTURE로 자동 재계획
+  → 재계획 실패 또는 다시 SOURCE_GAP
+  → shooting_scene_order 기반 결정론적 기본 레시피 생성
+  → 검증
+  → 렌더링
+  → COMPLETED
+```
+
+순서 기반 폴백은 업로드 영상을 촬영 순서대로 정렬하고 각 영상에서 최대 3초를 사용해 단순 컷 편집을 만듭니다. 매칭되지 않은 역할은 `missing_scene_roles`와 `warnings`에 진단 정보로 남지만 렌더링을 중단하지 않습니다.
+
+파일 손상, 최소 컷 길이 미달, 런타임 의존성 장애, Renderer 오류처럼 실제로 결과 생성이 불가능한 경우에는 `FAILED`로 종료합니다. 작업이 `RUNNING`에 영구적으로 남지 않도록 고아 작업 복구도 활성화되어 있습니다.
+
+## 주요 API
+
+모든 `/api/v1` API 요청에는 내부 인증 헤더가 필요합니다.
 
 ```http
 X-Internal-API-Key: <INTERNAL_API_KEY>
 ```
 
-초기 버전의 `X-Admin-Token`도 호환을 위해 당분간 지원하지만, 신규 연동에서는 사용하지 않습니다.
+루트 호환 헬스 엔드포인트(`/health`, `/health/live`, `/health/ready`)는 인증 없이 사용할 수 있습니다.
 
-### 1. 랭킹 분석 시작
+### 시스템
 
-```http
-POST /api/v1/ranking-runs
-X-Internal-API-Key: <INTERNAL_API_KEY>
-```
+| Method | Endpoint | 설명 |
+|---|---|---|
+| GET | `/` | 서비스 정보와 주요 링크 |
+| GET | `/api/v1/health/live` | API 프로세스 상태 |
+| GET | `/api/v1/health/ready` | Agent, API 키, 편집 런타임 준비 상태 |
+| GET | `/api/v1/agents` | 등록된 Agent 목록 |
 
-응답은 `202 Accepted`입니다.
+### 트렌드
 
-```json
-{
-  "run_id": "6cd61210-7a14-4dd0-a85c-364dd24a61a5",
-  "status": "QUEUED",
-  "task_id": "f1018f72-c4dc-4e48-89d0-f9678a935845"
-}
-```
+| Method | Endpoint | 설명 |
+|---|---|---|
+| POST | `/api/v1/ranking-runs` | 비동기 랭킹 분석 시작 |
+| GET | `/api/v1/ranking-runs/{run_id}` | 분석 진행 상태 |
+| GET | `/api/v1/ranking-runs/{run_id}/result` | 실행 시점 고정 결과 |
+| GET | `/api/v1/challenges?limit=100` | 현재 승인된 트렌드 결과 |
+| GET | `/api/v1/challenges/{id}` | 트렌드 상세 |
+| PATCH | `/api/v1/challenges/{id}` | 운영 override 적용 |
 
-한 번의 POST는 한 번의 분석 작업을 생성합니다. 현재 webhook/callback은 구현되어 있지 않으므로 메인 백엔드가 상태 API를 polling합니다.
+### 숏폼 추천과 촬영
 
-### 2. 작업 상태 확인
+| Method | Endpoint | 설명 |
+|---|---|---|
+| POST | `/api/v1/shortform-sessions` | 추천 대화 세션 생성 |
+| POST | `/api/v1/shortform-sessions/{id}/turns` | TEXT·OPTION·CONFIRM 입력 처리 |
+| POST | `/api/v1/shortform-sessions/{id}/recommendations/next` | 다음 추천 1개 조회 |
+| DELETE | `/api/v1/shortform-sessions/{id}` | 대화 세션 삭제 |
+| GET | `/api/v1/editing-templates/{id}/versions/{version}/shooting-guide` | 촬영 가이드 조회 |
 
-```http
-GET /api/v1/ranking-runs/{run_id}
-X-Internal-API-Key: <INTERNAL_API_KEY>
-```
+### 영상 편집
 
-```json
-{
-  "id": "6cd61210-7a14-4dd0-a85c-364dd24a61a5",
-  "status": "RUNNING",
-  "stage": "COLLECTING_AND_ANALYZING",
-  "progress": 40,
-  "celery_task_id": "f1018f72-c4dc-4e48-89d0-f9678a935845",
-  "error_message": null,
-  "warnings": [],
-  "source_status": {},
-  "created_at": "2026-08-23T08:00:00Z",
-  "started_at": "2026-08-23T08:00:01Z",
-  "finished_at": null
-}
-```
+| Method | Endpoint | 설명 |
+|---|---|---|
+| POST | `/api/v1/editing-runs` | 비동기 편집 실행 생성 |
+| GET | `/api/v1/editing-runs/{id}` | 단계와 진행률 조회 |
+| GET | `/api/v1/editing-runs/{id}/result` | 레시피·영상·게시 문구 조회 |
+| POST | `/api/v1/editing-runs/{id}/revisions` | 기존 결과 기반 수정 실행 생성 |
 
-가능한 최종 상태:
+### Database Knowledge Manager
 
-- `COMPLETED`
-- `FAILED`
+| Method | Endpoint | 설명 |
+|---|---|---|
+| GET | `/api/v1/database-knowledge/sources` | 번들 원본 데이터 조회 |
+| GET | `/api/v1/database-knowledge/databases` | 활성 DB 버전 조회 |
+| GET | `/api/v1/database-knowledge/candidates` | 변경 후보와 검증 상태 조회 |
+| POST | `/api/v1/database-knowledge/trade-area-db/candidates` | 상권분석DB 후보 생성 |
+| POST | `/api/v1/database-knowledge/video-editing-db/candidates` | 영상편집DB 후보 생성 |
+| POST | `/api/v1/database-knowledge/candidates/{id}/validate` | 후보 검증 |
+| POST | `/api/v1/database-knowledge/candidates/{id}/approve` | 후보 승인·적용 |
+| POST | `/api/v1/database-knowledge/candidates/{id}/reject` | 후보 거절 |
+| GET | `/api/v1/database-knowledge/runs/{id}` | 후보 생성 작업 상태 |
+| GET | `/api/v1/database-knowledge/runs/{id}/result` | 후보 생성 작업 결과 |
 
-외부 API 하나가 일부 실패해도 전체 실행이 가능한 경우 `COMPLETED`로 끝나며 `warnings`와 `source_status`에 degraded 원인이 기록됩니다.
+전체 요청·응답 계약은 [백엔드 연동 문서](docs/BACKEND_INTEGRATION.md)를 참고하세요.
 
-### 3. 해당 실행의 고정 결과 조회
-
-```http
-GET /api/v1/ranking-runs/{run_id}/result?limit=100
-X-Internal-API-Key: <INTERNAL_API_KEY>
-```
-
-이 엔드포인트는 해당 실행 시점의 **자동 분석 결과 스냅샷**을 반환합니다. 다른 배치나 수동 수정의 영향을 받지 않으므로 백엔드가 자신이 시작한 작업의 결과를 정확히 가져올 때 사용합니다.
-
-```json
-{
-  "run_id": "6cd61210-7a14-4dd0-a85c-364dd24a61a5",
-  "status": "COMPLETED",
-  "generated_at": "2026-08-23T08:08:31Z",
-  "count": 100,
-  "warnings": [
-    "naver_news: quota exhausted; continued without news signal"
-  ],
-  "results": [
-    {
-      "id": "bad-challenge",
-      "rank": 1,
-      "name": "BAD 챌린지",
-      "representative_youtube_url": "https://www.youtube.com/watch?v=AAA",
-      "guide_youtube_url": "https://www.youtube.com/watch?v=BBB"
-    }
-  ]
-}
-```
-
-작업이 아직 완료되지 않았다면 `409 Conflict`를 반환합니다.
-
-### 4. 현재 서비스용 결과 조회
+## 편집 요청 예시
 
 ```http
-GET /api/v1/challenges?limit=100
-X-Internal-API-Key: <INTERNAL_API_KEY>
-```
-
-이 엔드포인트는 가장 최근 랭킹에 수동 override까지 반영한 **현재 유효 결과**를 반환합니다.
-
-```json
-{
-  "generated_at": "2026-08-23T08:08:31Z",
-  "count": 100,
-  "results": [
-    {
-      "id": "bad-challenge",
-      "rank": 1,
-      "name": "BAD 챌린지",
-      "representative_youtube_url": "https://www.youtube.com/watch?v=AAA",
-      "guide_youtube_url": "https://www.youtube.com/watch?v=BBB",
-      "automatic_rank": 1,
-      "automatic_score": 91.4,
-      "lifecycle": "RISING",
-      "kr_affinity": 0.91,
-      "confidence": 0.87,
-      "category": "dance",
-      "active": true,
-      "rank_overridden": false,
-      "name_overridden": false,
-      "representative_video_overridden": false,
-      "guide_video_overridden": false,
-      "updated_at": "2026-08-23T08:08:31Z"
-    }
-  ]
-}
-```
-
-### 실행별 결과와 현재 결과의 차이
-
-| API | 의미 |
-|---|---|
-| `/ranking-runs/{run_id}/result` | 특정 실행의 변경되지 않는 자동 결과 |
-| `/challenges` | 최신 자동 결과 + 운영자가 적용한 수동 override |
-
-백엔드가 배치 실행 직후 결과를 수집할 때는 실행별 결과 API를 사용하고, 앱에 항상 최신 상태를 제공할 때는 현재 결과 API를 사용합니다.
-
-전체 연동 계약과 Spring WebClient 예시는 [`docs/BACKEND_INTEGRATION.md`](docs/BACKEND_INTEGRATION.md)에 있습니다.
-
-## 수동 수정
-
-메인 백엔드 또는 운영 도구는 랭킹, 이름, 대표영상, 가이드영상 링크를 수정할 수 있습니다.
-
-```http
-PATCH /api/v1/challenges/{challenge_id}
+POST /api/v1/editing-runs
 X-Internal-API-Key: <INTERNAL_API_KEY>
 Content-Type: application/json
 
 {
-  "rank": 3,
-  "name": "BAD 댄스 챌린지",
-  "representative_youtube_url": "https://www.youtube.com/watch?v=NEW1",
-  "guide_youtube_url": "https://www.youtube.com/watch?v=NEW2"
+  "project": {
+    "project_id": "45",
+    "store_id": "store_123",
+    "promotion_subject": {
+      "type": "MENU",
+      "name": "시그니처 라떼"
+    },
+    "promotion_objective": "awareness",
+    "face_exposure": "not_allowed"
+  },
+  "selected_shortform": {
+    "recommendation_id": "rec_123",
+    "editing_template_id": "cafe_recommendation_reels",
+    "editing_template_version": 3
+  },
+  "videos": [
+    {
+      "video_id": "task_1",
+      "footage_url": "https://example.com/task-1.mp4",
+      "shooting_scene_order": 1
+    }
+  ]
 }
 ```
 
-수정값은 override 컬럼에 저장되어 다음 자동 배치가 덮어쓰지 않습니다. 필드에 `null`을 명시하면 해당 override를 해제하고 자동 분석값으로 돌아갑니다.
+생성 응답은 `202 Accepted`입니다. 백엔드는 상태 API를 polling하고 `COMPLETED`가 되면 결과 API를 조회합니다.
 
-JSON 파일로 일괄 수정할 수도 있습니다.
-
-```bash
-python -m app.cli import-overrides data/ranking_overrides.json
-```
-
-DB가 원본이며 JSON은 import/export 인터페이스입니다. HTML 랭킹 파일은 생성하지 않습니다.
-
-## 영상 선정 기준
-
-### 앱 화면용 대표영상
-
-유명하고 조회수가 높은 실제 참여 영상을 우선합니다.
-
-| 기준 | 비중 |
-|---|---:|
-| 조회수/유명도 | 45% |
-| 챌린지 관련성 | 25% |
-| 실제 참여/시범 여부 | 10% |
-| 국내 관련성 | 10% |
-| 최신성 | 5% |
-| 참여율 | 5% |
-
-### 따라하기용 가이드영상
-
-사용자가 실제로 동작을 보고 따라 하기 쉬운 영상을 우선합니다.
-
-| 기준 | 비중 |
-|---|---:|
-| 안무/튜토리얼/동작 명료도 | 45% |
-| 챌린지 관련성 | 20% |
-| 실제 참여/시범 여부 | 10% |
-| 국내 관련성 | 10% |
-| 조회수 | 5% |
-| 최신성 | 5% |
-| 참여율 | 5% |
-
-`tutorial`, `튜토리얼`, `거울모드`, `mirrored`, `slow`, `천천히`, `step by step`, `안무영상`, `dance practice`, `choreography`, `연습영상`, `전체 안무`, `시범` 표현에 가점을 줍니다. 전용 가이드가 없으면 동작이 잘 보이는 실제 참여 영상으로 fallback합니다.
-
-YouTube 공개 Data API에는 일반 영상 `shareCount`가 없으므로 참여율은 `likeCount`, `commentCount`, `viewCount` 중심으로 계산합니다.
-
-초기 단일 영상 선정 기준은 관련성 40%, 실제 참여 여부 20%, 조회 성과 15%, 최신성 10%, 참여율 5%, 국내 관련성 10%였습니다. 가중합 전 관련성 미달 및 `COMMENTARY`, `UNRELATED` 영상을 제거합니다. 목적은 단순히 가장 인기 있는 영상이 아니라, 사용자가 클릭했을 때 해당 국내 유행 챌린지를 가장 빠르게 이해할 수 있는 실제 참여 영상을 고르는 것이며, 이 원칙은 현재 가이드영상 선정에 계승됩니다.
-
-## Apify 기반 Instagram Discovery
-
-YouTube 중심 Discovery는 게임 미션, 장기 목표, 유튜버 자체 기획, 해설 영상 등 YouTube 스타일 콘텐츠에 편향됩니다. 따라서 Instagram을 후보 발견의 중심으로 사용합니다.
-
-1. Instagram Search Scraper의 popular reels를 내부 seed keyword로 탐색
-2. 발견한 hashtag/audio를 자동 확장해 재탐색
-3. 필요 시 Hashtag Scraper와 Reel Scraper로 고유 크리에이터 수, 음원 반복, 최근 게시 증가, 실제 행동 유사성 검증
-
-주요 개선 대상은 릴스형 춤, 포즈, 손동작, 전환, 변신, 특정 음원, 이름 없는 초기 챌린지입니다.
-
-Apify는 Meta 공식 Trend API가 아니며 keyword seed가 필요하고 데이터 필드가 불안정할 수 있습니다. 한국 audience geo를 직접 보장하지 않으므로 한국어 caption/ASR/hashtag, creator/location, NAVER/YouTube 신호를 결합합니다. Meta 자동수집 약관과 상업적 사용 리스크는 별도 검토해야 하며, 수집부는 향후 허가된 공급사나 공식 접근 방식으로 교체할 수 있는 Adapter 경계를 유지합니다.
-
-## 프로젝트 구조
-
-```text
-app/
-├─ agents/
-│  ├─ registry.py
-│  ├─ challenge_ranking/
-│  ├─ shortform/
-│  └─ editing/
-├─ api/v1/
-│  ├─ agents.py
-│  ├─ challenges.py
-│  ├─ ranking_runs.py
-│  ├─ shortform_sessions.py
-│  ├─ editing_runs.py
-│  ├─ overrides.py
-│  └─ health.py
-├─ core/
-├─ db/
-├─ models/
-├─ schemas/
-├─ services/
-├─ workers/
-└─ ranker_core/
-
-reals-video-engine/
-├─ reals_edit_engine/
-├─ demo/
-├─ registry/
-└─ tools/
-```
-
-- `app/agents`: Agent 단위의 외부 경계와 등록 정보
-- `app/ranker_core`: 현재 challenge-ranking Agent의 분석 엔진
-- `app/services`: DB 저장과 애플리케이션 서비스
-- `app/workers`: Celery 비동기 실행
-- `app/api`: 메인 백엔드가 호출하는 내부 REST API
-
-구조 원칙은 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)에 정리되어 있습니다.
-
-## 실행
+## 로컬 실행
 
 ### Docker Compose
 
 ```bash
 cp .env.example .env
-# .env에 INTERNAL_API_KEY와 외부 API 키 입력
-docker compose up --build -d
+# .env에 INTERNAL_API_KEY와 필요한 외부 API 키 입력
+docker compose up -d --build
 ```
 
-서비스:
+실행 서비스:
 
-- API: `http://localhost:8000`
-- Swagger: `http://localhost:8000/docs`
-- PostgreSQL
-- Redis
+- FastAPI: `http://localhost:8000`
+- Swagger UI: `http://localhost:8000/docs`
+- REALS Renderer: `http://localhost:8080`
+- PostgreSQL 17
+- Redis 7
 - Celery Worker
 - Celery Beat
-- REALS Renderer (`http://localhost:8080`)
 
-### 필수 환경변수
+상태 확인:
 
-```dotenv
-INTERNAL_API_KEY=replace-with-a-long-random-value
-APIFY_API_TOKEN=
-GEMINI_API_KEY=
-YOUTUBE_API_KEY=
-NAVER_API_HUB_CLIENT_ID=
-NAVER_API_HUB_CLIENT_SECRET=
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8000/api/v1/health/ready \
+  -H "X-Internal-API-Key: $INTERNAL_API_KEY"
+docker compose ps
 ```
 
-실제 `.env`는 커밋하지 않습니다.
-
-### 로컬 개발
+### Python 개발 환경
 
 ```bash
 python -m venv .venv
@@ -427,88 +314,100 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-테스트:
+검사:
 
 ```bash
 ruff check .
-pytest
+pytest -q
 ```
 
-외부 API 연결 확인:
+## 환경변수
 
-```bash
-python scripts/check_apis.py
+필수 또는 주요 환경변수:
+
+```dotenv
+INTERNAL_API_KEY=replace-with-a-long-random-value
+DATABASE_URL=postgresql+psycopg://challenge:challenge@db:5432/challenge
+REDIS_URL=redis://redis:6379/0
+
+OPENAI_API_KEY=
+APIFY_API_TOKEN=
+GEMINI_API_KEY=
+YOUTUBE_API_KEY=
+NAVER_API_HUB_CLIENT_ID=
+NAVER_API_HUB_CLIENT_SECRET=
+
+EDITING_RENDERER_URL=http://renderer:8080
+RENDERER_PUBLIC_BASE_URL=http://localhost:8080
 ```
 
-동기 배치 실행:
+전체 기본값은 [`.env.example`](.env.example)에 있습니다. 실제 `.env`, API 키, 사용자 영상, 렌더 결과와 모델 가중치는 Git에 커밋하지 않습니다.
 
-```bash
-python -m app.cli run-ranking
+OpenAI 잔액이 소진되면 추천·편집 요청은 provider의 `429 insufficient_quota`를 명확한 오류로 반환합니다. `/api/v1/health/ready`의 `openai: true`는 키 설정 여부와 런타임 구성을 뜻하며 계정 잔액을 보장하지 않습니다.
+
+## AWS 운영
+
+현재 운영 구조:
+
+```text
+AWS EC2
+└─ AI service checkout
+   ├─ api:8000
+   ├─ renderer:8080
+   ├─ worker
+   ├─ beat
+   ├─ postgres
+   └─ redis
 ```
 
-사용자 제공 DB 라이브러리와 독립 운영 명령:
+배포는 AWS Systems Manager Run Command를 통해 EC2에서 다음 순서로 수행합니다.
 
-```bash
-python -m app.cli import-database-library
-python -m app.cli sync-trendcluster-from-video-editing-db
-python -m app.cli resolve-trade-area-db-context --region-id REG-SEOCHON --category-id CAT-CAF
-python -m app.cli generate-video-editing-db <record_id> --trend-id <trend_id>
-python -m app.cli generate-trade-area-db trade_area_office evidence.json
+1. `origin/main` fetch 및 fast-forward
+2. Docker 이미지 재빌드
+3. Compose 서비스 재생성
+4. `/health`와 `/api/v1/health/ready` 확인
+5. 서버 HEAD와 GitHub `main` 커밋 비교
+
+API 키는 저장소가 아니라 AWS Systems Manager Parameter Store와 서버 환경변수로 관리합니다. 메인 백엔드는 VPC 내부 AI 서버 URL과 동일한 `INTERNAL_API_KEY`를 사용합니다.
+
+## 프로젝트 구조
+
+```text
+app/
+├─ agents/
+│  ├─ challenge_ranking/
+│  ├─ shortform/
+│  └─ editing/
+├─ api/v1/
+├─ renderer/
+├─ template_knowledge/
+├─ ranker_core/
+├─ workers/
+├─ models/
+├─ schemas/
+└─ services/
+
+reals-video-engine/
+├─ reals_edit_engine/
+├─ registry/
+├─ demo/
+└─ tools/
 ```
 
-`exports/trendcluster.json`은 제공된 영상편집DB의 세 영상으로 초기화되어 있다. 원본 순위 1·2·3을 유지하고, 모든 항목의 대표영상과 가이드영상에 같은 YouTube URL을 사용한다. 카페 추천 리뷰 릴스는 `https://www.youtube.com/shorts/OWnLiuJU8Ks`를 사용한다. 위 동기화 명령을 다시 실행하면 같은 상태로 원자적으로 복구된다.
+## 운영상 주의사항
 
-## 장애 처리
-
-- Apify 일부 seed 실패: 해당 seed만 건너뜀
-- Gemini 429/실패: 제한 재시도 후 확보된 데이터로 degraded 실행
-- YouTube 429: 추가 영상 검색을 중단하고 랭킹은 저장
-- NAVER 실패: 해당 지표만 누락 처리
-- 긴 분석은 FastAPI 요청 프로세스가 아니라 Celery Worker에서 실행
-- 부분 실패는 `warnings`와 `source_status`로 백엔드에 전달
-
-## API 상태 코드
-
-| 상태 | 의미 |
-|---:|---|
-| `200` | 조회 또는 수정 성공 |
-| `202` | 랭킹 작업 생성 성공 |
-| `401` | 내부 API 키 누락 또는 불일치 |
-| `404` | 실행 또는 챌린지 없음 |
-| `409` | 완료되지 않은 실행의 결과 요청 |
-| `422` | 랭킹 실행에 필요한 외부 API 키 누락 |
-| `503` | 운영 환경에서 내부 API 키 미설정 |
-
-## 주요 엔드포인트
-
-| Method | Endpoint | 설명 |
-|---|---|---|
-| GET | `/api/v1/health/live` | 프로세스 상태 |
-| GET | `/api/v1/health/ready` | DB와 외부 API 키 준비 상태 |
-| GET | `/api/v1/agents` | 현재 구현된 Agent 목록 |
-| POST | `/api/v1/ranking-runs` | 챌린지 랭킹 분석 시작 |
-| GET | `/api/v1/ranking-runs/{id}` | 분석 진행 상태 |
-| GET | `/api/v1/ranking-runs/{id}/result` | 해당 실행의 고정 결과 |
-| POST | `/api/v1/shortform-sessions` | 숏폼 brief 대화 세션 시작 |
-| POST | `/api/v1/shortform-sessions/{id}/turns` | 숏폼 대화 진행 |
-| POST | `/api/v1/editing-runs` | 비동기 영상 편집 실행 시작 |
-| GET | `/api/v1/editing-runs/{id}` | 편집 진행 상태 |
-| GET | `/api/v1/database-knowledge/databases` | 상권분석DB/영상편집DB 버전 조회 |
-| GET | `/api/v1/database-knowledge/candidates` | 갱신 후보·diff·검증·승인 상태 조회 |
-| POST | `/api/v1/database-knowledge/trade-area-db/candidates` | 비동기 상권분석DB 후보 run 생성 |
-| POST | `/api/v1/database-knowledge/video-editing-db/candidates` | 비동기 trendcluster/Gemini 영상편집DB 후보 run 생성 |
-| GET | `/api/v1/database-knowledge/runs/{id}` | DB 후보 생성·분석 run 상태 |
-| GET | `/api/v1/database-knowledge/runs/{id}/result` | 완료된 DB 후보 생성·분석 결과 |
-| GET | `/api/v1/editing-runs/{id}/result` | EditRecipe·렌더·게시 문구 결과 |
-| POST | `/api/v1/editing-runs/{id}/revisions` | 기존 결과를 보존한 수정 run 생성 |
-| GET | `/api/v1/challenges?limit=100` | 최신 유효 Top 100 |
-| GET | `/api/v1/challenges/{id}` | 챌린지 상세 |
-| PATCH | `/api/v1/challenges/{id}` | 랭킹·이름·영상 수동 override |
-| POST | `/api/v1/overrides/import` | JSON override 일괄 반영 |
+- 백엔드는 `/health`가 아니라 실제 준비 상태 확인에 `/api/v1/health/ready`를 사용합니다.
+- `200/202` 응답만으로 최종 영상 생성이 완료된 것은 아닙니다. 비동기 실행의 `status`, `stage`, `progress`를 확인해야 합니다.
+- 편집 결과 URL은 `RENDERER_PUBLIC_BASE_URL`을 기준으로 생성되므로 앱과 백엔드에서 접근 가능한 주소를 설정해야 합니다.
+- `SOURCE_GAP`은 내부 LLM 결정 스키마에 남아 있지만 신규 편집 실행은 자동 축소·순서 기반 폴백으로 렌더링을 계속합니다.
+- GPU 기반 고급 보호 영역 분석은 `reals-video-engine`에서 지원하지만 현재 AWS 운영 프로필은 `REALS_FORCE_CPU=1`입니다.
+- 자동 수집 데이터와 플랫폼 사용 정책은 운영 전에 별도로 검토해야 합니다.
 
 ## 문서
 
 - [아키텍처와 서비스 경계](docs/ARCHITECTURE.md)
 - [메인 백엔드 연동 계약](docs/BACKEND_INTEGRATION.md)
+- [Database Knowledge Manager](docs/DATABASE_KNOWLEDGE_MANAGER.md)
+- [저장소와 실행 이력 보존 정책](docs/STORAGE_RETENTION.md)
 - [새 Agent 추가 방법](docs/ADDING_AN_AGENT.md)
-- [REALS 숏폼 영상 편집 엔진](reals-video-engine/README.md)
+- [REALS 영상 편집 엔진](reals-video-engine/README.md)

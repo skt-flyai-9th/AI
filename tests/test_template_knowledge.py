@@ -16,6 +16,7 @@ from app.schemas.template_knowledge import (
     EditingCandidateCreate,
     VideoEditingDBContent,
     EditingVideoInsight,
+    MAX_SHOOTING_GUIDE_CUTS,
     TemplateCandidateStatus,
     TemplateType,
     TradeAreaAnalysisResult,
@@ -100,6 +101,21 @@ class FakeVideoAnalyzer:
             summary="완성 메뉴를 첫 2초에 보여주고 제조 장면을 빠르게 연결합니다.",
             hook_patterns=["0-2초 결과 선공개"],
             shot_sequence=["RESULT", "PROCESS", "DETAIL", "CTA"],
+            segments=[
+                {
+                    "sequence": index,
+                    "start_sec": float(index - 1),
+                    "end_sec": float(index),
+                    "scene_role": role,
+                    "description": f"{role} 장면",
+                    "shot_type": "CLOSE_UP",
+                    "transition_out": "HARD_CUT" if index < 4 else None,
+                    "evidence": f"{index - 1}.0-{index}.0초 {role}",
+                }
+                for index, role in enumerate(
+                    ["RESULT", "PROCESS", "DETAIL", "CTA"], start=1
+                )
+            ],
             pacing={"median_cut_sec": 1.4, "tempo": "FAST", "opening_hook_sec": 2.0},
             caption_patterns=["짧은 핵심 자막"],
             camera_patterns=["클로즈업", "고정 구도"],
@@ -128,6 +144,41 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
             is None
         )
         assert len(list(db.scalars(select(VideoEditingDBRecord)))) == 3
+        imported_editing = db.scalar(
+            select(VideoEditingDBRecord).where(
+                VideoEditingDBRecord.template_id == "gt_jujutsu_transition"
+            )
+        )
+        assert imported_editing is not None
+        assert imported_editing.version == 4
+        assert len(imported_editing.shooting_guide["tasks"]) == 3
+        assert len(imported_editing.shooting_guide["scenes"]) == 3
+        assert len(imported_editing.evidence_summary["reference_segments"]) == 17
+        assert imported_editing.evidence_summary["shooting_task_intervals"]["source_rows"] == [
+            5,
+            6,
+            7,
+        ]
+        first_task = imported_editing.shooting_guide["tasks"][0]
+        assert first_task["display_order"] == 1
+        assert first_task["scene_index"] == 0
+        assert first_task["task_title"]
+        assert first_task["guide"]["instructions"]
+        assert "task_type" not in first_task
+        assert "guide_type" not in first_task["guide"]
+        assert all(
+            scene["scene_subtitle"] is None
+            for scene in imported_editing.shooting_guide["scenes"]
+        )
+        task_counts = {
+            record.template_id: len(record.shooting_guide["tasks"])
+            for record in db.scalars(select(VideoEditingDBRecord))
+        }
+        assert task_counts == {
+            "gt_jujutsu_transition": 3,
+            "gt_otsukare_summer": 5,
+            "gt_cafe_recommendation": 6,
+        }
         assert len(list(db.scalars(select(TemplateSourceBundle)))) == 2
         assert db.scalar(select(TemplateSourceRecord)) is not None
         assert result["trade_area"]["status"] == "ACTIVE"
@@ -138,9 +189,13 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
             )
         )
 
+        imported_editing.shooting_guide = {"scenes": [], "tasks": []}
+        db.commit()
         second = seed_template_library(db, service=service)
+        db.refresh(imported_editing)
         assert second["created"] == []
         assert len(second["skipped"]) == 5
+        assert len(imported_editing.shooting_guide["tasks"]) == 3
 
 
 def test_candidate_lifecycle_creates_new_version_and_archives_base():
@@ -201,6 +256,53 @@ def test_editing_candidate_rejects_tts_before_activation():
         assert db.get(VideoEditingDBRecord, ("invalid_tts", 1)) is None
 
 
+def test_editing_candidate_rejects_non_one_to_one_shooting_tasks():
+    service, _ = _service()
+    invalid = video_editing_db_payload()
+    invalid["shooting_guide"]["scenes"].append(
+        {
+            **invalid["shooting_guide"]["scenes"][0],
+            "scene_order": 2,
+            "scene_role": "RESULT",
+        }
+    )
+    with SessionLocal() as db:
+        candidate = service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="invalid_task_mapping",
+            payload=invalid,
+            source_evidence={"test": True},
+            generation_model="test",
+            requires_human_approval=True,
+        )
+        codes = {item["code"] for item in candidate.validation_errors}
+        assert candidate.status == "INVALID"
+        assert "SHOOTING_TASK_COUNT_MISMATCH" in codes
+
+
+def test_editing_candidate_rejects_wrong_shooting_task_order_and_scene_index():
+    service, _ = _service()
+    invalid = video_editing_db_payload()
+    task = invalid["shooting_guide"]["tasks"][0]
+    task["display_order"] = 2
+    task["scene_index"] = 1
+    with SessionLocal() as db:
+        candidate = service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="invalid_task_order",
+            payload=invalid,
+            source_evidence={"test": True},
+            generation_model="test",
+            requires_human_approval=True,
+        )
+        codes = {item["code"] for item in candidate.validation_errors}
+        assert candidate.status == "INVALID"
+        assert "SHOOTING_TASK_ORDER_INVALID" in codes
+        assert "SHOOTING_TASK_SCENE_INDEX_INVALID" in codes
+
+
 def test_trend_video_analysis_generates_editing_candidate_and_uses_cache():
     service, video = _service()
     with SessionLocal() as db:
@@ -241,6 +343,113 @@ def test_trend_video_analysis_generates_editing_candidate_and_uses_cache():
             trend_context={"trend_id": "trend_001"},
         )
         assert video.calls == 1
+
+
+def test_generated_editing_tasks_are_normalized_to_zero_based_scene_indexes():
+    class OneBasedTaskGenerator(FakeGenerator):
+        def generate_editing(self, **kwargs) -> VideoEditingDBContent:
+            content = super().generate_editing(**kwargs)
+            content.shooting_guide.tasks[0].display_order = 7
+            content.shooting_guide.tasks[0].scene_index = 1
+            return content
+
+    video = FakeVideoAnalyzer()
+    service = TemplateKnowledgeService(generator=OneBasedTaskGenerator(), video_analyzer=video)
+    with SessionLocal() as db:
+        db.add(
+            Challenge(
+                id="trend_task_normalization",
+                automatic_name="태스크 인덱스 정규화",
+                category="food",
+                automatic_rank=1,
+                automatic_score=90.0,
+                lifecycle="RISING",
+                kr_affinity=0.9,
+                confidence=0.9,
+                automatic_representative_youtube_url=(
+                    "https://www.youtube.com/watch?v=task-normalization"
+                ),
+                representative_video_metadata={},
+                raw_details={},
+            )
+        )
+        db.commit()
+
+        candidate = service.create_editing_candidate(
+            db,
+            EditingCandidateCreate(
+                template_id="edit_task_normalization",
+                trend_ids=["trend_task_normalization"],
+            ),
+        )
+
+        task = candidate.proposed_payload["shooting_guide"]["tasks"][0]
+        assert candidate.status == "VALIDATED"
+        assert task["display_order"] == 1
+        assert task["scene_index"] == 0
+
+
+def test_rebuild_from_scratch_ignores_base_and_forces_fresh_video_analysis():
+    class CaptureGenerator(FakeGenerator):
+        def __init__(self) -> None:
+            self.base_payloads = []
+
+        def generate_editing(self, **kwargs) -> VideoEditingDBContent:
+            self.base_payloads.append(kwargs["base_payload"])
+            return super().generate_editing(**kwargs)
+
+    generator = CaptureGenerator()
+    video = FakeVideoAnalyzer()
+    service = TemplateKnowledgeService(generator=generator, video_analyzer=video)
+    with SessionLocal() as db:
+        db.add(
+            Challenge(
+                id="trend_rebuild",
+                automatic_name="처음부터 재작성",
+                category="meme",
+                automatic_rank=1,
+                automatic_score=95.0,
+                lifecycle="RISING",
+                kr_affinity=0.9,
+                confidence=0.9,
+                automatic_representative_youtube_url=(
+                    "https://www.youtube.com/watch?v=rebuild001"
+                ),
+                representative_video_metadata={},
+                raw_details={},
+            )
+        )
+        db.commit()
+        service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="edit_rebuild",
+            payload=video_editing_db_payload(),
+            source_evidence={"seed": True},
+            generation_model="seed",
+            requires_human_approval=False,
+        )
+
+        service.create_editing_candidate(
+            db,
+            EditingCandidateCreate(
+                template_id="edit_rebuild",
+                trend_ids=["trend_rebuild"],
+            ),
+        )
+        rebuilt = service.create_editing_candidate(
+            db,
+            EditingCandidateCreate(
+                template_id="edit_rebuild",
+                trend_ids=["trend_rebuild"],
+                rebuild_from_scratch=True,
+            ),
+        )
+
+        assert generator.base_payloads[0] is not None
+        assert generator.base_payloads[1] is None
+        assert video.calls == 2
+        assert rebuilt.source_evidence["generation_mode"] == "REBUILD_FROM_SCRATCH"
 
 
 def test_trade_area_analysis_uses_active_template_and_persists_result():
@@ -403,3 +612,18 @@ def test_llm_output_schemas_are_strict_and_have_no_open_objects():
         assert objects
         assert all(item.get("additionalProperties") is False for item in objects)
         assert all("properties" in item for item in objects)
+
+
+def test_video_editing_schemas_allow_physical_edit_cuts_beyond_six():
+    assert MAX_SHOOTING_GUIDE_CUTS >= 7
+    editing_schema = VideoEditingDBContent.model_json_schema()
+    guide_schema = editing_schema["$defs"]["EditingShootingGuide"]["properties"]
+    assert guide_schema["scenes"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
+    assert guide_schema["tasks"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
+
+    insight_schema = EditingVideoInsight.model_json_schema()
+    assert (
+        insight_schema["properties"]["shot_sequence"]["maxItems"]
+        == MAX_SHOOTING_GUIDE_CUTS
+    )
+    assert insight_schema["properties"]["segments"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS

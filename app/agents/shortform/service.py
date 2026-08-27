@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from functools import lru_cache
 from pathlib import Path
@@ -24,7 +25,9 @@ from app.schemas.shortform import (
     FaceExposure,
     FilmingTime,
     NextRecommendationResponse,
+    PromotionCategory,
     ShortformAction,
+    ShortformEntryMode,
     ShortformOption,
     ShortformProjectState,
     ShortformRecommendation,
@@ -53,6 +56,22 @@ _FILMING_ORDER = {
 }
 _CandidateConstraintMode = Literal["strict", "safe", "any"]
 logger = logging.getLogger(__name__)
+_QUESTION_ACTIONS = {
+    ShortformAction.ASK,
+    ShortformAction.SAVE_AND_ASK,
+    ShortformAction.CLARIFY,
+    ShortformAction.SUGGEST_SWITCH,
+    ShortformAction.RESOLVE_CONFLICT,
+    ShortformAction.OUT_OF_SCOPE,
+}
+_REMOVED_CATEGORY_LABELS = {
+    "사람·브랜드 이야기",
+    "사람/브랜드 이야기",
+    "이용 정보",
+    "이용정보",
+    "후기·신뢰·전문성",
+    "후기/신뢰/전문성",
+}
 
 
 class ShortformDomainError(RuntimeError):
@@ -123,6 +142,16 @@ class ShortformAgentService:
                 return self._confirm_and_recommend(db, session)
             return self._reject_confirmation(db, session)
 
+        entry_response = self._handle_entry_mode_option(db, session, turn_input)
+        if entry_response is not None:
+            return entry_response
+
+        selected_category = _promotion_category_from_option(turn_input)
+        if selected_category is not None:
+            project_state = dict(session.project_state or {})
+            project_state["promotion_category"] = selected_category.value
+            session.project_state = project_state
+
         graph_result = self._invoke_graph(
             {
                 "mode": "TURN",
@@ -155,6 +184,17 @@ class ShortformAgentService:
         if action == ShortformAction.CONFIRM and not project_state["ready_for_confirmation"]:
             action = ShortformAction.ASK
 
+        assistant_message = _format_assistant_message(decision.assistant_message, action)
+        project_state["current_question"] = (
+            _extract_question(assistant_message)
+            if action in _QUESTION_ACTIONS
+            else None
+        )
+        project_state["ready_for_recommendation"] = bool(
+            project_state.get("brief_confirmed")
+            and project_state.get("ready_for_confirmation")
+        )
+
         session.project_state = project_state
         session.status = (
             ShortformSessionStatus.CONFIRMING.value
@@ -164,18 +204,18 @@ class ShortformAgentService:
         session.conversation = _append_conversation(
             session.conversation,
             _turn_input_to_text(turn_input),
-            decision.assistant_message,
+            assistant_message,
         )
         db.commit()
 
         if action == ShortformAction.RECOMMEND and project_state.get("brief_confirmed"):
             return self._recommend(db, session)
 
-        options = [ShortformOption(id=item.id, label=item.label) for item in decision.options]
+        options = _sanitize_options(decision.options, action)
         return ShortformTurnResponse(
             session_id=session.id,
             action=action,
-            assistant_message=decision.assistant_message,
+            assistant_message=assistant_message,
             project_state=ShortformProjectState.model_validate(project_state),
             options=options,
             recommendation=None,
@@ -202,13 +242,60 @@ class ShortformAgentService:
         return NextRecommendationResponse(
             session_id=session.id,
             recommendation=response.recommendation,
-            shown_video_editing_db_ids=list(session.shown_video_editing_db_ids or []),
+            shown_template_ids=list(session.shown_video_editing_db_ids or []),
         )
 
     def delete_session(self, db: Session, session_id: str) -> None:
         session = self._get_session(db, session_id)
         db.delete(session)
         db.commit()
+
+    def _handle_entry_mode_option(
+        self,
+        db: Session,
+        session: ShortformSession,
+        turn_input: ShortformTurnInput,
+    ) -> ShortformTurnResponse | None:
+        if turn_input.type != TurnInputType.OPTION:
+            return None
+        if session.project_state.get("entry_mode"):
+            return None
+
+        option_id = str(turn_input.option_id or "").upper()
+        if option_id == "PROMOTION_GUIDE":
+            entry_mode = ShortformEntryMode.PROMOTION_GUIDE
+            message = "무엇을 홍보하고 싶으세요?"
+            options = _promotion_category_options()
+        elif option_id == "FREE_INPUT":
+            entry_mode = ShortformEntryMode.FREE_INPUT
+            message = (
+                "어떤 영상을 만들고 싶은지 편하게 말씀해주세요. "
+                "필요한 정보만 하나씩 확인할게요."
+            )
+            options = []
+        else:
+            return None
+
+        project_state = dict(session.project_state or {})
+        project_state["entry_mode"] = entry_mode.value
+        project_state["current_question"] = _extract_question(message)
+        project_state["ready_for_recommendation"] = False
+        session.project_state = project_state
+        session.status = ShortformSessionStatus.COLLECTING.value
+        session.conversation = _append_conversation(
+            session.conversation,
+            _turn_input_to_text(turn_input),
+            message,
+        )
+        db.commit()
+        return ShortformTurnResponse(
+            session_id=session.id,
+            action=ShortformAction.ASK,
+            assistant_message=message,
+            project_state=ShortformProjectState.model_validate(project_state),
+            options=options,
+            recommendation=None,
+        )
 
     def get_shooting_guide(
         self,
@@ -218,20 +305,103 @@ class ShortformAgentService:
     ) -> ShootingGuideResponse:
         template = db.get(VideoEditingDBRecord, (template_id, version))
         if template is None:
+            active_templates = db.scalars(
+                select(VideoEditingDBRecord)
+                .where(VideoEditingDBRecord.status == "ACTIVE")
+                .order_by(VideoEditingDBRecord.version.desc())
+            )
+            template = next(
+                (
+                    row
+                    for row in active_templates
+                    if template_id in (row.trend_ids or [])
+                ),
+                None,
+            )
+        if template is None:
             raise ShortformDomainError(
-                "VIDEO_EDITING_DB_NOT_FOUND",
-                "Video-editing DB record was not found.",
+                "EDITING_TEMPLATE_NOT_FOUND",
+                "Editing template was not found.",
                 status_code=404,
             )
         guide = dict(template.shooting_guide or {})
+        scenes = []
+        for item in guide.get("scenes") or []:
+            scene = dict(item)
+            scene["scene_dialogue"] = str(scene.get("scene_dialogue") or "")
+            scene["scene_subtitle"] = str(scene.get("scene_subtitle") or "")
+            scenes.append(scene)
+
+        tasks = []
+        for index, item in enumerate(guide.get("tasks") or [], start=1):
+            task = dict(item)
+            display_order = int(task.get("display_order") or task.get("task_order") or index)
+            scene_index = task.get("scene_index")
+            if scene_index is None and task.get("shooting_scene_order") is not None:
+                scene_index = int(task["shooting_scene_order"]) - 1
+            if scene_index is None:
+                scene_index = display_order - 1
+
+            task_title = str(
+                task.get("task_title")
+                or task.get("title")
+                or task.get("description")
+                or "촬영 태스크"
+            ).strip()[:200] or "촬영 태스크"
+            raw_guide = task.get("guide") if isinstance(task.get("guide"), dict) else {}
+            raw_instructions = raw_guide.get("instructions") or []
+            if isinstance(raw_instructions, str):
+                raw_instructions = [raw_instructions]
+            instructions = [
+                str(value).strip()[:500]
+                for value in raw_instructions
+                if str(value).strip()
+            ]
+            legacy_description = str(task.get("description") or "").strip()
+            if not instructions and legacy_description:
+                instructions = [legacy_description[:500]]
+
+            start_ms, end_ms = _shooting_task_interval_ms(
+                task=task,
+                scenes=scenes,
+                scene_index=int(scene_index),
+                display_order=display_order,
+                evidence_summary=template.evidence_summary or {},
+            )
+
+            tasks.append(
+                {
+                    "display_order": display_order,
+                    "task_title": task_title,
+                    "scene_index": int(scene_index),
+                    "guide": {
+                        "instructions": instructions,
+                        "start_ms": start_ms,
+                        "end_ms": end_ms,
+                    },
+                }
+            )
+
+        estimated_shooting_sec = guide.get("estimated_shooting_sec")
+        if not estimated_shooting_sec:
+            final_duration = sum(
+                max(int(scene.get("target_duration_sec") or 0), 0) for scene in scenes
+            )
+            estimated_shooting_sec = max(final_duration * 10, 60)
+
         return ShootingGuideResponse(
-            video_editing_db_id=template.template_id,
-            video_editing_db_version=template.version,
-            estimated_shooting_sec=guide.get("estimated_shooting_sec"),
-            difficulty=guide.get("difficulty")
-            or template.recommendation_metadata.get("difficulty"),
-            scenes=list(guide.get("scenes") or []),
-            tasks=list(guide.get("tasks") or []),
+            template_id=template.template_id,
+            version=template.version,
+            estimated_shooting_sec=int(estimated_shooting_sec),
+            required_people=max(int(guide.get("required_people") or 1), 1),
+            props=[str(item) for item in (guide.get("props") or []) if str(item).strip()],
+            difficulty=str(
+                guide.get("difficulty")
+                or template.recommendation_metadata.get("difficulty")
+                or "중"
+            ),
+            scenes=scenes,
+            tasks=tasks,
         )
 
     def _confirm_and_recommend(
@@ -255,6 +425,8 @@ class ShortformAgentService:
             )
 
         project_state["brief_confirmed"] = True
+        project_state["ready_for_recommendation"] = True
+        project_state["current_question"] = None
         session.project_state = project_state
         session.status = ShortformSessionStatus.RECOMMENDING.value
         session.conversation = _append_conversation(
@@ -273,9 +445,11 @@ class ShortformAgentService:
         project_state = dict(session.project_state or {})
         project_state["brief_confirmed"] = False
         project_state["ready_for_confirmation"] = False
+        project_state["ready_for_recommendation"] = False
+        message = "바뀐 항목만 반영할게요. 어떤 내용을 수정할까요?"
+        project_state["current_question"] = _extract_question(message)
         session.project_state = project_state
         session.status = ShortformSessionStatus.COLLECTING.value
-        message = "수정하고 싶은 내용을 말씀해주세요. 바뀐 항목만 반영할게요."
         session.conversation = _append_conversation(
             session.conversation,
             "[UI_CONFIRM] 수정하기",
@@ -316,8 +490,8 @@ class ShortformAgentService:
             ).strip(),
             title=(selection.title or selected.recommendation_title or selected.name).strip(),
             concept=(selection.concept or selected.recommendation_concept or selected.name).strip(),
-            video_editing_db_id=selected.video_editing_db_id,
-            video_editing_db_version=selected.video_editing_db_version,
+            editing_template_id=selected.video_editing_db_id,
+            editing_template_version=selected.video_editing_db_version,
         )
         stored = recommendation.model_dump(mode="json")
         stored["internal_reason"] = selection.internal_reason
@@ -453,7 +627,9 @@ class ShortformAgentService:
             if exclude_shown and template.template_id in shown:
                 continue
             metadata = dict(template.recommendation_metadata or {})
-            if constraint_mode != "any" and not _passes_hard_constraints(metadata, project_state):
+            if constraint_mode != "any" and not _passes_hard_constraints(
+                metadata, project_state
+            ):
                 continue
             if constraint_mode == "strict" and not _passes_soft_constraints(
                 metadata, project_state
@@ -537,7 +713,7 @@ class ShortformAgentService:
         updates = decision.state_updates
 
         if updates.promotion_category is not None:
-            state["promotion_category"] = updates.promotion_category
+            state["promotion_category"] = updates.promotion_category.value
         if updates.promotion_subject is not None:
             state["promotion_subject"] = {
                 "type": updates.promotion_subject.type,
@@ -598,13 +774,134 @@ class ShortformAgentService:
                 "Shortform session was not found.",
                 status_code=404,
             )
+        state = dict(session.project_state or {})
+        category = state.get("promotion_category")
+        if category not in {item.value for item in PromotionCategory}:
+            state["promotion_category"] = None
+        session.project_state = state
         return session
+
+
+_SCENE_INTERVAL_PATTERN = re.compile(
+    r"(?P<start>\d+(?:\.\d+)?)\s*(?:~|[-–—])\s*"
+    r"(?P<end>\d+(?:\.\d+)?)\s*초"
+)
+_SEGMENT_INTERVAL_PATTERN = re.compile(
+    r"start=(?P<start>\d+(?:\.\d+)?)s\|end=(?P<end>\d+(?:\.\d+)?)s"
+)
+
+
+def _shooting_task_interval_ms(
+    *,
+    task: dict[str, Any],
+    scenes: list[dict[str, Any]],
+    scene_index: int,
+    display_order: int,
+    evidence_summary: dict[str, Any],
+) -> tuple[int, int]:
+    """Resolve an absolute reference-video interval for one shooting task."""
+    raw_guide = task.get("guide") if isinstance(task.get("guide"), dict) else {}
+    direct = _valid_interval_ms(raw_guide.get("start_ms"), raw_guide.get("end_ms"))
+    if direct is not None:
+        return direct
+
+    scene = scenes[scene_index] if 0 <= scene_index < len(scenes) else {}
+    scene_role = str(scene.get("scene_role") or "").strip()
+    evidence = _evidence_interval_ms(
+        evidence_summary,
+        display_order=display_order,
+        scene_role=scene_role,
+    )
+    if evidence is not None:
+        return evidence
+
+    description = str(scene.get("scene_description") or "")
+    for pattern in (_SEGMENT_INTERVAL_PATTERN, _SCENE_INTERVAL_PATTERN):
+        match = pattern.search(description)
+        if match is not None:
+            parsed = _seconds_interval_ms(match.group("start"), match.group("end"))
+            if parsed is not None:
+                return parsed
+
+    cursor_ms = 0
+    for index, candidate in enumerate(scenes):
+        duration_ms = max(
+            1,
+            int(round(float(candidate.get("target_duration_sec") or 0) * 1000)),
+        )
+        if index == scene_index:
+            return cursor_ms, cursor_ms + duration_ms
+        cursor_ms += duration_ms
+
+    # Legacy-corrupt data may contain a task without a matching scene. Keep the
+    # response contract deterministic while exposing a visibly synthetic range.
+    return max(0, display_order - 1) * 1000, max(1, display_order) * 1000
+
+
+def _evidence_interval_ms(
+    evidence_summary: dict[str, Any],
+    *,
+    display_order: int,
+    scene_role: str,
+) -> tuple[int, int] | None:
+    insights = evidence_summary.get("video_insights")
+    if not isinstance(insights, list):
+        return None
+    for insight in insights:
+        if not isinstance(insight, dict):
+            continue
+        segments = insight.get("segments")
+        if not isinstance(segments, list):
+            continue
+        ordered_match: dict[str, Any] | None = None
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+            if int(segment.get("sequence") or 0) == display_order:
+                ordered_match = segment
+            if scene_role and str(segment.get("scene_role") or "").strip() == scene_role:
+                parsed = _seconds_interval_ms(
+                    segment.get("start_sec"),
+                    segment.get("end_sec"),
+                )
+                if parsed is not None:
+                    return parsed
+        if ordered_match is not None:
+            parsed = _seconds_interval_ms(
+                ordered_match.get("start_sec"),
+                ordered_match.get("end_sec"),
+            )
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def _seconds_interval_ms(start: Any, end: Any) -> tuple[int, int] | None:
+    try:
+        start_ms = int(round(float(start) * 1000))
+        end_ms = int(round(float(end) * 1000))
+    except (TypeError, ValueError):
+        return None
+    return _valid_interval_ms(start_ms, end_ms)
+
+
+def _valid_interval_ms(start: Any, end: Any) -> tuple[int, int] | None:
+    try:
+        start_ms = int(start)
+        end_ms = int(end)
+    except (TypeError, ValueError):
+        return None
+    if start_ms < 0 or end_ms <= start_ms:
+        return None
+    return start_ms, end_ms
 
 
 def _initial_project_state() -> dict[str, Any]:
     return ShortformProjectState(
         missing_required_fields=list(_REQUIRED_FIELDS),
+        current_question="오늘 어떤 영상을 찍을까요?",
         ready_for_confirmation=False,
+        ready_for_recommendation=False,
         brief_confirmed=False,
     ).model_dump(mode="json")
 
@@ -676,6 +973,100 @@ def _append_conversation(
     if assistant_text:
         items.append({"role": "assistant", "content": assistant_text})
     return items[-40:]
+
+
+def _promotion_category_options() -> list[ShortformOption]:
+    return [
+        ShortformOption(id="MENU", label="메뉴"),
+        ShortformOption(id="SPACE", label="가게 공간·분위기"),
+        ShortformOption(id="EVENT", label="이벤트·혜택·할인"),
+    ]
+
+
+def _promotion_category_from_option(
+    turn_input: ShortformTurnInput,
+) -> PromotionCategory | None:
+    if turn_input.type != TurnInputType.OPTION:
+        return None
+    mapping = {
+        "MENU": PromotionCategory.MENU,
+        "SPACE": PromotionCategory.SPACE,
+        "EVENT": PromotionCategory.EVENT,
+    }
+    return mapping.get(str(turn_input.option_id or "").upper())
+
+
+def _sanitize_options(options: list[Any], action: ShortformAction) -> list[ShortformOption]:
+    if action == ShortformAction.SUGGEST_SWITCH:
+        return _promotion_category_options()
+
+    result: list[ShortformOption] = []
+    for item in options:
+        option_id = str(item.id).strip()
+        label = str(item.label).strip()
+        if label in _REMOVED_CATEGORY_LABELS:
+            continue
+        if option_id and label:
+            result.append(ShortformOption(id=option_id, label=label))
+    return result
+
+
+def _format_assistant_message(message: str, action: ShortformAction) -> str:
+    if action in _QUESTION_ACTIONS:
+        return _single_question_message(message)
+    return _limit_message_length(message.strip(), 500)
+
+
+def _single_question_message(message: str) -> str:
+    if not message:
+        return ""
+
+    if not message.strip():
+        return ""
+
+    clean_lines = [
+        re.sub(r"^\s*[\*\-\d]+\s*[)\.]\s*", "", part.strip())
+        for part in message.strip().splitlines()
+        if part.strip()
+    ]
+    if clean_lines:
+        candidate = " ".join(clean_lines)
+    else:
+        candidate = message.strip()
+    candidate = re.sub(r"\s+", " ", candidate)
+
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", candidate) if part.strip()]
+    if not sentences:
+        sentences = [candidate]
+
+    summary = sentences[0].rstrip()
+    question = next((item for item in sentences if item.endswith("?")), None)
+
+    if question:
+        if question == summary:
+            return _limit_message_length(question, 240)
+        return _limit_message_length(f"{summary}\n{question}", 260)
+
+    # If the model did not include a question mark, keep the shortest meaningful
+    # one-line summary and keep the fallback concise.
+    return _limit_message_length(summary, 180)
+
+
+def _extract_question(message: str) -> str | None:
+    if not message:
+        return None
+    parts = [
+        part.strip()
+        for part in re.split(r"(?<=[?])\s+", message.strip())
+        if part.strip()
+    ]
+    return next((part for part in parts if part.endswith("?")), None)
+
+
+def _limit_message_length(text: str, max_len: int) -> str:
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1].rstrip() + "…"
 
 
 def _turn_input_to_text(turn_input: ShortformTurnInput) -> str:

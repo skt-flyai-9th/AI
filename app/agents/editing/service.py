@@ -8,8 +8,10 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.editing.effect_planner import EffectPlanner
 from app.agents.editing.graph import build_editing_graph
 from app.agents.editing.llm import EditingLLM, OpenAIEditingLLM
 from app.agents.editing.renderer import EditingRenderer, HttpEditingRenderer
@@ -22,6 +24,7 @@ from app.agents.editing.validator import EditRecipeValidator
 from app.agents.editing.video_context import FFmpegVideoContextBuilder, VideoContextBuilder
 from app.core.config import get_settings
 from app.models.editing_run import EditingRun
+from app.models.shortform_session import ShortformSession
 from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.schemas.editing import (
     EditRecipe,
@@ -33,6 +36,10 @@ from app.schemas.editing import (
     EditingRunStage,
     EditingRunStatus,
     PublishingResult,
+    PublishingTrack,
+    RecipeCaption,
+    RecipeClip,
+    RecipeCta,
     SelectedShortform,
 )
 
@@ -52,11 +59,13 @@ class EditingAgentService:
         video_context_builder: VideoContextBuilder | None = None,
         validator: EditRecipeValidator | None = None,
         renderer: EditingRenderer | None = None,
+        effect_planner: EffectPlanner | None = None,
     ) -> None:
         self.llm = llm or OpenAIEditingLLM()
         self.video_context_builder = video_context_builder or FFmpegVideoContextBuilder()
         self.validator = validator or EditRecipeValidator()
         self.renderer = renderer or HttpEditingRenderer()
+        self.effect_planner = effect_planner or EffectPlanner()
         self.settings = get_settings()
         self.domain_context = _load_domain_context()
         self.graph = build_editing_graph(self.llm, self.validator)
@@ -64,12 +73,16 @@ class EditingAgentService:
     def create_run(self, db: Session, request: EditingRunCreateRequest) -> EditingRun:
         self._validate_video_limit(request.videos)
         self._get_active_database(db, request.selected_shortform)
+        request_snapshot = request.model_dump(mode="json")
+        shortform_context = _find_shortform_context(db, request)
+        if shortform_context:
+            request_snapshot["_shortform_context"] = shortform_context
         run = EditingRun(
             id=f"edit_{uuid.uuid4().hex}",
             status=EditingRunStatus.QUEUED.value,
             stage=EditingRunStage.QUEUED.value,
             progress=0,
-            request_snapshot=request.model_dump(mode="json"),
+            request_snapshot=request_snapshot,
             revision_action=request.revision,
             warnings=[],
             video_context=[],
@@ -100,7 +113,9 @@ class EditingAgentService:
                 "A revision can be created only from a completed or source-gap run.",
                 status_code=409,
             )
-        snapshot = EditingRunCreateRequest.model_validate(parent.request_snapshot)
+        parent_snapshot = dict(parent.request_snapshot or {})
+        shortform_context = parent_snapshot.pop("_shortform_context", None)
+        snapshot = EditingRunCreateRequest.model_validate(parent_snapshot)
         parent_identity = {
             video.video_id: video.shooting_scene_order for video in snapshot.videos
         }
@@ -125,13 +140,16 @@ class EditingAgentService:
         snapshot.videos = sorted(request.videos, key=lambda video: video.shooting_scene_order)
         snapshot.revision = request.revision_action
         self._get_active_database(db, snapshot.selected_shortform)
+        revision_snapshot = snapshot.model_dump(mode="json")
+        if shortform_context:
+            revision_snapshot["_shortform_context"] = shortform_context
         run = EditingRun(
             id=f"edit_{uuid.uuid4().hex}",
             parent_run_id=parent.id,
             status=EditingRunStatus.QUEUED.value,
             stage=EditingRunStage.QUEUED.value,
             progress=0,
-            request_snapshot=snapshot.model_dump(mode="json"),
+            request_snapshot=revision_snapshot,
             revision_action=request.revision_action,
             warnings=[],
             video_context=[],
@@ -160,9 +178,14 @@ class EditingAgentService:
             return run
 
         try:
-            request = EditingRunCreateRequest.model_validate(run.request_snapshot)
+            raw_snapshot = dict(run.request_snapshot or {})
+            shortform_context = raw_snapshot.pop("_shortform_context", {})
+            request = EditingRunCreateRequest.model_validate(raw_snapshot)
             database_record = self._get_active_database(db, request.selected_shortform)
             database_payload = _database_payload(database_record)
+            project_payload = request.project.model_dump(mode="json")
+            if shortform_context:
+                project_payload["shortform_context"] = shortform_context
             parent = db.get(EditingRun, run.parent_run_id) if run.parent_run_id else None
             parent_recipe = parent.recipe if parent is not None else None
 
@@ -183,7 +206,7 @@ class EditingAgentService:
             result = self.graph.invoke(
                 {
                     "domain_context": self.domain_context,
-                    "project": request.project.model_dump(mode="json"),
+                    "project": project_payload,
                     "selected_shortform": request.selected_shortform.model_dump(mode="json"),
                     "video_editing_db": database_payload,
                     "videos": [video.model_dump(mode="json") for video in request.videos],
@@ -205,20 +228,48 @@ class EditingAgentService:
 
             decision = EditingPlanDecision.model_validate(result["decision"])
             if decision.outcome == "SOURCE_GAP":
-                run.status = EditingRunStatus.SOURCE_GAP.value
-                run.stage = EditingRunStage.COMPLETED.value
-                run.progress = 100
+                # A visual role mismatch must not strand the client waiting for a
+                # render that will never exist. First ask the planner to use the
+                # supported reduced structure; if it still refuses or produces an
+                # invalid plan, fall back to a deterministic shooting-order edit.
                 run.missing_scene_roles = decision.missing_scene_roles
-                run.available_options = decision.available_options
-                run.finished_at = datetime.now(timezone.utc)
-                db.commit()
-                db.refresh(run)
-                return run
+                run.warnings = [
+                    *(run.warnings or []),
+                    "SOURCE_ROLE_MATCH_FALLBACK: 장면 매칭이 부족하여 촬영 순서 기반 편집을 적용했습니다.",
+                ]
+                try:
+                    reduced = self.graph.invoke(
+                        {
+                            "domain_context": self.domain_context,
+                            "project": project_payload,
+                            "selected_shortform": request.selected_shortform.model_dump(mode="json"),
+                            "video_editing_db": database_payload,
+                            "videos": [video.model_dump(mode="json") for video in request.videos],
+                            "video_contexts": [context.model_dump(mode="json") for context in contexts],
+                            "parent_recipe": parent_recipe,
+                            "revision_action": "USE_REDUCED_STRUCTURE",
+                            "max_repair_attempts": self.settings.editing_max_repair_attempts,
+                            "repair_attempts": 0,
+                            "stage_callback": update_graph_stage,
+                        }
+                    )
+                    if reduced.get("exhausted"):
+                        decision = self._build_ordered_fallback(
+                            request, database_payload, contexts, shortform_context
+                        )
+                    else:
+                        decision = EditingPlanDecision.model_validate(reduced["decision"])
+                        if decision.outcome == "SOURCE_GAP":
+                            decision = self._build_ordered_fallback(
+                                request, database_payload, contexts, shortform_context
+                            )
+                except Exception:
+                    decision = self._build_ordered_fallback(
+                        request, database_payload, contexts, shortform_context
+                    )
 
             recipe = EditRecipe.model_validate(decision.recipe)
-            publishing = PublishingResult.model_validate(decision.publishing).model_copy(
-                update={"post_note": "음원은 게시 시 플랫폼 내에서 추가해주세요."}
-            )
+            publishing = PublishingResult.model_validate(decision.publishing)
             self._set_stage(db, run, EditingRunStage.RENDERING, 80)
             render_result = self.renderer.render(
                 run_id=run.id,
@@ -249,6 +300,127 @@ class EditingAgentService:
                 db.commit()
             raise
 
+    def _build_ordered_fallback(
+        self,
+        request: EditingRunCreateRequest,
+        video_editing_db: dict[str, Any],
+        contexts: list[Any],
+        shortform_context: dict[str, Any] | None = None,
+    ) -> EditingPlanDecision:
+        """Build a conservative renderable recipe without scene-role inference."""
+        rules = video_editing_db.get("editing_rules") or {}
+        min_cut_ms = max(300, int(rules.get("min_cut_duration_ms") or 0))
+        max_duration_ms = min(
+            int(float(rules.get("max_duration_sec") or 90) * 1000),
+            self.settings.editing_max_output_duration_seconds * 1000,
+        )
+        usable = [
+            context
+            for context in sorted(contexts, key=lambda item: item.shooting_scene_order)
+            if context.duration_ms >= min_cut_ms
+        ]
+        max_clip_count = max(1, max_duration_ms // min_cut_ms)
+        usable = usable[:max_clip_count]
+        if not usable:
+            raise EditingDomainError(
+                "EDITING_SOURCE_TOO_SHORT",
+                "No uploaded video is long enough to produce a valid fallback edit.",
+                status_code=422,
+            )
+
+        target_per_clip_ms = max(
+            min_cut_ms,
+            min(3_000, max_duration_ms // len(usable)),
+        )
+        timeline: list[RecipeClip] = []
+        cursor = 0
+        for index, context in enumerate(usable, start=1):
+            remaining = max_duration_ms - cursor
+            duration = min(context.duration_ms, target_per_clip_ms, remaining)
+            if duration < min_cut_ms:
+                break
+            timeline.append(
+                RecipeClip(
+                    clip_order=index,
+                    video_id=context.video_id,
+                    source_start_ms=0,
+                    source_end_ms=duration,
+                    timeline_start_ms=cursor,
+                    speed=1.0,
+                    crop_mode="SUBJECT_CENTER",
+                    transition_in=None,
+                    transition_out="CUT",
+                    caption=None,
+                    effects=[],
+                )
+            )
+            cursor += duration
+
+        subject = request.project.promotion_subject
+        subject_name = str(subject.get("name") or "오늘의 추천")[:40]
+        fallback_copy = _fallback_copy_context(shortform_context or {})
+        _apply_fallback_promotional_captions(timeline, subject_name, fallback_copy)
+        search_keyword = _fallback_search_keyword(
+            str(
+                video_editing_db.get("recommendation_title")
+                or video_editing_db.get("name")
+                or request.selected_shortform.editing_template_id
+            )
+        )
+        recipe = EditRecipe(
+            recipe_version=1,
+            editing_template_id=request.selected_shortform.editing_template_id,
+            editing_template_version=request.selected_shortform.editing_template_version,
+            source_type="VIDEO_ONLY",
+            timeline=timeline,
+            cta=RecipeCta(
+                text=_fit_caption(
+                    fallback_copy.get("cta") or f"{subject_name}, 지금 만나보세요"
+                )
+            ),
+        )
+        recipe = self.effect_planner.apply_recipe(
+            recipe,
+            produced_frame_context={"observations": []},
+            video_editing_db=video_editing_db,
+        )
+        validation_errors = self.validator.validate(
+            recipe,
+            selected_shortform=request.selected_shortform,
+            video_editing_db=video_editing_db,
+            video_contexts=contexts,
+            project=request.project.model_dump(mode="json"),
+        )
+        if validation_errors:
+            errors = "; ".join(_format_validation_issue(item) for item in validation_errors)
+            raise EditingDomainError(
+                "EDITING_FALLBACK_INVALID",
+                "Fallback recipe validation failed: " + errors,
+                status_code=500,
+            )
+        return EditingPlanDecision(
+            outcome="RECIPE",
+            recipe=recipe,
+            publishing=PublishingResult(
+                title=_fit_caption(fallback_copy.get("title") or f"{subject_name} 공개"),
+                caption=_fit_caption(
+                    fallback_copy.get("body")
+                    or f"{subject_name}의 매력을 짧은 영상으로 확인해 보세요."
+                ),
+                hashtags=_fallback_hashtags(subject_name),
+                track=PublishingTrack(
+                    mode="SUGGESTED",
+                    search_keyword=search_keyword,
+                ),
+                post_note=(
+                    f"플랫폼 음원 검색에서 ‘{search_keyword}’을 검색해 직접 추가해주세요."
+                ),
+            ),
+            missing_scene_roles=[],
+            available_options=[],
+            rationale="장면 역할 매칭 실패 후 촬영 순서 기반 자동 축소 편집",
+        )
+
     @staticmethod
     def mark_enqueue_failed(db: Session, run: EditingRun) -> None:
         run.status = EditingRunStatus.FAILED.value
@@ -263,7 +435,7 @@ class EditingAgentService:
             status=EditingRunStatus(run.status),
             recipe=EditRecipe.model_validate(run.recipe) if run.recipe else None,
             render=run.render_result,
-            publishing=run.publishing_result,
+            publishing=_publishing_for_result(run),
             warnings=[str(item) for item in (run.warnings or [])],
             missing_scene_roles=[str(item) for item in (run.missing_scene_roles or [])],
             available_options=run.available_options or [],
@@ -287,7 +459,7 @@ class EditingAgentService:
     ) -> VideoEditingDBRecord:
         database_record = db.get(
             VideoEditingDBRecord,
-            (selected.video_editing_db_id, selected.video_editing_db_version),
+            (selected.editing_template_id, selected.editing_template_version),
         )
         if database_record is None:
             raise EditingDomainError(
@@ -295,10 +467,10 @@ class EditingAgentService:
                 "The selected video-editing DB version was not found.",
                 status_code=404,
             )
-        if database_record.status != "ACTIVE":
+        if database_record.status not in {"ACTIVE", "ARCHIVED"}:
             raise EditingDomainError(
                 "VIDEO_EDITING_DB_INACTIVE",
-                "The selected video-editing DB version is not ACTIVE.",
+                "The selected video-editing DB version is not executable.",
                 status_code=409,
             )
         return database_record
@@ -348,14 +520,264 @@ def _reals_registry_ready() -> bool:
 
 def _database_payload(database_record: VideoEditingDBRecord) -> dict[str, Any]:
     return {
-        "video_editing_db_id": database_record.template_id,
-        "video_editing_db_version": database_record.version,
+        "editing_template_id": database_record.template_id,
+        "editing_template_version": database_record.version,
         "name": database_record.name,
         "recommendation_title": database_record.recommendation_title,
         "recommendation_concept": database_record.recommendation_concept,
         "shooting_guide": database_record.shooting_guide or {},
         "editing_rules": database_record.editing_rules or {},
+        # Existing DB column only: Gemini reference-video evidence is preserved
+        # here, so the Editing Agent can match user frames to the original-video
+        # segment/effect context without extending the video-editing DB schema.
+        "reference_evidence": database_record.evidence_summary or {},
     }
+
+
+def _find_shortform_context(
+    db: Session,
+    request: EditingRunCreateRequest,
+) -> dict[str, Any]:
+    """Resolve and freeze the AI-owned brief selected by recommendation_id."""
+    recommendation_id = request.selected_shortform.recommendation_id
+    sessions = db.scalars(
+        select(ShortformSession)
+        .where(ShortformSession.store_id == request.project.store_id)
+        .order_by(ShortformSession.updated_at.desc())
+        .limit(50)
+    ).all()
+    session = next(
+        (
+            item
+            for item in sessions
+            if str((item.current_recommendation or {}).get("recommendation_id") or "")
+            == recommendation_id
+        ),
+        None,
+    )
+    if session is None:
+        return {}
+
+    state = dict(session.project_state or {})
+    store_context = dict(session.store_context or {})
+    store = dict(store_context.get("store") or {})
+    store.pop("store_photos", None)
+    safe_store_context = {
+        "store": store,
+        "representative_menus": list(store_context.get("representative_menus") or []),
+        "trade_area": store_context.get("trade_area"),
+    }
+    user_statements = [
+        str(item.get("content") or "").strip()[:500]
+        for item in list(session.conversation or [])[-40:]
+        if isinstance(item, dict)
+        and item.get("role") == "user"
+        and str(item.get("content") or "").strip()
+    ][-12:]
+    return {
+        "session_id": session.id,
+        "recommendation_id": recommendation_id,
+        "project_state": {
+            key: state.get(key)
+            for key in (
+                "promotion_category",
+                "promotion_subject",
+                "promotion_objective",
+                "face_exposure",
+                "creative_preferences",
+                "secondary_information",
+                "facts_from_user",
+                "brief_confirmed",
+            )
+        },
+        "store_context": safe_store_context,
+        "recommendation": dict(session.current_recommendation or {}),
+        "recent_user_statements": user_statements,
+    }
+
+
+def _apply_fallback_promotional_captions(
+    timeline: list[RecipeClip],
+    subject_name: str,
+    copy_context: dict[str, str] | None = None,
+) -> None:
+    """Guarantee useful, evidence-safe copy when the LLM fallback is used."""
+    if not timeline:
+        return
+    caption_total = min(3, len(timeline))
+    if len(timeline) <= caption_total:
+        indices = list(range(len(timeline)))
+    else:
+        indices = [0, (len(timeline) - 1) // 2, len(timeline) - 2]
+    context = copy_context or {}
+    texts = [
+        _fit_caption(context.get("hook") or f"{subject_name}, 지금 공개합니다"),
+        _fit_caption(context.get("detail") or "하나씩 공개되는 특별한 순간"),
+        _fit_caption(context.get("support") or "눈으로 먼저 만나는 매력"),
+    ]
+    styles = ["HOOK", "CAPTION_EMPHASIS", "CAPTION"]
+    positions = ["TOP", "MIDDLE", "TOP"]
+    for order, index in enumerate(indices[:caption_total]):
+        clip = timeline[index]
+        output_duration = int(round((clip.source_end_ms - clip.source_start_ms) / clip.speed))
+        typewriter_units = len("".join(texts[order].split()))
+        typewriter_required_ms = max(0, typewriter_units - 1) * 80 + 600
+        if order == 0 and typewriter_units <= 18 and output_duration >= typewriter_required_ms:
+            motion_id = "TYPEWRITER"
+        elif order < 2:
+            motion_id = "POP"
+        else:
+            motion_id = "NONE"
+        clip.caption = RecipeCaption(
+            text=texts[order],
+            start_ms=clip.timeline_start_ms,
+            end_ms=clip.timeline_start_ms + output_duration,
+            position=positions[order],
+            style_id=styles[order],
+            motion_id=motion_id,
+            font_weight="BOLD" if order < 2 else "SEMIBOLD",
+            scale=1.0,
+        )
+
+
+def _fallback_copy_context(shortform_context: dict[str, Any]) -> dict[str, str]:
+    state = dict(shortform_context.get("project_state") or {})
+    subject = dict(state.get("promotion_subject") or {})
+    subject_name = str(subject.get("name") or "").strip()
+    facts = [
+        str(value).strip()
+        for value in dict(state.get("facts_from_user") or {}).values()
+        if str(value).strip()
+    ]
+    details = [
+        str(value).strip()
+        for value in list(state.get("secondary_information") or [])
+        if str(value).strip()
+    ]
+    preferences = [
+        str(value).strip()
+        for value in list(state.get("creative_preferences") or [])
+        if str(value).strip()
+    ]
+    specific = list(dict.fromkeys([*facts, *details]))
+    if not subject_name and not specific:
+        return {}
+    hook = subject_name or specific[0]
+    detail = specific[0] if specific and specific[0] != hook else ""
+    support = specific[1] if len(specific) > 1 else (preferences[0] if preferences else "")
+    objective = str(state.get("promotion_objective") or "").lower()
+    cta_suffix = {
+        "visit": "직접 만나보세요",
+        "sales": "지금 만나보세요",
+        "reservation_inquiry": "지금 문의해보세요",
+        "new_customer": "새롭게 만나보세요",
+        "revisit": "다시 만나보세요",
+    }.get(objective, "더 알아보세요")
+    body_parts = list(dict.fromkeys([item for item in [subject_name, *specific[:2]] if item]))
+    return {
+        "hook": hook,
+        "detail": detail,
+        "support": support,
+        "cta": f"{subject_name or hook}, {cta_suffix}",
+        "title": f"{subject_name or hook}의 포인트",
+        "body": " · ".join(body_parts),
+    }
+
+
+def _fit_caption(value: str, limit: int = 40) -> str:
+    text = " ".join(value.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _fallback_search_keyword(value: str) -> str:
+    keyword = value.strip()
+    lowered = keyword.lower()
+    known_keywords = {
+        "jujutsu": "주술회전",
+        "otsukare": "오츠카레 썸머",
+        "cafe_recommendation": "카페 추천 릴스",
+    }
+    for marker, known in known_keywords.items():
+        if marker in lowered:
+            return known
+    for suffix in ("트랜지션", "챌린지", "릴스", "숏폼", "포맷"):
+        keyword = keyword.replace(suffix, " ")
+    keyword = " ".join(keyword.split())
+    return (keyword or "트렌드 음원")[:80]
+
+
+def _fallback_hashtags(subject_name: str) -> list[str]:
+    subject_tag = "#" + "".join(subject_name.split())
+    candidates = [
+        subject_tag,
+        "#매장소개",
+        "#가게소개",
+        "#동네맛집",
+        "#숏폼",
+        "#릴스",
+    ]
+    return list(dict.fromkeys(candidates))[:5]
+
+
+def _publishing_for_result(run: EditingRun) -> PublishingResult | None:
+    if not run.publishing_result:
+        return None
+    data = dict(run.publishing_result)
+    raw_caption = str(data.get("caption") or "").strip()
+    project = (run.request_snapshot or {}).get("project") or {}
+    subject = project.get("promotion_subject") or {}
+    subject_name = str(subject.get("name") or "오늘의 추천")[:40]
+    if not data.get("title"):
+        data["title"] = f"{subject_name}의 매력을 만나보세요"
+        data["caption"] = _strip_legacy_operational_copy(raw_caption) or (
+            f"{subject_name}의 모습을 짧은 영상으로 확인해 보세요."
+        )
+
+    hashtags = [str(value) for value in (data.get("hashtags") or [])]
+    for fallback in ("#숏폼", "#릴스", "#매장소개", "#가게소개", "#동네맛집"):
+        if len(hashtags) >= 5:
+            break
+        if fallback not in hashtags:
+            hashtags.append(fallback)
+    data["hashtags"] = hashtags
+
+    selected = (run.request_snapshot or {}).get("selected_shortform") or {}
+    fallback_keyword = _fallback_search_keyword(
+        str(selected.get("editing_template_id") or "")
+    )
+    track = dict(data.get("track") or {})
+    track["start_sec"] = None
+    track["end_sec"] = None
+    if track.get("title"):
+        track["mode"] = "FIXED"
+    else:
+        keyword = str(track.get("search_keyword") or fallback_keyword)
+        track.update(
+            {
+                "mode": "SUGGESTED",
+                "title": None,
+                "artist": None,
+                "mood": track.get("mood"),
+                "search_keyword": keyword,
+            }
+        )
+        data["post_note"] = (
+            f"플랫폼 음원 검색에서 ‘{keyword}’을 검색해 직접 추가해주세요."
+        )
+    data["track"] = track
+    return PublishingResult.model_validate(data)
+
+
+def _strip_legacy_operational_copy(value: str) -> str:
+    text = value.strip()
+    positions = [
+        text.find(marker)
+        for marker in ("음악은", "음원은", "플랫폼에서", "업로드 후", "게시 시")
+        if marker in text
+    ]
+    if positions:
+        text = text[: min(positions)].rstrip(" ,.!·")
+    return text
 
 
 def _safe_error_message(exc: Exception) -> str:

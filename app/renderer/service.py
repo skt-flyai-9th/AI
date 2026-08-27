@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import sys
 import threading
 from dataclasses import dataclass
@@ -10,10 +11,13 @@ from tempfile import TemporaryDirectory
 from typing import Any, Callable
 from urllib.parse import quote, urlparse
 
-import httpx
-
 from app.agents.editing.reals import RealsRenderJobRequest
 from app.core.config import Settings, get_settings
+from app.services.source_assets import (
+    SourceAssetDownloadError,
+    SourceAssetTooLargeError,
+    download_source_asset,
+)
 
 
 class RendererServiceError(RuntimeError):
@@ -96,6 +100,11 @@ class RealsRendererService:
             job_dir = Path(temporary)
             sources = self._download_sources(request, job_dir)
             produced = self._prepare_produced_video(request, sources, job_dir)
+            edit_recipe = _fit_recipe_to_produced_duration(
+                request.final_render.edit_recipe,
+                duration_ms=produced.duration_ms,
+                fps=produced.fps,
+            )
             final_request = self.native.FinalRenderRequest.model_validate(
                 {
                     "job_id": request.job_id,
@@ -103,7 +112,7 @@ class RealsRendererService:
                     "idempotency_key": request.idempotency_key,
                     "produced_video": produced.model_dump(mode="json"),
                     "source_mode": request.final_render.source_mode,
-                    "edit_recipe": request.final_render.edit_recipe.model_dump(mode="json"),
+                    "edit_recipe": edit_recipe.model_dump(mode="json"),
                     "template_bundle_id": request.final_render.template_bundle_id,
                 }
             )
@@ -166,60 +175,48 @@ class RealsRendererService:
         job_dir: Path,
     ) -> dict[str, Any]:
         sources: dict[str, Any] = {}
-        timeout = httpx.Timeout(self.settings.renderer_download_timeout_seconds)
-        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            for asset in request.source_assets:
-                parsed = urlparse(asset.asset_url)
-                if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                    raise RendererServiceError(
-                        f"Invalid source asset URL for {asset.file_id}.",
-                        code="REALS_ASSET_URL_INVALID",
-                        status_code=422,
-                    )
-                target = job_dir / (
-                    hashlib.sha256(asset.file_id.encode()).hexdigest()[:24] + ".mp4"
+        for asset in request.source_assets:
+            parsed = urlparse(asset.asset_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise RendererServiceError(
+                    f"Invalid source asset URL for {asset.file_id}.",
+                    code="REALS_ASSET_URL_INVALID",
+                    status_code=422,
                 )
-                try:
-                    with client.stream("GET", asset.asset_url) as response:
-                        response.raise_for_status()
-                        declared = int(response.headers.get("content-length") or 0)
-                        if declared > self.settings.renderer_max_download_bytes:
-                            raise RendererServiceError(
-                                f"Source asset {asset.file_id} exceeds the download limit.",
-                                code="REALS_ASSET_TOO_LARGE",
-                                status_code=413,
-                            )
-                        size = 0
-                        with target.open("wb") as output:
-                            for chunk in response.iter_bytes():
-                                size += len(chunk)
-                                if size > self.settings.renderer_max_download_bytes:
-                                    raise RendererServiceError(
-                                        f"Source asset {asset.file_id} exceeds the download limit.",
-                                        code="REALS_ASSET_TOO_LARGE",
-                                        status_code=413,
-                                    )
-                                output.write(chunk)
-                except RendererServiceError:
-                    raise
-                except (httpx.HTTPError, OSError) as exc:
-                    raise RendererServiceError(
-                        f"Could not download source asset {asset.file_id}.",
-                        code="REALS_ASSET_DOWNLOAD_FAILED",
-                        status_code=502,
-                        retryable=True,
-                    ) from exc
+            target = job_dir / (
+                hashlib.sha256(asset.file_id.encode()).hexdigest()[:24] + ".mp4"
+            )
+            try:
+                download_source_asset(
+                    asset.asset_url,
+                    target,
+                    max_bytes=self.settings.renderer_max_download_bytes,
+                    timeout_seconds=self.settings.renderer_download_timeout_seconds,
+                )
+            except SourceAssetTooLargeError as exc:
+                raise RendererServiceError(
+                    f"Source asset {asset.file_id} exceeds the download limit.",
+                    code="REALS_ASSET_TOO_LARGE",
+                    status_code=413,
+                ) from exc
+            except (SourceAssetDownloadError, OSError) as exc:
+                raise RendererServiceError(
+                    f"Could not download source asset {asset.file_id}.",
+                    code="REALS_ASSET_DOWNLOAD_FAILED",
+                    status_code=502,
+                    retryable=True,
+                ) from exc
 
-                try:
-                    media = self.native.media_ref(asset.file_id, target)
-                except Exception as exc:
-                    raise RendererServiceError(
-                        f"Source asset {asset.file_id} is not a readable video.",
-                        code="REALS_ASSET_INVALID",
-                        status_code=422,
-                    ) from exc
-                _verify_media_metadata(asset, media)
-                sources[asset.file_id] = media
+            try:
+                media = self.native.media_ref(asset.file_id, target)
+            except Exception as exc:
+                raise RendererServiceError(
+                    f"Source asset {asset.file_id} is not a readable video.",
+                    code="REALS_ASSET_INVALID",
+                    status_code=422,
+                ) from exc
+            _verify_media_metadata(asset, media)
+            sources[asset.file_id] = media
         return sources
 
     def _prepare_produced_video(
@@ -326,6 +323,41 @@ def _verify_media_metadata(expected: Any, actual: Any) -> None:
             code="REALS_ASSET_METADATA_MISMATCH",
             status_code=409,
         )
+
+
+def _fit_recipe_to_produced_duration(recipe: Any, *, duration_ms: int, fps: float) -> Any:
+    """Clamp frame-sized assembly drift before the native recipe validator runs.
+
+    FFmpeg encodes an assembled CFR asset on frame boundaries, so its probed
+    duration can be a few milliseconds shorter than the sum of the requested
+    source trims. Larger overruns remain untouched and are rejected by the
+    native validator as genuine recipe errors.
+    """
+    tolerance_ms = max(1, math.ceil(1000 / fps))
+    fitted_segments = []
+    adjusted_ends: dict[str, int] = {}
+
+    for segment in recipe.segments:
+        overrun_ms = segment.trim_out_ms - duration_ms
+        if 0 < overrun_ms <= tolerance_ms and segment.trim_in_ms < duration_ms:
+            segment = segment.model_copy(update={"trim_out_ms": duration_ms})
+            adjusted_ends[segment.produced_segment_id] = duration_ms
+        fitted_segments.append(segment)
+
+    fitted_overlays = []
+    for overlay in recipe.overlays:
+        segment_end_ms = adjusted_ends.get(overlay.produced_segment_id)
+        if (
+            segment_end_ms is not None
+            and overlay.end_ms > segment_end_ms
+            and overlay.start_ms < segment_end_ms
+        ):
+            overlay = overlay.model_copy(update={"end_ms": segment_end_ms})
+        fitted_overlays.append(overlay)
+
+    return recipe.model_copy(
+        update={"segments": fitted_segments, "overlays": fitted_overlays}
+    )
 
 
 def _qc_details(payload: dict[str, Any]) -> list[dict[str, Any]]:

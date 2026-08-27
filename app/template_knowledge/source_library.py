@@ -5,6 +5,7 @@ import json
 import re
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
+from functools import lru_cache
 from importlib import resources
 from typing import Any
 
@@ -24,6 +25,7 @@ from app.schemas.template_knowledge import (
 from app.template_knowledge.validation import TemplateCandidateValidator
 
 _SOURCE_PACKAGE = "app.template_knowledge.sources"
+_SHOOTING_INTERVALS_FILE = "video_editing_task_intervals.json"
 _SOURCE_FILES = {
     TemplateType.VIDEO_EDITING: ("video_editing.json", "영상편집DB.xlsx"),
     TemplateType.TRADE_AREA: ("trade_area.json", "상권분석DB.xlsx"),
@@ -241,6 +243,40 @@ def _load_source_payload(template_type: TemplateType) -> dict[str, Any]:
     return payload
 
 
+@lru_cache(maxsize=1)
+def _load_shooting_task_intervals() -> dict[str, Any]:
+    package = resources.files(_SOURCE_PACKAGE)
+    payload = json.loads(
+        package.joinpath(_SHOOTING_INTERVALS_FILE).read_text(encoding="utf-8")
+    )
+    source = payload["source"]
+    workbook_name = str(source["bundled_filename"])
+    actual_sha = hashlib.sha256(package.joinpath(workbook_name).read_bytes()).hexdigest().upper()
+    expected_sha = str(source["sha256"]).upper()
+    if actual_sha != expected_sha:
+        raise TemplateSourceImportError(
+            f"Shooting interval source checksum mismatch for {workbook_name}: "
+            f"{actual_sha} != {expected_sha}"
+        )
+
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for interval in payload["intervals"]:
+        grouped[str(interval["challenge_id"])].append(interval)
+    for challenge_id, intervals in grouped.items():
+        intervals.sort(key=lambda item: int(item["display_order"]))
+        expected_orders = list(range(1, len(intervals) + 1))
+        actual_orders = [int(item["display_order"]) for item in intervals]
+        if actual_orders != expected_orders:
+            raise TemplateSourceImportError(
+                f"Shooting intervals must be contiguous for {challenge_id}: {actual_orders}"
+            )
+        if any(float(item["end_ms"]) <= float(item["start_ms"]) for item in intervals):
+            raise TemplateSourceImportError(
+                f"Shooting intervals must have positive durations for {challenge_id}."
+            )
+    return {"source": source, "by_challenge": dict(grouped)}
+
+
 def _import_bundle(
     db: Session, payload: dict[str, Any]
 ) -> tuple[TemplateSourceBundle, bool]:
@@ -327,6 +363,7 @@ def _import_video_editing_db(
     guide_rows = payload["datasets"]["03_GUIDE_TEMPLATES"]["records"]
     challenge_rows = payload["datasets"]["02_INPUT_GUIDES"]["records"]
     challenge_names = {row["id"]: row["name"] for row in challenge_rows}
+    challenges_by_id = {row["id"]: row for row in challenge_rows}
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in guide_rows:
         if row["validation_status"] != "PASS":
@@ -335,17 +372,24 @@ def _import_video_editing_db(
 
     created: list[str] = []
     skipped: list[str] = []
+    interval_source = _load_shooting_task_intervals()
     for source_template_id, rows in groups.items():
         rows.sort(key=lambda item: int(item["guide_sequence_index"]))
+        active_rows = [row for row in rows if row["template_status"] == "ACTIVE"]
+        if not active_rows:
+            continue
         source_version = int(rows[0]["template_version"])
         template_id = re.sub(r"_v\d+$", "", source_template_id)
         marker = f"VIDEO_EDITING:{template_id}:v{source_version}"
-        if db.get(VideoEditingDBRecord, (template_id, source_version)) is not None:
-            skipped.append(marker)
-            continue
+        task_intervals = interval_source["by_challenge"].get(rows[0]["challenge_id"])
+        if not task_intervals:
+            raise TemplateSourceImportError(
+                f"Original shooting intervals are missing for {rows[0]['challenge_id']}."
+            )
         content = _editing_content(
             rows,
             challenge_name=challenge_names.get(rows[0]["challenge_id"], rows[0]["challenge_id"]),
+            task_intervals=task_intervals,
         )
         errors = validator.validate(
             TemplateType.VIDEO_EDITING,
@@ -356,6 +400,20 @@ def _import_video_editing_db(
             raise TemplateSourceImportError(
                 f"Provided video-editing DB record {source_template_id} failed validation: {errors}"
             )
+        interval_evidence = {
+            **interval_source["source"],
+            "source_rows": [int(item["source_row_number"]) for item in task_intervals],
+            "task_count": len(task_intervals),
+        }
+        existing = db.get(VideoEditingDBRecord, (template_id, source_version))
+        if existing is not None:
+            evidence_summary = dict(existing.evidence_summary or {})
+            existing.shooting_guide = content.shooting_guide.model_dump(mode="json")
+            evidence_summary["shooting_task_intervals"] = interval_evidence
+            existing.evidence_summary = evidence_summary
+            db.commit()
+            skipped.append(marker)
+            continue
         for current in db.scalars(
             select(VideoEditingDBRecord).where(
                 VideoEditingDBRecord.template_id == template_id,
@@ -383,7 +441,10 @@ def _import_video_editing_db(
                         "source_template_id": source_template_id,
                         "source_template_version": source_version,
                         "source_rows": [row["_source_row_number"] for row in rows],
-                    }
+                    },
+                    "input_guide": challenges_by_id.get(rows[0]["challenge_id"]),
+                    "reference_segments": active_rows,
+                    "shooting_task_intervals": interval_evidence,
                 },
                 activated_at=datetime.now(timezone.utc),
             )
@@ -394,7 +455,10 @@ def _import_video_editing_db(
 
 
 def _editing_content(
-    rows: list[dict[str, Any]], *, challenge_name: str
+    rows: list[dict[str, Any]],
+    *,
+    challenge_name: str,
+    task_intervals: list[dict[str, Any]],
 ) -> VideoEditingDBContent:
     challenge_id = str(rows[0]["challenge_id"])
     active_rows = [row for row in rows if row["template_status"] == "ACTIVE"]
@@ -408,28 +472,41 @@ def _editing_content(
     production_minutes = max(int(row["estimated_production_minutes"]) for row in active_rows)
     scenes = []
     tasks = []
-    for order, row in enumerate(active_rows, start=1):
-        duration = max(0.1, (float(row["end_ms"]) - float(row["start_ms"])) / 1000)
+    for order, interval in enumerate(task_intervals, start=1):
+        duration = max(
+            0.1,
+            (float(interval["end_ms"]) - float(interval["start_ms"])) / 1000,
+        )
+        instructions = [
+            _bounded(str(item), 500) for item in interval.get("instructions", []) if str(item).strip()
+        ]
+        if not instructions:
+            raise TemplateSourceImportError(
+                f"Shooting interval {challenge_id}:{order} has no instructions."
+            )
         description = _bounded(
-            f"{row['scene_summary']} — {row['action_pattern']}",
+            f"{interval['task_title']} — {' '.join(instructions)}",
             500,
         )
-        on_screen_text = str(row.get("guide_on_screen_text") or "").strip() or None
         scenes.append(
             {
                 "scene_order": order,
-                "scene_role": _bounded(str(row["narrative_role"]), 80),
+                "scene_role": _bounded(str(interval["scene_role"]), 80),
                 "scene_description": description,
                 "scene_dialogue": None,
-                "scene_subtitle": _bounded(on_screen_text, 200) if on_screen_text else None,
+                "scene_subtitle": None,
                 "shot_type": "가이드 구간 재현",
                 "target_duration_sec": min(duration, 30),
             }
         )
         tasks.append(
             {
-                "task_order": order,
-                "description": _bounded(str(row["action_pattern"]), 500),
+                "display_order": order,
+                "task_title": _bounded(str(interval["task_title"]), 200),
+                "scene_index": order - 1,
+                "guide": {
+                    "instructions": instructions,
+                },
             }
         )
     concept = _bounded(
@@ -452,6 +529,8 @@ def _editing_content(
             },
             "shooting_guide": {
                 "estimated_shooting_sec": production_minutes * 60,
+                "required_people": 1,
+                "props": [],
                 "difficulty": "중" if production_minutes <= 10 else "상",
                 "scenes": scenes,
                 "tasks": tasks,
@@ -464,7 +543,17 @@ def _editing_content(
                 "audio_policy": "SILENT_V1",
                 "min_cut_duration_ms": 300,
                 "max_duration_sec": max_duration,
-                "allowed_effect_ids": [],
+                "allowed_effect_ids": [
+                    "PUNCH_ZOOM",
+                    "ZOOM",
+                    "SHAKE",
+                    "VIBRATION",
+                    "ROTATION",
+                    "POSITION_MOVE",
+                    "FLASH",
+                    "COLOR",
+                    "COLOR_TONE",
+                ],
                 "allowed_transition_ids": ["CUT", "HARD_CUT"],
             },
             "trend_ids": [challenge_id],

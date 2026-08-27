@@ -158,6 +158,16 @@ Apify, Gemini, YouTube, NAVER의 부분 실패는 가능한 경우 HTTP 오류 �
 모든 후보를 이미 보여준 경우에는 새 추천 주기를 시작하며, 추천 선택 LLM 장애 시에도 AI
 서버가 안정적인 후보 하나를 반환한다.
 
+첫 화면의 진입 선택지는 `PROMOTION_GUIDE`, `FREE_INPUT` 두 개다.
+`PROMOTION_GUIDE`를 선택하면 AI 서버가 LLM을 거치지 않고 아래 세 카테고리만 반환한다.
+
+- `MENU`: 메뉴
+- `SPACE`: 가게 공간·분위기
+- `EVENT`: 이벤트·혜택·할인
+
+사람·브랜드 이야기, 이용 정보, 후기·신뢰·전문성은 구조화 카테고리로 반환하지 않는다.
+자유 입력에서 관련 내용을 말하는 것은 허용되지만 새 구조화 카테고리로 만들지는 않는다.
+
 ```http
 POST /api/v1/shortform-sessions
 X-Internal-API-Key: <INTERNAL_API_KEY>
@@ -205,9 +215,11 @@ Content-Type: application/json
 ```
 
 응답의 `action`은 `ASK`, `SAVE_AND_ASK`, `CLARIFY`, `SUGGEST_SWITCH`,
-`RESOLVE_CONFLICT`, `CONFIRM`, `RECOMMEND` 중 하나다. 추천 응답에는
-`recommendation_id`, `project_title`, `title`, `concept`, `video_editing_db_id`,
-`video_editing_db_version`이 포함된다. 백엔드는 사용자가 추천을 수락하면 이 식별자와 버전을
+`RESOLVE_CONFLICT`, `CONFIRM`, `RECOMMEND`, `OUT_OF_SCOPE` 중 하나다. 질문형 응답은
+한 turn에 질문 하나만 포함하며 `project_state.current_question`에서 현재 질문을 확인할 수 있다.
+`project_state.ready_for_recommendation`은 최종 확인이 끝난 뒤에만 `true`가 된다. 추천 응답에는
+`recommendation_id`, `project_title`, `title`, `concept`, `editing_template_id`,
+`editing_template_version`이 포함된다. 백엔드는 사용자가 추천을 수락하면 이 식별자와 버전을
 프로젝트에 저장한다.
 
 다시 추천받기는 현재 context를 유지하고 이미 노출한 DB를 제외한다.
@@ -219,7 +231,24 @@ POST /api/v1/shortform-sessions/{session_id}/recommendations/next
 촬영 가이드는 선택된 정확한 DB 버전으로 조회한다.
 
 ```http
-GET /api/v1/video-editing-db/{record_id}/versions/{version}/shooting-guide
+GET /api/v1/editing-templates/{template_id}/versions/{version}/shooting-guide
+```
+
+`tasks`는 장면 순서와 촬영 안내만 반환한다. `scene_index`는 `scenes`의 0-based
+인덱스이며, `task_type`과 `guide_type`은 계약에 포함하지 않는다. `guide.start_ms`와
+`guide.end_ms`는 사용자 촬영물의 트림 구간이 아니라 참고 영상에서 해당 태스크를 보여줄 절대 구간이다.
+
+```json
+{
+  "display_order": 1,
+  "task_title": "첫 번째 손짓 변환 촬영",
+  "scene_index": 0,
+  "guide": {
+    "instructions": ["손짓 직후 메뉴가 등장하도록 촬영하세요."],
+    "start_ms": 0,
+    "end_ms": 1500
+  }
+}
 ```
 
 새로고침이나 프로젝트 취소로 대화를 폐기할 때는 세션을 삭제한다.
@@ -249,8 +278,8 @@ Content-Type: application/json
   },
   "selected_shortform": {
     "recommendation_id": "rec_123",
-    "video_editing_db_id": "video_editing_db_014",
-    "video_editing_db_version": 3
+    "editing_template_id": "video_editing_db_014",
+    "editing_template_version": 3
   },
   "videos": [
     {

@@ -20,9 +20,7 @@ class Settings(BaseSettings):
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
 
-    # Canonical server-to-server credential.
     internal_api_key: str = ""
-    # Backward-compatible setting. Prefer INTERNAL_API_KEY for new deployments.
     admin_api_token: str = ""
 
     database_url: str = "sqlite:///./runtime-data/challenge-ranker.db"
@@ -38,7 +36,6 @@ class Settings(BaseSettings):
     ranking_schedule_hour_kst: int = Field(default=6, ge=0, le=23)
     ranking_schedule_minute_kst: int = Field(default=0, ge=0, le=59)
 
-    # History retention. Latest JSON exports are overwritten and do not accumulate.
     history_cleanup_enabled: bool = True
     run_retention_days: int = Field(default=90, ge=1, le=3650)
     failed_run_retention_days: int = Field(default=14, ge=1, le=3650)
@@ -52,8 +49,6 @@ class Settings(BaseSettings):
     naver_api_hub_client_id: str = ""
     naver_api_hub_client_secret: str = ""
 
-    # Shortform Agent uses a separate GPT application context even when other
-    # GPT-powered components share the same underlying OpenAI model family.
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     shortform_openai_model: str = "gpt-4.1-mini"
@@ -75,15 +70,24 @@ class Settings(BaseSettings):
     database_maintenance_hour_kst: int = Field(default=5, ge=0, le=23)
     database_maintenance_minute_kst: int = Field(default=0, ge=0, le=59)
 
-    # Editing Agent has its own prompt/schema and turns video into a bounded
-    # timestamped context before calling the model.
+    # Editing Agent. Defaults are deliberately CPU-only friendly for the
+    # current 2-vCPU / 8-GiB AI host: source frames are retained as compact
+    # 360px JPEGs, then sampled into a bounded set of temporal VLM batches.
     editing_openai_model: str = "gpt-4.1-mini"
     editing_request_timeout_seconds: int = Field(default=30, ge=5, le=180)
     editing_max_output_tokens: int = Field(default=5000, ge=512, le=20000)
+    editing_llm_max_request_attempts: int = Field(default=3, ge=1, le=5)
+    editing_rate_limit_retry_base_seconds: float = Field(default=20.0, ge=1.0, le=120.0)
     editing_max_repair_attempts: int = Field(default=2, ge=0, le=5)
-    # Defaults are sized for a 2-vCPU/8-GiB CPU-only deployment. They keep the
-    # public request schema compatible while bounding the expensive path.
     editing_max_keyframes_per_video: int = Field(default=3, ge=1, le=12)
+    editing_analysis_frame_width: int = Field(default=360, ge=240, le=720)
+    editing_analysis_jpeg_quality: int = Field(default=7, ge=2, le=15)
+    editing_analysis_batch_frames: int = Field(default=24, ge=6, le=40)
+    editing_analysis_max_frames_per_video: int = Field(default=48, ge=6, le=240)
+    editing_analysis_max_total_frames: int = Field(default=120, ge=12, le=720)
+    editing_orphan_recovery_enabled: bool = True
+    editing_orphan_stale_seconds: int = Field(default=900, ge=60, le=14400)
+    editing_orphan_recovery_interval_seconds: int = Field(default=300, ge=60, le=3600)
     editing_max_videos_per_run: int = Field(default=6, ge=1, le=20)
     editing_max_output_duration_seconds: int = Field(default=15, ge=1, le=60)
     editing_max_source_duration_seconds: int = Field(default=30, ge=1, le=300)
@@ -96,8 +100,6 @@ class Settings(BaseSettings):
     editing_renderer_health_timeout_seconds: int = Field(default=3, ge=1, le=30)
     editing_reals_registry_path: Path = Path("reals-video-engine/registry")
 
-    # The renderer runs as a separate process from the AI API/worker. Its
-    # public base URL is returned to the backend after a successful render.
     renderer_public_base_url: str = "http://localhost:8080"
     renderer_work_dir: Path = Path("runtime-data/renderer/work")
     renderer_output_dir: Path = Path("runtime-data/renderer/output")

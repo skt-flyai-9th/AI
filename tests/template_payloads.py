@@ -78,7 +78,14 @@ def video_editing_db_payload() -> dict:
                     "target_duration_sec": 2.5,
                 }
             ],
-            "tasks": [{"task_order": 1, "description": "세로 화면으로 촬영합니다."}],
+            "tasks": [
+                {
+                    "display_order": 1,
+                    "task_title": "완성 메뉴 촬영",
+                    "scene_index": 0,
+                    "guide": {"instructions": ["세로 화면으로 촬영합니다."]},
+                }
+            ],
         },
         "editing_rules": {
             "source_type": "VIDEO_ONLY",

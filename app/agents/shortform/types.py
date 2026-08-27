@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.shortform import (
     FaceExposure,
     FilmingTime,
+    PromotionCategory,
     PromotionObjective,
     ShortformAction,
 )
@@ -39,7 +40,7 @@ class DecisionOption(BaseModel):
 class StateUpdates(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    promotion_category: str | None
+    promotion_category: PromotionCategory | None
     promotion_subject: DecisionPromotionSubject | None
     promotion_objective: PromotionObjective | None
     filming_time: FilmingTime | None

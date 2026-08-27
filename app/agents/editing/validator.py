@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import unicodedata
 from typing import Any
 
 from app.agents.editing.reals import RealsRegistry, get_reals_registry
@@ -31,6 +32,7 @@ class EditRecipeValidator:
         selected_shortform: SelectedShortform,
         video_editing_db: dict[str, Any],
         video_contexts: list[VideoContext],
+        project: dict[str, Any] | None = None,
     ) -> list[ValidationIssue]:
         issues: list[ValidationIssue] = []
 
@@ -52,17 +54,17 @@ class EditRecipeValidator:
                 )
             )
 
-        if recipe.video_editing_db_id != selected_shortform.video_editing_db_id:
+        if recipe.editing_template_id != selected_shortform.editing_template_id:
             add(
-                "VIDEO_EDITING_DB_ID_MISMATCH",
-                "video_editing_db_id",
-                "video_editing_db_id must match selected_shortform.",
+                "EDITING_TEMPLATE_ID_MISMATCH",
+                "editing_template_id",
+                "editing_template_id must match selected_shortform.",
             )
-        if recipe.video_editing_db_version != selected_shortform.video_editing_db_version:
+        if recipe.editing_template_version != selected_shortform.editing_template_version:
             add(
-                "VIDEO_EDITING_DB_VERSION_MISMATCH",
-                "video_editing_db_version",
-                "video_editing_db_version must match selected_shortform.",
+                "EDITING_TEMPLATE_VERSION_MISMATCH",
+                "editing_template_version",
+                "editing_template_version must match selected_shortform.",
             )
 
         rules = video_editing_db.get("editing_rules") or {}
@@ -70,7 +72,7 @@ class EditRecipeValidator:
         configured_effects = rules.get("allowed_effect_ids")
         allowed_effects = (
             set(configured_effects)
-            if isinstance(configured_effects, list)
+            if isinstance(configured_effects, list) and configured_effects
             else set(renderer_effects)
         )
         allowed_effects &= renderer_effects
@@ -157,6 +159,7 @@ class EditRecipeValidator:
         expected_start = 0.0
         scene_orders: list[int] = []
         caption_count = 1  # CTA is rendered as a caption overlay.
+        typewriter_count = 0
         for index, clip in enumerate(recipe.timeline):
             path = f"timeline[{index}]"
             context = contexts.get(clip.video_id)
@@ -282,6 +285,32 @@ class EditRecipeValidator:
                         f"Unknown REALS caption style: {caption.style_id}.",
                         source="REALS_REGISTRY",
                     )
+                if caption.motion_id not in self.registry.caption_motion_ids():
+                    add(
+                        "CAPTION_MOTION_UNKNOWN",
+                        f"{caption_path}.motion_id",
+                        f"Unknown REALS caption motion: {caption.motion_id}.",
+                        source="REALS_REGISTRY",
+                    )
+                if caption.motion_id == "TYPEWRITER":
+                    typewriter_count += 1
+                    unit_count = _typewriter_unit_count(caption.text)
+                    if unit_count > 18:
+                        add(
+                            "TYPEWRITER_CAPTION_TOO_LONG",
+                            f"{caption_path}.text",
+                            "TYPEWRITER captions support at most 18 non-space characters.",
+                            source="REALS_REGISTRY",
+                        )
+                    required_ms = max(0, unit_count - 1) * 80 + 600
+                    if caption.end_ms - caption.start_ms < required_ms:
+                        add(
+                            "TYPEWRITER_CAPTION_TOO_SHORT",
+                            caption_path,
+                            "TYPEWRITER caption needs 80ms per character and at least "
+                            f"600ms hold time ({required_ms}ms required).",
+                            source="REALS_REGISTRY",
+                        )
                 if caption.scale != 1.0:
                     add(
                         "CAPTION_SCALE_UNSUPPORTED",
@@ -304,6 +333,41 @@ class EditRecipeValidator:
                 f"Captions including CTA exceed the REALS limit of {max_captions}.",
                 source="REALS_REGISTRY",
             )
+        if typewriter_count > 2:
+            add(
+                "TYPEWRITER_COUNT_EXCEEDED",
+                "timeline",
+                "Use TYPEWRITER on at most 2 captions per video.",
+                source="REALS_REGISTRY",
+            )
+        if _is_promotional_project(project):
+            regular_caption_count = caption_count - 1
+            required_caption_count = min(3, len(recipe.timeline))
+            if regular_caption_count < required_caption_count:
+                add(
+                    "PROMOTIONAL_CAPTIONS_MISSING",
+                    "timeline",
+                    "Promotional video requires at least "
+                    f"{required_caption_count} regular in-video captions; "
+                    f"received {regular_caption_count}. The final CTA does not count.",
+                )
+            first_caption = recipe.timeline[0].caption if recipe.timeline else None
+            if first_caption is None or first_caption.style_id != "HOOK":
+                add(
+                    "PROMOTIONAL_HOOK_MISSING",
+                    "timeline[0].caption",
+                    "The first promotional clip requires a HOOK caption grounded in the project.",
+                )
+            if not any(
+                clip.caption is not None
+                and clip.caption.style_id == "CAPTION_EMPHASIS"
+                for clip in recipe.timeline
+            ):
+                add(
+                    "PROMOTIONAL_REVEAL_CAPTION_MISSING",
+                    "timeline",
+                    "Promotional video requires a CAPTION_EMPHASIS overlay on an item or reveal moment.",
+                )
         max_chars = int(policies.get("max_caption_chars", 40))
         if len(recipe.cta.text) > max_chars:
             add(
@@ -391,3 +455,16 @@ class EditRecipeValidator:
 
 def _normalize_transition(value: str) -> str:
     return "HARD_CUT" if value == "CUT" else value
+
+
+def _is_promotional_project(project: dict[str, Any] | None) -> bool:
+    if not isinstance(project, dict):
+        return False
+    objective = str(project.get("promotion_objective") or "").strip()
+    subject = project.get("promotion_subject")
+    return bool(objective and isinstance(subject, dict) and subject)
+
+
+def _typewriter_unit_count(value: str) -> int:
+    normalized = unicodedata.normalize("NFC", value)
+    return sum(1 for character in normalized if not character.isspace())

@@ -15,6 +15,10 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
 
     def plan_recipe(state: EditingGraphState) -> dict:
         _emit_stage(state, "PLANNING_RECIPE", 35)
+
+        def update_analysis_progress(progress: int) -> None:
+            _emit_stage(state, "PLANNING_RECIPE", progress)
+
         decision = llm.plan_recipe(
             domain_context=state["domain_context"],
             project=state["project"],
@@ -23,6 +27,7 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
             video_contexts=_contexts(state),
             parent_recipe=state.get("parent_recipe"),
             revision_action=state.get("revision_action"),
+            progress_callback=update_analysis_progress,
         )
         return {"decision": decision.model_dump(mode="json"), "repair_attempts": 0}
 
@@ -36,6 +41,7 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
             selected_shortform=SelectedShortform.model_validate(state["selected_shortform"]),
             video_editing_db=state["video_editing_db"],
             video_contexts=_contexts(state),
+            project=state["project"],
         )
         return {
             "validation_errors": [error.model_dump(mode="json") for error in errors],
@@ -61,6 +67,9 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
             validation_errors=state["validation_errors"],
             parent_recipe=state.get("parent_recipe"),
             revision_action=state.get("revision_action"),
+            progress_callback=lambda progress: _emit_stage(
+                state, "PLANNING_RECIPE", max(65, progress)
+            ),
         )
         return {
             "decision": decision.model_dump(mode="json"),
