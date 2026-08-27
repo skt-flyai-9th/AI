@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -357,6 +359,31 @@ def test_video_context_rejects_source_over_cpu_profile_limit(monkeypatch):
 
     with pytest.raises(VideoContextError, match="30000ms limit"):
         builder._build_one(_request().videos[0])
+
+
+def test_video_context_normalizes_source_after_initial_frame_extraction_failure(monkeypatch):
+    builder = FFmpegVideoContextBuilder()
+    commands: list[list[str]] = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        if len(commands) == 1:
+            return subprocess.CompletedProcess(command, 1, stderr=b"non-monotonic timestamp")
+        if len(commands) == 2:
+            Path(command[-1]).write_bytes(b"normalized-video")
+            return subprocess.CompletedProcess(command, 0, stderr=b"")
+        pattern = Path(command[-1])
+        (pattern.parent / "frame-000001.jpg").write_bytes(b"jpeg")
+        return subprocess.CompletedProcess(command, 0, stderr=b"")
+
+    monkeypatch.setattr("app.agents.editing.video_context.subprocess.run", run)
+
+    frames = builder._extract_keyframes("source.mp4", "video-1", [0])
+
+    assert len(frames) == 1
+    assert len(commands) == 3
+    assert "+genpts" in commands[1]
+    assert "libx264" in commands[1]
 
 
 def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):

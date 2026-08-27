@@ -210,19 +210,73 @@ class FFmpegVideoContextBuilder:
                 "-y",
                 str(pattern),
             ]
-            try:
-                completed = subprocess.run(
-                    command,
-                    capture_output=True,
-                    timeout=max(self.timeout, 180),
-                    check=False,
-                )
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                raise VideoContextError(
-                    f"Frame extraction failed for video_id={video_id}."
-                ) from exc
+            completed = self._run_ffmpeg(command, video_id)
+            primary_error = _stderr_tail(completed.stderr)
             if completed.returncode != 0:
-                raise VideoContextError(f"Frame extraction failed for video_id={video_id}.")
+                for partial in Path(temp_dir).glob("frame-*.jpg"):
+                    partial.unlink(missing_ok=True)
+
+                normalized = Path(temp_dir) / "normalized.mp4"
+                normalize = [
+                    self.ffmpeg_path,
+                    "-v",
+                    "error",
+                    "-fflags",
+                    "+genpts",
+                    "-err_detect",
+                    "ignore_err",
+                    "-i",
+                    url,
+                    "-map",
+                    "0:v:0",
+                    "-vf",
+                    (
+                        f"scale={self.analysis_frame_width}:-2:"
+                        "force_original_aspect_ratio=decrease,"
+                        "setpts=PTS-STARTPTS,format=yuv420p"
+                    ),
+                    "-an",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-crf",
+                    "23",
+                    "-movflags",
+                    "+faststart",
+                    "-y",
+                    str(normalized),
+                ]
+                normalized_result = self._run_ffmpeg(normalize, video_id)
+                if normalized_result.returncode == 0:
+                    retry = [
+                        self.ffmpeg_path,
+                        "-v",
+                        "error",
+                        "-i",
+                        str(normalized),
+                        "-map",
+                        "0:v:0",
+                        "-fps_mode",
+                        "passthrough",
+                        "-q:v",
+                        str(self.analysis_jpeg_quality),
+                        "-y",
+                        str(pattern),
+                    ]
+                    completed = self._run_ffmpeg(retry, video_id)
+                else:
+                    completed = normalized_result
+
+            if completed.returncode != 0:
+                retry_error = _stderr_tail(completed.stderr)
+                details = " | ".join(
+                    detail for detail in (primary_error, retry_error) if detail
+                )
+                suffix = f" ffmpeg: {details}" if details else ""
+                raise VideoContextError(
+                    f"Frame extraction failed for video_id={video_id}.{suffix}"
+                )
 
             paths = sorted(Path(temp_dir).glob("frame-*.jpg"))
             if not paths:
@@ -242,6 +296,19 @@ class FFmpegVideoContextBuilder:
                 )
         return frames
 
+    def _run_ffmpeg(self, command: list[str], video_id: str) -> subprocess.CompletedProcess:
+        try:
+            return subprocess.run(
+                command,
+                capture_output=True,
+                timeout=max(self.timeout, 180),
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise VideoContextError(
+                f"Frame extraction failed for video_id={video_id}: {type(exc).__name__}."
+            ) from exc
+
 
 def _sample_timestamps(duration_ms: int, count: int) -> list[int]:
     """Backward-compatible helper retained for tests and utility callers."""
@@ -249,6 +316,12 @@ def _sample_timestamps(duration_ms: int, count: int) -> list[int]:
         return [min(duration_ms - 1, duration_ms // 2)]
     last = max(0, duration_ms - 100)
     return sorted({int(round(last * index / (count - 1))) for index in range(count)})
+
+
+def _stderr_tail(value: bytes | str | None, *, limit: int = 2000) -> str:
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return " ".join((value or "").strip().split())[-limit:]
 
 
 def _parse_frame_rate(value: str) -> float:

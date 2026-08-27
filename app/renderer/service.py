@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import sys
 import threading
 from dataclasses import dataclass
@@ -99,6 +100,11 @@ class RealsRendererService:
             job_dir = Path(temporary)
             sources = self._download_sources(request, job_dir)
             produced = self._prepare_produced_video(request, sources, job_dir)
+            edit_recipe = _fit_recipe_to_produced_duration(
+                request.final_render.edit_recipe,
+                duration_ms=produced.duration_ms,
+                fps=produced.fps,
+            )
             final_request = self.native.FinalRenderRequest.model_validate(
                 {
                     "job_id": request.job_id,
@@ -106,7 +112,7 @@ class RealsRendererService:
                     "idempotency_key": request.idempotency_key,
                     "produced_video": produced.model_dump(mode="json"),
                     "source_mode": request.final_render.source_mode,
-                    "edit_recipe": request.final_render.edit_recipe.model_dump(mode="json"),
+                    "edit_recipe": edit_recipe.model_dump(mode="json"),
                     "template_bundle_id": request.final_render.template_bundle_id,
                 }
             )
@@ -317,6 +323,41 @@ def _verify_media_metadata(expected: Any, actual: Any) -> None:
             code="REALS_ASSET_METADATA_MISMATCH",
             status_code=409,
         )
+
+
+def _fit_recipe_to_produced_duration(recipe: Any, *, duration_ms: int, fps: float) -> Any:
+    """Clamp frame-sized assembly drift before the native recipe validator runs.
+
+    FFmpeg encodes an assembled CFR asset on frame boundaries, so its probed
+    duration can be a few milliseconds shorter than the sum of the requested
+    source trims. Larger overruns remain untouched and are rejected by the
+    native validator as genuine recipe errors.
+    """
+    tolerance_ms = max(1, math.ceil(1000 / fps))
+    fitted_segments = []
+    adjusted_ends: dict[str, int] = {}
+
+    for segment in recipe.segments:
+        overrun_ms = segment.trim_out_ms - duration_ms
+        if 0 < overrun_ms <= tolerance_ms and segment.trim_in_ms < duration_ms:
+            segment = segment.model_copy(update={"trim_out_ms": duration_ms})
+            adjusted_ends[segment.produced_segment_id] = duration_ms
+        fitted_segments.append(segment)
+
+    fitted_overlays = []
+    for overlay in recipe.overlays:
+        segment_end_ms = adjusted_ends.get(overlay.produced_segment_id)
+        if (
+            segment_end_ms is not None
+            and overlay.end_ms > segment_end_ms
+            and overlay.start_ms < segment_end_ms
+        ):
+            overlay = overlay.model_copy(update={"end_ms": segment_end_ms})
+        fitted_overlays.append(overlay)
+
+    return recipe.model_copy(
+        update={"segments": fitted_segments, "overlays": fitted_overlays}
+    )
 
 
 def _qc_details(payload: dict[str, Any]) -> list[dict[str, Any]]:
