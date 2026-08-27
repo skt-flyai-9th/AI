@@ -72,6 +72,8 @@ def run_database_knowledge(self, run_id: str) -> dict:
     bind=True,
     acks_late=True,
     reject_on_worker_lost=True,
+    soft_time_limit=max(60, get_settings().editing_task_timeout_seconds - 30),
+    time_limit=get_settings().editing_task_timeout_seconds,
 )
 def run_editing_pipeline(self, run_id: str) -> dict:
     with SessionLocal() as db:
@@ -81,6 +83,14 @@ def run_editing_pipeline(self, run_id: str) -> dict:
             task_id = getattr(request, "id", None)
             delivery_info = getattr(request, "delivery_info", {}) or {}
             if run.status == "RUNNING" and delivery_info.get("redelivered"):
+                run.recovery_attempts = int(run.recovery_attempts or 0) + 1
+                if run.recovery_attempts > get_settings().editing_orphan_max_recovery_attempts:
+                    run.status = "FAILED"
+                    run.stage = "FAILED"
+                    run.error_message = "EDITING_RECOVERY_EXHAUSTED: Worker redelivery limit exceeded."
+                    run.finished_at = datetime.now(timezone.utc)
+                    db.commit()
+                    return {"run_id": run.id, "status": run.status}
                 run.status = "QUEUED"
                 run.stage = "QUEUED"
                 run.progress = 0
@@ -120,6 +130,7 @@ def recover_orphaned_editing_runs() -> dict:
         seconds=settings.editing_orphan_stale_seconds
     )
     recovered_ids: list[str] = []
+    exhausted_ids: list[str] = []
     with SessionLocal() as db:
         statement = (
             select(EditingRun)
@@ -132,6 +143,14 @@ def recover_orphaned_editing_runs() -> dict:
         )
         for run in db.scalars(statement).all():
             if run.celery_task_id and run.celery_task_id in active_task_ids:
+                continue
+            run.recovery_attempts = int(run.recovery_attempts or 0) + 1
+            if run.recovery_attempts > settings.editing_orphan_max_recovery_attempts:
+                run.status = "FAILED"
+                run.stage = "FAILED"
+                run.error_message = "EDITING_RECOVERY_EXHAUSTED: Orphan recovery limit exceeded."
+                run.finished_at = datetime.now(timezone.utc)
+                exhausted_ids.append(run.id)
                 continue
             run.status = "QUEUED"
             run.stage = "QUEUED"
@@ -160,7 +179,12 @@ def recover_orphaned_editing_runs() -> dict:
                 if run is not None:
                     get_editing_agent_service().mark_enqueue_failed(db, run)
             failed.append(run_id)
-    return {"status": "ok", "requeued": requeued, "failed": failed}
+    return {
+        "status": "ok",
+        "requeued": requeued,
+        "failed": failed,
+        "recovery_exhausted": exhausted_ids,
+    }
 
 
 def enqueue_ranking_pipeline(run_id: str):
@@ -185,16 +209,7 @@ def enqueue_editing_pipeline(run_id: str):
     if callable(delay):
         return delay(run_id)
 
-    task_id = str(uuid4())
-
-    class _Request:
-        id = task_id
-
-    class _TaskSelf:
-        request = _Request()
-
-    run_editing_pipeline(_TaskSelf(), run_id)
-    return _ImmediateResult(id=task_id)
+    raise RuntimeError("Celery is unavailable; editing tasks cannot run inline.")
 
 
 def enqueue_database_knowledge(run_id: str):

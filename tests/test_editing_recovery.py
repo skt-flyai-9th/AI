@@ -65,7 +65,12 @@ def test_recovery_requeues_only_stale_runs_absent_from_active_workers(monkeypatc
 
     result = tasks.recover_orphaned_editing_runs.run()
 
-    assert result == {"status": "ok", "requeued": ["edit_orphan"], "failed": []}
+    assert result == {
+        "status": "ok",
+        "requeued": ["edit_orphan"],
+        "failed": [],
+        "recovery_exhausted": [],
+    }
     with SessionLocal() as db:
         orphan = db.get(EditingRun, "edit_orphan")
         active = db.get(EditingRun, "edit_active")
@@ -90,6 +95,33 @@ def test_recovery_fails_closed_when_no_worker_answers(monkeypatch):
         "status": "inspector_unavailable",
         "requeued": [],
     }
+
+
+def test_recovery_marks_run_failed_after_bounded_attempts(monkeypatch):
+    with SessionLocal() as db:
+        run = _running("edit_exhausted", "task-old")
+        run.recovery_attempts = 2
+        db.add(run)
+        db.commit()
+
+    monkeypatch.setattr(
+        tasks,
+        "get_settings",
+        lambda: Settings(
+            editing_orphan_recovery_enabled=True,
+            editing_orphan_stale_seconds=60,
+            editing_orphan_max_recovery_attempts=2,
+        ),
+    )
+    monkeypatch.setattr(tasks.celery_app, "control", _Control({"worker": []}))
+
+    result = tasks.recover_orphaned_editing_runs.run()
+
+    assert result["recovery_exhausted"] == ["edit_exhausted"]
+    with SessionLocal() as db:
+        run = db.get(EditingRun, "edit_exhausted")
+        assert run.status == "FAILED"
+        assert "RECOVERY_EXHAUSTED" in run.error_message
 
 
 def test_redelivered_task_resumes_a_run_left_running(monkeypatch):

@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Request
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.agents.editing.reals import RealsRenderJobRequest
 from app.core.config import get_settings
@@ -25,9 +24,6 @@ app = FastAPI(
     version="1.0.0",
     description="Remote-asset facade for the bundled REALS video edit engine.",
 )
-app.mount("/files", StaticFiles(directory=output_dir), name="rendered-files")
-
-
 @app.exception_handler(RendererServiceError)
 async def renderer_error_handler(
     _: Request,
@@ -50,3 +46,11 @@ def ready() -> JSONResponse:
 @app.post("/renders", dependencies=[Depends(require_internal_api_key)])
 def render(request: RealsRenderJobRequest) -> dict:
     return get_renderer_service().render(request)
+
+
+@app.get("/files/{filename:path}", dependencies=[Depends(require_internal_api_key)])
+def rendered_file(filename: str) -> FileResponse:
+    target = (output_dir / filename).resolve()
+    if target.parent != output_dir or not target.is_file():
+        raise HTTPException(status_code=404, detail="Rendered file not found")
+    return FileResponse(target, media_type="video/mp4", filename=target.name)

@@ -234,6 +234,10 @@ POST /api/v1/shortform-sessions/{session_id}/recommendations/next
 GET /api/v1/editing-templates/{template_id}/versions/{version}/shooting-guide
 ```
 
+`store_name`, `business_type`, `promotion_subject`, `promotion_objective`, `menu_name`,
+`face_exposure` query parameter를 함께 보낸다. 템플릿 placeholder만 치환되며
+`scene_dialogue`는 공백 포함 9자 이하이다.
+
 `tasks`는 장면 순서와 촬영 안내만 반환한다. `scene_index`는 `scenes`의 0-based
 인덱스이며, `task_type`과 `guide_type`은 계약에 포함하지 않는다. `guide.start_ms`와
 `guide.end_ms`는 사용자 촬영물의 트림 구간이 아니라 참고 영상에서 해당 태스크를 보여줄 절대 구간이다.
@@ -298,22 +302,22 @@ Content-Type: application/json
 GET /api/v1/editing-runs/{run_id}
 ```
 
-stage는 `PREPARING_VIDEO_CONTEXT → PLANNING_RECIPE → VALIDATING_RECIPE → RENDERING → COMPLETED` 순서다. 상태가 `COMPLETED` 또는 `SOURCE_GAP`이면 결과를 조회한다.
+stage는 `PREPARING_VIDEO_CONTEXT → PLANNING_RECIPE → VALIDATING_RECIPE → RENDERING → COMPLETED` 순서다. 응답의 `progress`, `queue_position`, `estimated_wait_sec`, `stage_elapsed_sec`를 백엔드가 그대로 전달한다. 상태가 `COMPLETED`이면 결과를 조회한다.
 
 ```http
 GET /api/v1/editing-runs/{run_id}/result
 ```
 
-`COMPLETED` 결과는 `recipe`, `render`, `publishing`, `warnings`를 포함한다. 촬영 근거가 부족한 경우 Agent가 재촬영을 결정하지 않고 아래 형태를 반환한다.
+`COMPLETED` 결과는 `recipe`, `render`, `publishing`, `warnings`를 포함한다. 촬영 근거가 부족해도 가능한 축소 구조로 렌더링하고 `missing_scene_roles`와 비차단 `warnings`를 함께 반환한다. `SOURCE_GAP` 응답은 구버전 호환용으로만 남는다.
 
 ```json
 {
   "run_id": "edit_123",
-  "status": "SOURCE_GAP",
-  "recipe": null,
-  "render": null,
-  "publishing": null,
-  "warnings": [],
+  "status": "COMPLETED",
+  "recipe": {"recipe_version": 1},
+  "render": {"output_video_url": "https://ai.internal/files/edit_123.mp4"},
+  "publishing": {"caption": "..."},
+  "warnings": ["SOURCE_ROLE_MATCH_FALLBACK: ..."],
   "missing_scene_roles": ["RESULT"],
   "available_options": ["USE_REDUCED_STRUCTURE", "ADD_MORE_VIDEO"]
 }
@@ -342,7 +346,7 @@ Content-Type: application/json
 
 AI worker는 MP4 자체를 GPT-4.1 mini에 보내지 않는다. `ffprobe` 메타데이터와 타임스탬프 키프레임을 제한적으로 생성하며, DB에는 base64 이미지가 아닌 키프레임 시각만 저장한다. Validator를 통과한 `VIDEO_ONLY` 레시피만 `EDITING_RENDERER_URL/renders`에 전달된다.
 
-Renderer 요청은 `reals-render-job-1.0` 계약을 사용한다. 원격 영상 URL과 메타데이터, 다중 컷의 순서·트림을 담은 `source_assembly`, 엔진 계약과 같은 필드명의 `final_render.edit_recipe`를 함께 보낸다. 단일 컷은 `ONE_TAKE_PASSTHROUGH`, 다중 컷은 정확한 트림 조립 후 `MULTI_CUT_ASSEMBLED`로 처리한다. 저장소의 `app.renderer.main` 서비스가 URL을 로컬 `MediaFileRef.path`로 resolve하고, 필요 시 조립본을 만든 뒤 REALS `FinalRenderRequest`와 native Validator/QC를 실행한다. 성공한 MP4는 `RENDERER_OUTPUT_DIR`에 저장되고 `RENDERER_PUBLIC_BASE_URL/files/...` URL로 반환된다.
+Renderer 요청은 `reals-render-job-1.0` 계약을 사용한다. 원격 영상 URL과 메타데이터, 다중 컷의 순서·트림을 담은 `source_assembly`, 엔진 계약과 같은 필드명의 `final_render.edit_recipe`를 함께 보낸다. 단일 컷은 `ONE_TAKE_PASSTHROUGH`, 다중 컷은 정확한 트림 조립 후 `MULTI_CUT_ASSEMBLED`로 처리한다. 성공한 MP4는 `RENDERER_OUTPUT_DIR`에 저장되고 `RENDERER_PUBLIC_BASE_URL/files/...` URL로 반환되며, 이 파일 다운로드에도 `X-Internal-API-Key`가 필요하다.
 
 AI 측 preflight Validator와 LLM capability는 `EDITING_REALS_REGISTRY_PATH`에 있는 REALS registry bundle을 함께 읽는다. 시작 시 manifest SHA-256을 검증하고, 효과·전환·최소 컷·자막 제한·렌더 프로필을 그 registry에서 가져온다. Renderer 내부의 native Validator는 로컬 파일 범위, 폰트 파일/글리프, 최종 QC를 다시 검증하며 최종 권한을 가진다.
 

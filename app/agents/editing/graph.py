@@ -28,6 +28,7 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
             parent_recipe=state.get("parent_recipe"),
             revision_action=state.get("revision_action"),
             progress_callback=update_analysis_progress,
+            checkpoint_callback=state.get("checkpoint_callback"),
         )
         return {"decision": decision.model_dump(mode="json"), "repair_attempts": 0}
 
@@ -70,6 +71,7 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
             progress_callback=lambda progress: _emit_stage(
                 state, "PLANNING_RECIPE", max(65, progress)
             ),
+            checkpoint_callback=state.get("checkpoint_callback"),
         )
         return {
             "decision": decision.model_dump(mode="json"),

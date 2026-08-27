@@ -156,7 +156,26 @@ def test_renderer_app_exposes_real_render_route():
     from app.renderer.main import app
 
     paths = {route.path for route in app.routes}
-    assert {"/renders", "/files", "/health/live", "/health/ready"} <= paths
+    assert {"/renders", "/files/{filename:path}", "/health/live", "/health/ready"} <= paths
+
+
+def test_renderer_files_require_internal_auth():
+    from fastapi.testclient import TestClient
+
+    from app.renderer import main as renderer_main
+
+    target = renderer_main.output_dir / "protected-test.mp4"
+    target.write_bytes(b"video")
+    try:
+        with TestClient(renderer_main.app) as client:
+            assert client.get("/files/protected-test.mp4").status_code == 401
+            response = client.get(
+                "/files/protected-test.mp4",
+                headers={"X-Internal-API-Key": "test-token"},
+            )
+            assert response.status_code == 200
+    finally:
+        target.unlink(missing_ok=True)
 
 
 def test_renderer_clamps_only_frame_sized_produced_duration_drift():

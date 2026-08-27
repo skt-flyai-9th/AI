@@ -7,6 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -302,6 +303,7 @@ class ShortformAgentService:
         db: Session,
         template_id: str,
         version: int,
+        context: dict[str, str | None] | None = None,
     ) -> ShootingGuideResponse:
         template = db.get(VideoEditingDBRecord, (template_id, version))
         if template is None:
@@ -324,11 +326,22 @@ class ShortformAgentService:
                 "Editing template was not found.",
                 status_code=404,
             )
-        guide = dict(template.shooting_guide or {})
+        normalized_context = {
+            key: str(value).strip()
+            for key, value in (context or {}).items()
+            if value is not None and str(value).strip()
+        }
+        guide = _personalize_guide_value(dict(template.shooting_guide or {}), normalized_context)
         scenes = []
         for item in guide.get("scenes") or []:
             scene = dict(item)
             scene["scene_dialogue"] = str(scene.get("scene_dialogue") or "")
+            if len(scene["scene_dialogue"]) > 9:
+                raise ShortformDomainError(
+                    "SHOOTING_GUIDE_DIALOGUE_TOO_LONG",
+                    "scene_dialogue must be at most 9 characters including spaces.",
+                    status_code=422,
+                )
             scene["scene_subtitle"] = str(scene.get("scene_subtitle") or "")
             scenes.append(scene)
 
@@ -382,12 +395,14 @@ class ShortformAgentService:
                 }
             )
 
-        estimated_shooting_sec = guide.get("estimated_shooting_sec")
-        if not estimated_shooting_sec:
-            final_duration = sum(
-                max(int(scene.get("target_duration_sec") or 0), 0) for scene in scenes
-            )
-            estimated_shooting_sec = max(final_duration * 10, 60)
+        final_duration = sum(
+            max(int(scene.get("target_duration_sec") or 0), 0) for scene in scenes
+        )
+        estimated_shooting_sec = (
+            max(final_duration * 10, 60)
+            if final_duration
+            else max(int(guide.get("estimated_shooting_sec") or 60), 60)
+        )
 
         return ShootingGuideResponse(
             template_id=template.template_id,
@@ -402,6 +417,7 @@ class ShortformAgentService:
             ),
             scenes=scenes,
             tasks=tasks,
+            context_applied=normalized_context,
         )
 
     def _confirm_and_recommend(
@@ -583,7 +599,14 @@ class ShortformAgentService:
             if selected is None:
                 raise ValueError("selection is outside the candidate pool")
             return selection, selected
-        except Exception as exc:
+        except (
+            ShortformLLMError,
+            ShortformDomainError,
+            ValidationError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as exc:
             # Conversation still requires the LLM, but once a brief is confirmed a
             # recommendation must not disappear because the contextual selector is
             # temporarily unavailable or returns malformed structured output.
@@ -1075,6 +1098,23 @@ def _turn_input_to_text(turn_input: ShortformTurnInput) -> str:
     if turn_input.type == TurnInputType.OPTION:
         return f"[OPTION] {turn_input.option_id}"
     return f"[CONFIRM] {turn_input.value}"
+
+
+def _personalize_guide_value(value: Any, context: dict[str, str]) -> Any:
+    """Apply only explicit placeholders from the persisted guide template."""
+    if isinstance(value, str):
+        personalized = value
+        for key, replacement in context.items():
+            personalized = personalized.replace("{" + key + "}", replacement)
+        return personalized
+    if isinstance(value, list):
+        return [_personalize_guide_value(item, context) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _personalize_guide_value(item, context)
+            for key, item in value.items()
+        }
+    return value
 
 
 @lru_cache(maxsize=1)

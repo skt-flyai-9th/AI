@@ -148,6 +148,7 @@ class EditingGraphState(TypedDict, total=False):
     max_repair_attempts: int
     exhausted: bool
     stage_callback: Callable[[str, int], None]
+    checkpoint_callback: Callable[[dict[str, Any]], None]
 
 
 def persistable_video_context(context: VideoContext) -> dict[str, Any]:

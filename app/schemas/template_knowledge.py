@@ -139,7 +139,7 @@ class ShootingGuideScene(BaseModel):
     scene_order: int = Field(ge=1)
     scene_role: str = Field(min_length=1, max_length=80)
     scene_description: str = Field(min_length=1, max_length=500)
-    scene_dialogue: str | None = Field(default=None, max_length=500)
+    scene_dialogue: str | None = Field(default=None, max_length=9)
     scene_subtitle: str | None = Field(default=None, max_length=200)
     shot_type: str = Field(min_length=1, max_length=80)
     target_duration_sec: float = Field(gt=0, le=30)
