@@ -66,6 +66,19 @@ def test_multi_cut_context_joins_ordered_footage_to_guide_and_observations():
             "promotion_subject": {"type": "MENU", "name": "라떼"},
             "promotion_objective": "sales",
             "face_exposure": "not_allowed",
+            "shortform_context": {
+                "project_state": {
+                    "promotion_subject": {"type": "MENU", "name": "라떼"},
+                    "promotion_objective": "sales",
+                    "creative_preferences": ["밝고 빠르게"],
+                    "secondary_information": ["매일 직접 만드는 크림"],
+                    "facts_from_user": {"taste": "고소하고 부드러운 맛"},
+                    "brief_confirmed": True,
+                },
+                "store_context": {"store": {"store_name": "테스트 카페"}},
+                "recommendation": {"title": "대표 메뉴 소개"},
+                "recent_user_statements": ["크림을 꼭 강조해줘"],
+            },
         },
         selected_shortform={
             "editing_template_id": "gt_cafe",
@@ -110,7 +123,11 @@ def test_multi_cut_context_joins_ordered_footage_to_guide_and_observations():
         },
     )
 
-    assert result["context_version"] == "editing-context-v1"
+    assert result["context_version"] == "editing-context-v2"
+    assert result["project_brief"]["verified_user_facts"] == {
+        "taste": "고소하고 부드러운 맛"
+    }
+    assert result["project_brief"]["recent_user_statements"] == ["크림을 꼭 강조해줘"]
     assert result["template_context"]["shoot_mode"] == "MULTI_CUT"
     assert result["template_context"]["reference_segment_count"] == 1
     assert [item["video_id"] for item in result["source_scenes"]] == ["take_1", "take_2"]
@@ -180,5 +197,5 @@ def test_recipe_planner_receives_the_preprocessed_editing_context(monkeypatch):
         revision_action=None,
     )
 
-    assert captured["editing_context"]["context_version"] == "editing-context-v1"
+    assert captured["editing_context"]["context_version"] == "editing-context-v2"
     assert captured["editing_context"]["source_scenes"][0]["video_id"] == "take_1"

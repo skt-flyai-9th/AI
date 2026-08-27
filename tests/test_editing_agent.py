@@ -10,6 +10,7 @@ from app.agents.editing.video_context import FFmpegVideoContextBuilder, VideoCon
 from app.core.config import Settings
 from app.db.session import SessionLocal
 from app.models.editing_run import EditingRun
+from app.models.shortform_session import ShortformSession
 from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.schemas.editing import (
     EditRecipe,
@@ -172,10 +173,12 @@ class RepairingFakeLLM:
         self.repair_count = 0
         self.seen_parent_recipe = None
         self.seen_revision_action = None
+        self.seen_project = None
 
     def plan_recipe(self, **kwargs):
         self.seen_parent_recipe = kwargs["parent_recipe"]
         self.seen_revision_action = kwargs["revision_action"]
+        self.seen_project = kwargs["project"]
         return EditingPlanDecision(
             outcome="RECIPE",
             recipe=_recipe(invalid_timeline=kwargs["revision_action"] is None),
@@ -249,6 +252,48 @@ def _seed_video_editing_db(db, *, status: str = "ACTIVE") -> None:
                 "allowed_transition_ids": ["CUT", "HARD_CUT"],
             },
             trend_ids=[],
+        )
+    )
+    db.commit()
+
+
+def _seed_shortform_session(db) -> None:
+    db.add(
+        ShortformSession(
+            id="shortform_123",
+            status="WAITING_RECOMMENDATION_ACTION",
+            store_id="store_123",
+            store_context={
+                "store": {
+                    "store_id": "store_123",
+                    "store_name": "사릴스 카페",
+                    "category": "카페",
+                    "store_photos": [{"asset_id": "photo_1", "asset_url": "private"}],
+                },
+                "representative_menus": [
+                    {"menu_id": "menu_001", "name": "딸기 크림 라떼", "price": 6500}
+                ],
+            },
+            project_state={
+                "promotion_subject": {"type": "MENU", "name": "딸기 크림 라떼"},
+                "promotion_objective": "sales",
+                "creative_preferences": ["상큼하고 빠른 분위기"],
+                "secondary_information": ["매일 아침 직접 만든 딸기청"],
+                "facts_from_user": {"taste": "생딸기가 씹히는 상큼한 맛"},
+                "brief_confirmed": True,
+            },
+            conversation=[
+                {"role": "user", "content": "수제 딸기청을 꼭 강조해줘"},
+                {"role": "assistant", "content": "알겠습니다"},
+            ],
+            shown_video_editing_db_ids=["video_editing_db_014"],
+            current_recommendation={
+                "recommendation_id": "rec_123",
+                "title": "딸기 포인트 공개",
+                "concept": "수제 딸기청을 빠르게 강조",
+                "editing_template_id": "video_editing_db_014",
+                "editing_template_version": 3,
+            },
         )
     )
     db.commit()
@@ -332,7 +377,10 @@ def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
     monkeypatch.setattr(service, "_set_stage", record_stage)
     with SessionLocal() as db:
         _seed_video_editing_db(db)
+        _seed_shortform_session(db)
         run = service.create_run(db, _request())
+        assert run.request_snapshot["_shortform_context"]["session_id"] == "shortform_123"
+        assert "store_photos" not in run.request_snapshot["_shortform_context"]["store_context"]["store"]
         completed = service.execute(db, run.id)
 
         assert completed.status == EditingRunStatus.COMPLETED.value
@@ -352,6 +400,9 @@ def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
         ]
         assert len(renderer.calls) == 1
         assert "image_url" not in completed.video_context[0]["keyframes"][0]
+        assert llm.seen_project["shortform_context"]["project_state"]["facts_from_user"] == {
+            "taste": "생딸기가 씹히는 상큼한 맛"
+        }
 
         original_recipe = completed.recipe
         refreshed_videos = [
@@ -371,6 +422,9 @@ def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
         assert [
             video["footage_url"] for video in revision.request_snapshot["videos"]
         ] == [video.footage_url for video in refreshed_videos]
+        assert revision.request_snapshot["_shortform_context"] == completed.request_snapshot[
+            "_shortform_context"
+        ]
         revised = service.execute(db, revision.id)
         assert revised.status == EditingRunStatus.COMPLETED.value
         assert revised.parent_run_id == completed.id
@@ -389,6 +443,7 @@ def test_editing_pipeline_renders_ordered_fallback_after_source_gap():
     )
     with SessionLocal() as db:
         _seed_video_editing_db(db)
+        _seed_shortform_session(db)
         run = service.create_run(db, _request())
         result = service.execute(db, run.id)
         payload = service.result(result)
@@ -402,6 +457,7 @@ def test_editing_pipeline_renders_ordered_fallback_after_source_gap():
         assert payload.recipe.timeline[0].caption.style_id == "HOOK"
         assert payload.recipe.timeline[0].caption.motion_id == "TYPEWRITER"
         assert payload.recipe.timeline[1].caption.style_id == "CAPTION_EMPHASIS"
+        assert payload.recipe.timeline[1].caption.text == "생딸기가 씹히는 상큼한 맛"
         assert "딸기 크림 라떼" in payload.recipe.cta.text
         assert len(renderer.calls) == 1
         assert llm.plan_count == 2

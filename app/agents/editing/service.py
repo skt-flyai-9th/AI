@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.editing.effect_planner import EffectPlanner
@@ -23,6 +24,7 @@ from app.agents.editing.validator import EditRecipeValidator
 from app.agents.editing.video_context import FFmpegVideoContextBuilder, VideoContextBuilder
 from app.core.config import get_settings
 from app.models.editing_run import EditingRun
+from app.models.shortform_session import ShortformSession
 from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.schemas.editing import (
     EditRecipe,
@@ -71,12 +73,16 @@ class EditingAgentService:
     def create_run(self, db: Session, request: EditingRunCreateRequest) -> EditingRun:
         self._validate_video_limit(request.videos)
         self._get_active_database(db, request.selected_shortform)
+        request_snapshot = request.model_dump(mode="json")
+        shortform_context = _find_shortform_context(db, request)
+        if shortform_context:
+            request_snapshot["_shortform_context"] = shortform_context
         run = EditingRun(
             id=f"edit_{uuid.uuid4().hex}",
             status=EditingRunStatus.QUEUED.value,
             stage=EditingRunStage.QUEUED.value,
             progress=0,
-            request_snapshot=request.model_dump(mode="json"),
+            request_snapshot=request_snapshot,
             revision_action=request.revision,
             warnings=[],
             video_context=[],
@@ -107,7 +113,9 @@ class EditingAgentService:
                 "A revision can be created only from a completed or source-gap run.",
                 status_code=409,
             )
-        snapshot = EditingRunCreateRequest.model_validate(parent.request_snapshot)
+        parent_snapshot = dict(parent.request_snapshot or {})
+        shortform_context = parent_snapshot.pop("_shortform_context", None)
+        snapshot = EditingRunCreateRequest.model_validate(parent_snapshot)
         parent_identity = {
             video.video_id: video.shooting_scene_order for video in snapshot.videos
         }
@@ -132,13 +140,16 @@ class EditingAgentService:
         snapshot.videos = sorted(request.videos, key=lambda video: video.shooting_scene_order)
         snapshot.revision = request.revision_action
         self._get_active_database(db, snapshot.selected_shortform)
+        revision_snapshot = snapshot.model_dump(mode="json")
+        if shortform_context:
+            revision_snapshot["_shortform_context"] = shortform_context
         run = EditingRun(
             id=f"edit_{uuid.uuid4().hex}",
             parent_run_id=parent.id,
             status=EditingRunStatus.QUEUED.value,
             stage=EditingRunStage.QUEUED.value,
             progress=0,
-            request_snapshot=snapshot.model_dump(mode="json"),
+            request_snapshot=revision_snapshot,
             revision_action=request.revision_action,
             warnings=[],
             video_context=[],
@@ -167,9 +178,14 @@ class EditingAgentService:
             return run
 
         try:
-            request = EditingRunCreateRequest.model_validate(run.request_snapshot)
+            raw_snapshot = dict(run.request_snapshot or {})
+            shortform_context = raw_snapshot.pop("_shortform_context", {})
+            request = EditingRunCreateRequest.model_validate(raw_snapshot)
             database_record = self._get_active_database(db, request.selected_shortform)
             database_payload = _database_payload(database_record)
+            project_payload = request.project.model_dump(mode="json")
+            if shortform_context:
+                project_payload["shortform_context"] = shortform_context
             parent = db.get(EditingRun, run.parent_run_id) if run.parent_run_id else None
             parent_recipe = parent.recipe if parent is not None else None
 
@@ -190,7 +206,7 @@ class EditingAgentService:
             result = self.graph.invoke(
                 {
                     "domain_context": self.domain_context,
-                    "project": request.project.model_dump(mode="json"),
+                    "project": project_payload,
                     "selected_shortform": request.selected_shortform.model_dump(mode="json"),
                     "video_editing_db": database_payload,
                     "videos": [video.model_dump(mode="json") for video in request.videos],
@@ -225,7 +241,7 @@ class EditingAgentService:
                     reduced = self.graph.invoke(
                         {
                             "domain_context": self.domain_context,
-                            "project": request.project.model_dump(mode="json"),
+                            "project": project_payload,
                             "selected_shortform": request.selected_shortform.model_dump(mode="json"),
                             "video_editing_db": database_payload,
                             "videos": [video.model_dump(mode="json") for video in request.videos],
@@ -239,17 +255,17 @@ class EditingAgentService:
                     )
                     if reduced.get("exhausted"):
                         decision = self._build_ordered_fallback(
-                            request, database_payload, contexts
+                            request, database_payload, contexts, shortform_context
                         )
                     else:
                         decision = EditingPlanDecision.model_validate(reduced["decision"])
                         if decision.outcome == "SOURCE_GAP":
                             decision = self._build_ordered_fallback(
-                                request, database_payload, contexts
+                                request, database_payload, contexts, shortform_context
                             )
                 except Exception:
                     decision = self._build_ordered_fallback(
-                        request, database_payload, contexts
+                        request, database_payload, contexts, shortform_context
                     )
 
             recipe = EditRecipe.model_validate(decision.recipe)
@@ -289,6 +305,7 @@ class EditingAgentService:
         request: EditingRunCreateRequest,
         video_editing_db: dict[str, Any],
         contexts: list[Any],
+        shortform_context: dict[str, Any] | None = None,
     ) -> EditingPlanDecision:
         """Build a conservative renderable recipe without scene-role inference."""
         rules = video_editing_db.get("editing_rules") or {}
@@ -341,7 +358,8 @@ class EditingAgentService:
 
         subject = request.project.promotion_subject
         subject_name = str(subject.get("name") or "오늘의 추천")[:40]
-        _apply_fallback_promotional_captions(timeline, subject_name)
+        fallback_copy = _fallback_copy_context(shortform_context or {})
+        _apply_fallback_promotional_captions(timeline, subject_name, fallback_copy)
         search_keyword = _fallback_search_keyword(
             str(
                 video_editing_db.get("recommendation_title")
@@ -355,7 +373,11 @@ class EditingAgentService:
             editing_template_version=request.selected_shortform.editing_template_version,
             source_type="VIDEO_ONLY",
             timeline=timeline,
-            cta=RecipeCta(text=_fit_caption(f"{subject_name}, 지금 만나보세요")),
+            cta=RecipeCta(
+                text=_fit_caption(
+                    fallback_copy.get("cta") or f"{subject_name}, 지금 만나보세요"
+                )
+            ),
         )
         recipe = self.effect_planner.apply_recipe(
             recipe,
@@ -380,8 +402,11 @@ class EditingAgentService:
             outcome="RECIPE",
             recipe=recipe,
             publishing=PublishingResult(
-                title=f"{subject_name}을 영상으로 만나보세요",
-                caption=f"{subject_name}의 매력을 짧은 영상으로 확인해 보세요.",
+                title=_fit_caption(fallback_copy.get("title") or f"{subject_name} 공개"),
+                caption=_fit_caption(
+                    fallback_copy.get("body")
+                    or f"{subject_name}의 매력을 짧은 영상으로 확인해 보세요."
+                ),
                 hashtags=_fallback_hashtags(subject_name),
                 track=PublishingTrack(
                     mode="SUGGESTED",
@@ -509,9 +534,72 @@ def _database_payload(database_record: VideoEditingDBRecord) -> dict[str, Any]:
     }
 
 
+def _find_shortform_context(
+    db: Session,
+    request: EditingRunCreateRequest,
+) -> dict[str, Any]:
+    """Resolve and freeze the AI-owned brief selected by recommendation_id."""
+    recommendation_id = request.selected_shortform.recommendation_id
+    sessions = db.scalars(
+        select(ShortformSession)
+        .where(ShortformSession.store_id == request.project.store_id)
+        .order_by(ShortformSession.updated_at.desc())
+        .limit(50)
+    ).all()
+    session = next(
+        (
+            item
+            for item in sessions
+            if str((item.current_recommendation or {}).get("recommendation_id") or "")
+            == recommendation_id
+        ),
+        None,
+    )
+    if session is None:
+        return {}
+
+    state = dict(session.project_state or {})
+    store_context = dict(session.store_context or {})
+    store = dict(store_context.get("store") or {})
+    store.pop("store_photos", None)
+    safe_store_context = {
+        "store": store,
+        "representative_menus": list(store_context.get("representative_menus") or []),
+        "trade_area": store_context.get("trade_area"),
+    }
+    user_statements = [
+        str(item.get("content") or "").strip()[:500]
+        for item in list(session.conversation or [])[-40:]
+        if isinstance(item, dict)
+        and item.get("role") == "user"
+        and str(item.get("content") or "").strip()
+    ][-12:]
+    return {
+        "session_id": session.id,
+        "recommendation_id": recommendation_id,
+        "project_state": {
+            key: state.get(key)
+            for key in (
+                "promotion_category",
+                "promotion_subject",
+                "promotion_objective",
+                "face_exposure",
+                "creative_preferences",
+                "secondary_information",
+                "facts_from_user",
+                "brief_confirmed",
+            )
+        },
+        "store_context": safe_store_context,
+        "recommendation": dict(session.current_recommendation or {}),
+        "recent_user_statements": user_statements,
+    }
+
+
 def _apply_fallback_promotional_captions(
     timeline: list[RecipeClip],
     subject_name: str,
+    copy_context: dict[str, str] | None = None,
 ) -> None:
     """Guarantee useful, evidence-safe copy when the LLM fallback is used."""
     if not timeline:
@@ -521,10 +609,11 @@ def _apply_fallback_promotional_captions(
         indices = list(range(len(timeline)))
     else:
         indices = [0, (len(timeline) - 1) // 2, len(timeline) - 2]
+    context = copy_context or {}
     texts = [
-        _fit_caption(f"{subject_name}, 지금 공개합니다"),
-        "하나씩 공개되는 특별한 순간",
-        "눈으로 먼저 만나는 매력",
+        _fit_caption(context.get("hook") or f"{subject_name}, 지금 공개합니다"),
+        _fit_caption(context.get("detail") or "하나씩 공개되는 특별한 순간"),
+        _fit_caption(context.get("support") or "눈으로 먼저 만나는 매력"),
     ]
     styles = ["HOOK", "CAPTION_EMPHASIS", "CAPTION"]
     positions = ["TOP", "MIDDLE", "TOP"]
@@ -549,6 +638,50 @@ def _apply_fallback_promotional_captions(
             font_weight="BOLD" if order < 2 else "SEMIBOLD",
             scale=1.0,
         )
+
+
+def _fallback_copy_context(shortform_context: dict[str, Any]) -> dict[str, str]:
+    state = dict(shortform_context.get("project_state") or {})
+    subject = dict(state.get("promotion_subject") or {})
+    subject_name = str(subject.get("name") or "").strip()
+    facts = [
+        str(value).strip()
+        for value in dict(state.get("facts_from_user") or {}).values()
+        if str(value).strip()
+    ]
+    details = [
+        str(value).strip()
+        for value in list(state.get("secondary_information") or [])
+        if str(value).strip()
+    ]
+    preferences = [
+        str(value).strip()
+        for value in list(state.get("creative_preferences") or [])
+        if str(value).strip()
+    ]
+    specific = list(dict.fromkeys([*facts, *details]))
+    if not subject_name and not specific:
+        return {}
+    hook = subject_name or specific[0]
+    detail = specific[0] if specific and specific[0] != hook else ""
+    support = specific[1] if len(specific) > 1 else (preferences[0] if preferences else "")
+    objective = str(state.get("promotion_objective") or "").lower()
+    cta_suffix = {
+        "visit": "직접 만나보세요",
+        "sales": "지금 만나보세요",
+        "reservation_inquiry": "지금 문의해보세요",
+        "new_customer": "새롭게 만나보세요",
+        "revisit": "다시 만나보세요",
+    }.get(objective, "더 알아보세요")
+    body_parts = list(dict.fromkeys([item for item in [subject_name, *specific[:2]] if item]))
+    return {
+        "hook": hook,
+        "detail": detail,
+        "support": support,
+        "cta": f"{subject_name or hook}, {cta_suffix}",
+        "title": f"{subject_name or hook}의 포인트",
+        "body": " · ".join(body_parts),
+    }
 
 
 def _fit_caption(value: str, limit: int = 40) -> str:
