@@ -425,7 +425,15 @@ def _import_video_editing_db(
         existing = db.get(VideoEditingDBRecord, (template_id, source_version))
         if existing is not None:
             evidence_summary = dict(existing.evidence_summary or {})
+            existing.name = content.name
+            existing.recommendation_title = content.recommendation_title
+            existing.recommendation_concept = content.recommendation_concept
+            existing.recommendation_metadata = (
+                content.recommendation_metadata.model_dump(mode="json")
+            )
             existing.shooting_guide = content.shooting_guide.model_dump(mode="json")
+            existing.editing_rules = content.editing_rules.model_dump(mode="json")
+            existing.trend_ids = content.trend_ids
             evidence_summary["shooting_task_intervals"] = interval_evidence
             existing.evidence_summary = evidence_summary
             db.commit()
