@@ -15,6 +15,7 @@ from app.main import app
 from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.models.shortform_session import ShortformSession
 from app.schemas.shortform import PromotionCategory, ShortformAction
+from app.template_knowledge.seeds import seed_template_library
 
 
 class FakeShortformLLM:
@@ -407,6 +408,26 @@ def test_shooting_guide_accepts_challenge_id_alias(client, auth_headers):
     assert response.status_code == 200
     assert response.json()["template_id"] == "gt_cafe_recommendation"
     assert response.json()["version"] == 2
+
+
+def test_information_shooting_guide_returns_elements_instead_of_edit_cuts(
+    client, auth_headers
+):
+    with SessionLocal() as db:
+        seed_template_library(db)
+
+    response = client.get(
+        "/api/v1/editing-templates/gt_cafe_recommendation/versions/2/shooting-guide",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["format_type"] == "정보형"
+    assert payload["scenes"] == []
+    assert payload["tasks"] == []
+    assert len(payload["shooting_elements"]) == 4
+    assert all(len(item["instruction"]) <= 50 for item in payload["shooting_elements"])
 
 
 def test_openapi_preserves_live_legacy_backend_contract(client):

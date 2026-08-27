@@ -4,6 +4,9 @@ import sys
 import math
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from app.agents.editing.llm import (
     OpenAIEditingLLM,
     _apply_source_preparation,
@@ -283,6 +286,63 @@ def test_multi_cut_analysis_is_reused_on_produced_timeline():
     assert [item["produced_timestamp_ms"] for item in produced["observations"]] == [0, 100, 100, 200, 300]
     assert produced["observations"][0]["mapped_reference_segment_id"] == "ref_1"
     assert produced["observations"][-1]["mapped_reference_segment_id"] == "ref_2"
+
+
+def test_information_plan_allows_disjoint_ranges_from_same_video():
+    plan = SourceCutPlan(
+        strategy="INFORMATIONAL_REASSEMBLY",
+        cuts=[
+            SourceCutDecision(
+                video_id="long_take",
+                trim_in_ms=0,
+                trim_out_ms=500,
+                mapped_reference_segment_id="ref_1",
+                cut_in_reason="start",
+                cut_out_reason="end",
+                decision_reason="storefront",
+            ),
+            SourceCutDecision(
+                video_id="long_take",
+                trim_in_ms=700,
+                trim_out_ms=1200,
+                mapped_reference_segment_id="ref_2",
+                cut_in_reason="start",
+                cut_out_reason="end",
+                decision_reason="sign detail",
+            ),
+        ],
+        rationale="reuse one long take without overlap",
+    )
+
+    assert [item.video_id for item in plan.cuts] == ["long_take", "long_take"]
+
+
+def test_information_plan_rejects_overlapping_ranges_from_same_video():
+    with pytest.raises(ValidationError, match="must not overlap"):
+        SourceCutPlan(
+            strategy="INFORMATIONAL_REASSEMBLY",
+            cuts=[
+                SourceCutDecision(
+                    video_id="long_take",
+                    trim_in_ms=0,
+                    trim_out_ms=700,
+                    mapped_reference_segment_id="ref_1",
+                    cut_in_reason="start",
+                    cut_out_reason="end",
+                    decision_reason="first",
+                ),
+                SourceCutDecision(
+                    video_id="long_take",
+                    trim_in_ms=500,
+                    trim_out_ms=1000,
+                    mapped_reference_segment_id="ref_2",
+                    cut_in_reason="start",
+                    cut_out_reason="end",
+                    decision_reason="second",
+                ),
+            ],
+            rationale="invalid overlap",
+        )
 
 
 def test_source_preparation_overrides_llm_cut_boundaries():

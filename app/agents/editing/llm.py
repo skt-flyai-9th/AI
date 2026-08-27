@@ -107,6 +107,8 @@ class OpenAIEditingLLM:
             task = "Revise the parent EditRecipe" if revision_action else "Create an EditRecipe"
         reference_context = video_editing_db.get("reference_evidence") or {}
         shoot_mode = _resolve_shoot_mode(project, video_contexts)
+        if _is_information_format(video_editing_db):
+            shoot_mode = "MULTI_CUT"
         cache_key = _analysis_cache_key(selected_shortform, video_contexts, shoot_mode)
         prepared = self._analysis_cache.get(cache_key)
         if prepared is None:
@@ -191,6 +193,8 @@ class OpenAIEditingLLM:
         checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> EditingPlanDecision:
         shoot_mode = _resolve_shoot_mode(project, video_contexts)
+        if _is_information_format(video_editing_db):
+            shoot_mode = "MULTI_CUT"
         cache_key = _analysis_cache_key(selected_shortform, video_contexts, shoot_mode)
         prepared = self._analysis_cache.get(cache_key)
         if prepared is None:
@@ -475,20 +479,29 @@ class OpenAIEditingLLM:
         revision_action: str | None,
     ) -> SourceCutPlan:
         min_cut_ms = _source_min_cut_ms(video_editing_db)
+        is_information = _is_information_format(video_editing_db)
         payload = {
             "task": (
                 "Create the MULTI_CUT source-preparation plan before creative editing. "
-                "Map each user raw cut to the most corresponding reference-original segment. "
+                "Map user footage intervals to the most corresponding reference-original segments. "
                 "Choose trim boundaries only on supplied exact-frame timestamps, preferring frames "
-                "marked as natural cut-transition candidates. Preserve capture order. The reference "
+                "marked as natural cut-transition candidates. The reference "
                 "segment context is the target structure; actual user footage is the hard evidence constraint."
             ),
             "reference_original_context": reference_context,
             "video_editing_db": video_editing_db,
             "revision_action": revision_action,
             "raw_frame_analysis": analyzed,
+            "source_strategy": (
+                "INFORMATIONAL_REASSEMBLY" if is_information else "CUT_PER_INPUT"
+            ),
             "hard_rules": [
-                "Do not reorder raw cuts.",
+                (
+                    "For information-form footage, create one ordered decision per required reference edit segment. "
+                    "The same video_id may appear multiple times, but its selected time ranges must never overlap."
+                    if is_information
+                    else "Preserve raw capture order and create exactly one source cut per input video."
+                ),
                 "Do not invent a reference segment that is not present in reference context/guide.",
                 "trim_in_ms and trim_out_ms must exactly equal observed frame timestamps.",
                 f"Every selected source cut must span at least {min_cut_ms}ms before creative speed changes.",
@@ -496,13 +509,20 @@ class OpenAIEditingLLM:
                 "Keep the selected user content as similar as possible to the corresponding reference segment.",
             ],
         }
-        return self._request_model(
+        result = self._request_model(
             schema_model=SourceCutPlan,
             instructions=(
                 "You plan only source cuts. Do not choose captions, effects, color, zoom, or publishing copy."
             ),
             user_payload=payload,
             schema_name="editing_source_cut_plan",
+        )
+        return result.model_copy(
+            update={
+                "strategy": (
+                    "INFORMATIONAL_REASSEMBLY" if is_information else "CUT_PER_INPUT"
+                )
+            }
         )
 
     def _request_model(
@@ -649,13 +669,26 @@ def _normalize_source_cut_plan(
 ) -> SourceCutPlan:
     """Snap GPT cuts to real frames, preserve order, and prevent repair deadlocks."""
     analyzed_by_video = {item["video_id"]: item for item in analyzed}
-    plan_by_video = {item.video_id: item for item in plan.cuts}
+    contexts_by_video = {item.video_id: item for item in contexts}
     normalized = []
-    for context in sorted(contexts, key=lambda item: item.shooting_scene_order):
-        cut = plan_by_video.get(context.video_id)
-        if cut is None:
+    ordered_cuts = list(plan.cuts)
+    if plan.strategy == "CUT_PER_INPUT":
+        by_video = {item.video_id: item for item in plan.cuts}
+        missing = [item.video_id for item in contexts if item.video_id not in by_video]
+        if missing:
             raise EditingLLMError(
-                f"Source-cut plan omitted video_id={context.video_id}.",
+                f"Source-cut plan omitted video_id={missing[0]}.",
+                retryable=False,
+            )
+        ordered_cuts = [
+            by_video[item.video_id]
+            for item in sorted(contexts, key=lambda value: value.shooting_scene_order)
+        ]
+    for cut in ordered_cuts:
+        context = contexts_by_video.get(cut.video_id)
+        if context is None:
+            raise EditingLLMError(
+                f"Source-cut plan referenced unknown video_id={cut.video_id}.",
                 retryable=False,
             )
         source = analyzed_by_video.get(context.video_id) or {}
@@ -696,6 +729,7 @@ def _normalize_source_cut_plan(
             )
         )
     return SourceCutPlan(
+        strategy=plan.strategy,
         cuts=normalized,
         rationale=plan.rationale,
     )
@@ -714,29 +748,22 @@ def _apply_source_preparation(
     mode = source_preparation.get("mode")
     if mode == "MULTI_CUT":
         cuts = list(source_preparation.get("cuts") or [])
-        by_video: dict[str, Any] = {}
-        for clip in recipe.timeline:
-            if clip.video_id in by_video:
-                raise EditingLLMError(
-                    "MULTI_CUT final recipe must contain one clip per source cut.",
-                    retryable=False,
-                )
-            by_video[clip.video_id] = clip
+        clips = sorted(recipe.timeline, key=lambda item: item.clip_order)
+        if len(clips) != len(cuts):
+            raise EditingLLMError(
+                "MULTI_CUT final recipe must contain one clip per prepared source interval.",
+                retryable=False,
+            )
         cursor = 0.0
         normalized_timeline = []
-        for index, cut in enumerate(cuts, start=1):
+        for index, (cut, clip) in enumerate(zip(cuts, clips, strict=True), start=1):
             video_id = str(cut["video_id"])
-            clip = by_video.get(video_id)
-            if clip is None:
-                raise EditingLLMError(
-                    f"Final recipe omitted prepared source cut {video_id}.",
-                    retryable=False,
-                )
             trim_in = int(cut["trim_in_ms"])
             trim_out = int(cut["trim_out_ms"])
             clip = clip.model_copy(
                 update={
                     "clip_order": index,
+                    "video_id": video_id,
                     "source_start_ms": trim_in,
                     "source_end_ms": trim_out,
                     "timeline_start_ms": int(round(cursor)),
@@ -856,7 +883,11 @@ def _requirements(
 ) -> list[str]:
     requirements = [
         "clip_order must be consecutive from 1 and timeline_start_ms must be gapless from 0.",
-        "Preserve ascending shooting_scene_order and use only supplied video ids.",
+        (
+            "Follow reference edit-segment order. A supplied video id may be reused through multiple non-overlapping source ranges."
+            if source_preparation.get("strategy") == "INFORMATIONAL_REASSEMBLY"
+            else "Preserve ascending shooting_scene_order and use only supplied video ids."
+        ),
         "Every source timestamp must be inside that video's duration.",
         "Caption times are absolute timeline milliseconds and must stay inside their clip.",
         "Caption scale must remain 1.0; use an approved style_id for visual emphasis.",
@@ -906,6 +937,11 @@ def _requirements(
             "and use the available videos conservatively in shooting order."
         )
     return requirements
+
+
+def _is_information_format(video_editing_db: dict[str, Any]) -> bool:
+    metadata = video_editing_db.get("recommendation_metadata") or {}
+    return str(metadata.get("format_type") or "") == "정보형"
 
 
 def _is_reduced_structure_revision(revision_action: str | None) -> bool:
