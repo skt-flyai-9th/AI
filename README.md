@@ -19,6 +19,8 @@ REALS AI Service
 
 현재 FastAPI 서비스 버전은 `1.6.0`입니다.
 
+OpenAI를 사용하는 모든 Agent와 Database Knowledge Manager의 기본 모델은 `gpt-4.1-mini`로 통일합니다.
+
 ## 현재 구현 상태
 
 | 영역 | 상태 | 현재 역할 |
@@ -130,7 +132,7 @@ X-Internal-API-Key: <INTERNAL_API_KEY>
 촬영 영상 업로드 URL
   → ffprobe 메타데이터 확인
   → 프레임 샘플 추출
-  → GPT 기반 장면·동작 분석
+  → GPT-4.1 mini 기반 장면·동작 분석
   → 템플릿 근거와 촬영 순서 매칭
   → EditRecipe 생성
   → REALS registry 기반 검증·제한 수정

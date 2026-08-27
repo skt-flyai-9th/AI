@@ -4,7 +4,7 @@
 구조화 JSON(EditRecipe)만 받아 MP4와 Manifest를 만든다.
 
 ```
-[엔진 밖]  Gemini 가이드 분석 · GPT READ-2 · Orchestrator
+[엔진 밖]  Gemini 가이드 분석 · GPT-4.1 mini READ-2 · Orchestrator
              ↕ 구조화 JSON
 [엔진 안]  CUT_ASSEMBLY  : 모션·품질·의미 분석 → 앞뒤 트림 → 순서 보존 결합
            FINAL_RENDER  : Validator → Avoid Map → 자막 배치 → FFmpeg → QC

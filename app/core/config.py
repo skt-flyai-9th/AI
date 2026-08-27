@@ -51,12 +51,14 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
-    shortform_openai_model: str = "gpt-5.4-mini-2026-03-17"
+    shortform_openai_model: str = "gpt-4.1-mini"
     shortform_request_timeout_seconds: int = Field(default=12, ge=2, le=60)
     shortform_max_output_tokens: int = Field(default=1800, ge=256, le=10000)
     shortform_max_photo_inputs: int = Field(default=4, ge=0, le=10)
 
-    database_openai_model: str = "gpt-5.4-mini-2026-03-17"
+    # Database Knowledge Manager. GPT generates version candidates and trade-area
+    # analyses; Gemini inspects public YouTube reference videos from trendcluster.
+    database_openai_model: str = "gpt-4.1-mini"
     database_request_timeout_seconds: int = Field(default=60, ge=5, le=300)
     database_max_output_tokens: int = Field(default=6000, ge=512, le=30000)
     database_gemini_model: str = "auto"
@@ -71,7 +73,7 @@ class Settings(BaseSettings):
     # Editing Agent. Defaults are deliberately CPU-only friendly for the
     # current 2-vCPU / 8-GiB AI host: source frames are retained as compact
     # 360px JPEGs, then sampled into a bounded set of temporal VLM batches.
-    editing_openai_model: str = "gpt-5.4-mini-2026-03-17"
+    editing_openai_model: str = "gpt-4.1-mini"
     editing_request_timeout_seconds: int = Field(default=30, ge=5, le=180)
     editing_max_output_tokens: int = Field(default=5000, ge=512, le=20000)
     editing_llm_max_request_attempts: int = Field(default=3, ge=1, le=5)

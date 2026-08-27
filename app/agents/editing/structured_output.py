@@ -41,7 +41,6 @@ def request_structured_model(
                 "strict": True,
             }
         },
-        "reasoning": {"effort": "low"},
         "max_output_tokens": max_output_tokens,
         "store": False,
     }
