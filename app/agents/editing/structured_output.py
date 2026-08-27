@@ -125,6 +125,7 @@ def request_structured_model(
                 raise ValueError("Responses API did not complete with structured output.")
             output_text = _extract_output_text(response_payload)
             parsed = json.loads(output_text)
+            parsed = _repair_known_editing_plan_omissions(parsed, schema_name=schema_name)
             return schema_model.model_validate(parsed)
         except (ValidationError, ValueError, TypeError) as exc:
             reason = _structured_output_failure_reason(response_payload, exc)
@@ -280,6 +281,40 @@ def _extract_output_text(payload: dict[str, Any]) -> str:
                     return text
     value = payload.get("output_text")
     return value if isinstance(value, str) else ""
+
+
+def _repair_known_editing_plan_omissions(
+    parsed: Any,
+    *,
+    schema_name: str,
+) -> Any:
+    """Repair a safe publishing-title omission without inventing new facts.
+
+    Some Responses API completions have omitted only ``publishing.title`` even
+    under strict schema mode. The post caption and CTA are already constrained
+    to evidence-safe marketing copy, so reuse one of them as the title and let
+    normal Pydantic validation reject every other malformed field.
+    """
+    if schema_name not in {"editing_plan", "editing_plan_repair"}:
+        return parsed
+    if not isinstance(parsed, dict) or parsed.get("outcome") != "RECIPE":
+        return parsed
+    publishing = parsed.get("publishing")
+    if not isinstance(publishing, dict) or str(publishing.get("title") or "").strip():
+        return parsed
+
+    candidates = [publishing.get("caption")]
+    recipe = parsed.get("recipe")
+    if isinstance(recipe, dict):
+        cta = recipe.get("cta")
+        if isinstance(cta, dict):
+            candidates.append(cta.get("text"))
+    for candidate in candidates:
+        title = " ".join(str(candidate or "").split())[:80].rstrip()
+        if title:
+            publishing["title"] = title
+            break
+    return parsed
 
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)

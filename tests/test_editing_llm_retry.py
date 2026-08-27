@@ -43,6 +43,42 @@ def _source_gap_payload() -> dict[str, Any]:
     ).model_dump(mode="json")
 
 
+def _recipe_payload_without_publishing_title() -> dict[str, Any]:
+    return {
+        "outcome": "RECIPE",
+        "recipe": {
+            "recipe_version": 1,
+            "editing_template_id": "template_1",
+            "editing_template_version": 1,
+            "source_type": "VIDEO_ONLY",
+            "timeline": [
+                {
+                    "clip_order": 1,
+                    "video_id": "video_1",
+                    "source_start_ms": 0,
+                    "source_end_ms": 1000,
+                    "timeline_start_ms": 0,
+                }
+            ],
+            "cta": {"text": "지금 만나보세요"},
+        },
+        "publishing": {
+            "caption": "칙촉의 비주얼을 매장에서 만나보세요.",
+            "hashtags": ["#칙촉", "#매장소개", "#맛집", "#숏폼", "#릴스"],
+            "track": {
+                "mode": "SUGGESTED",
+                "search_keyword": "주술회전 감성 손동작 소환",
+                "start_sec": None,
+                "end_sec": None,
+            },
+            "post_note": "주술회전 감성 손동작 소환을 검색해 추가해주세요.",
+        },
+        "missing_scene_roles": [],
+        "available_options": [],
+        "rationale": "메뉴 홍보 편집",
+    }
+
+
 def _output(payload: dict[str, Any], *, status: str = "completed") -> dict[str, Any]:
     return {
         "status": status,
@@ -95,6 +131,24 @@ def test_invalid_structured_output_retries_only_the_failed_model_call(monkeypatc
     assert len(requests) == 2
     assert [item["max_output_tokens"] for item in requests] == [5000, 10000]
     assert "previous response could not be validated" in requests[1]["instructions"]
+
+
+def test_missing_publishing_title_is_recovered_from_valid_caption(monkeypatch):
+    requests = _install_responses(
+        monkeypatch,
+        [_FakeResponse(200, _output(_recipe_payload_without_publishing_title()))],
+    )
+
+    result = _planner()._request_model(
+        schema_model=EditingPlanDecision,
+        instructions="Plan a menu promotion edit.",
+        user_payload={},
+        schema_name="editing_plan",
+    )
+
+    assert result.publishing is not None
+    assert result.publishing.title == "칙촉의 비주얼을 매장에서 만나보세요."
+    assert len(requests) == 1
 
 
 def test_incomplete_output_increases_token_limit_before_retry(monkeypatch):
