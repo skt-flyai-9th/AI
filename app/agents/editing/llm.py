@@ -849,6 +849,12 @@ def _requirements(
         "create one regular caption per clip. The rendered CTA does not count toward this minimum.",
         "The first clip must contain a concise HOOK caption grounded in the verified project "
         "promotion_subject. Use CAPTION_EMPHASIS on at least one item or reveal moment.",
+        "Treat editing_context.project_brief as the authoritative copy brief. Carry its confirmed "
+        "promotion subject, objective, creative preferences, secondary information, verified user "
+        "facts, and recent user wording into captions, CTA, publishing title, and post caption.",
+        "Prefer concrete verified details and the user's own concise wording over generic phrases. "
+        "When project_brief contains a usable detail, do not replace it with vague copy such as "
+        "'특별한 순간' or '매력'. Never invent a price, benefit, review, or store fact.",
         "For a concise first promotional HOOK, prefer motion_id TYPEWRITER so text appears one "
         "Korean character at a time. TYPEWRITER captions must contain at most 18 non-space "
         "characters and allow 80ms per character plus at least 600ms of fully visible hold time.",

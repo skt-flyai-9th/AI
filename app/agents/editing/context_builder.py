@@ -27,15 +27,38 @@ def build_editing_context(
     produced_context = _mapping(prepared_analysis.get("produced_frame_context"))
     observations = _dict_items(produced_context.get("observations"))
     shoot_mode = _normalized_shoot_mode(source_preparation)
+    shortform_context = _mapping(project.get("shortform_context"))
+    project_state = _mapping(shortform_context.get("project_state"))
 
     return {
-        "context_version": "editing-context-v1",
+        "context_version": "editing-context-v2",
         "project_context": {
             "project_id": project.get("project_id"),
             "store_id": project.get("store_id"),
             "promotion_subject": _mapping(project.get("promotion_subject")),
             "promotion_objective": project.get("promotion_objective"),
             "face_exposure": project.get("face_exposure"),
+        },
+        "project_brief": {
+            "promotion_subject": _mapping(project_state.get("promotion_subject"))
+            or _mapping(project.get("promotion_subject")),
+            "promotion_objective": project_state.get("promotion_objective")
+            or project.get("promotion_objective"),
+            "creative_preferences": _string_items(
+                project_state.get("creative_preferences")
+            ),
+            "secondary_information": _string_items(
+                project_state.get("secondary_information")
+            ),
+            "verified_user_facts": _mapping(project_state.get("facts_from_user")),
+            "store_context": _mapping(shortform_context.get("store_context")),
+            "selected_recommendation": _mapping(
+                shortform_context.get("recommendation")
+            ),
+            "recent_user_statements": _string_items(
+                shortform_context.get("recent_user_statements")
+            ),
+            "brief_confirmed": bool(project_state.get("brief_confirmed")),
         },
         "template_context": {
             "editing_template_id": selected_shortform.get("editing_template_id"),
