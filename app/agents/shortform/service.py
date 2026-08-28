@@ -44,6 +44,7 @@ from app.schemas.shortform import (
     StoreContext,
     TurnInputType,
 )
+from app.schemas.template_knowledge import MAX_SHOOTING_GUIDE_TITLE_CHARS
 from app.template_knowledge.seeds import seed_template_library
 
 
@@ -364,7 +365,7 @@ class ShortformAgentService:
         if format_type == "정보형":
             for index, item in enumerate(guide.get("shooting_elements") or [], start=1):
                 element = dict(item)
-                title = _bounded_guide_title(element.get("title"), "촬영 요소")
+                title = _validated_guide_title(element.get("title"), "촬영 요소")
                 instruction = str(element.get("instruction") or "").strip()
                 if not instruction or len(instruction) > 50:
                     raise ShortformDomainError(
@@ -412,12 +413,10 @@ class ShortformAgentService:
             if scene_index is None:
                 scene_index = display_order - 1
 
-            task_title = _bounded_guide_title(
-                task.get("task_title")
-                or task.get("title")
-                or task.get("description")
-                or "촬영 태스크",
-                "촬영 태스크",
+            # Legacy records used the full instruction in `description`. Keep that
+            # text intact below as an instruction instead of clipping it into a title.
+            task_title = _validated_guide_title(
+                task.get("task_title") or task.get("title"), "촬영 태스크"
             )
             raw_guide = task.get("guide") if isinstance(task.get("guide"), dict) else {}
             raw_instructions = raw_guide.get("instructions") or []
@@ -1022,9 +1021,18 @@ def _missing_required_fields(state: dict[str, Any]) -> list[str]:
     return missing
 
 
-def _bounded_guide_title(value: Any, fallback: str) -> str:
+def _validated_guide_title(value: Any, fallback: str) -> str:
     title = str(value or fallback).strip() or fallback
-    return title if len(title) <= 9 else f"{title[:8]}…"
+    if len(title) > MAX_SHOOTING_GUIDE_TITLE_CHARS:
+        raise ShortformDomainError(
+            "SHOOTING_GUIDE_TITLE_TOO_LONG",
+            (
+                "촬영 컷 설명은 공백 포함 "
+                f"{MAX_SHOOTING_GUIDE_TITLE_CHARS}자 이하여야 합니다."
+            ),
+            status_code=422,
+        )
+    return title
 
 
 def _apply_deterministic_turn_input(
