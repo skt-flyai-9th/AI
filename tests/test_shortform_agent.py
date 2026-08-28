@@ -254,18 +254,15 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
         assert guide.status_code == 200
         assert guide.json()["template_id"] == "video_editing_db_028"
         assert guide.json()["scenes"][0]["scene_order"] == 1
-        assert guide.json()["tasks"] == [
-            {
-                "display_order": 1,
-                "task_title": "완성된 메뉴를 화면 중앙에 촬영합니다.",
-                "scene_index": 0,
-                "guide": {
-                    "instructions": ["완성된 메뉴를 화면 중앙에 촬영합니다."],
-                    "start_ms": 0,
-                    "end_ms": 3000,
-                },
-            }
-        ]
+        task = guide.json()["tasks"][0]
+        assert task["display_order"] == 1
+        assert len(task["task_title"]) <= 9
+        assert task["scene_index"] == 0
+        assert task["guide"] == {
+            "instructions": ["완성된 메뉴를 화면 중앙에 촬영합니다."],
+            "start_ms": 0,
+            "end_ms": 3000,
+        }
         assert "task_type" not in guide.json()["tasks"][0]
         assert "guide_type" not in guide.json()["tasks"][0]["guide"]
 
@@ -427,6 +424,7 @@ def test_information_shooting_guide_returns_elements_instead_of_edit_cuts(
     assert payload["scenes"] == []
     assert payload["tasks"] == []
     assert len(payload["shooting_elements"]) == 4
+    assert all(len(item["title"]) <= 9 for item in payload["shooting_elements"])
     assert all(len(item["instruction"]) <= 50 for item in payload["shooting_elements"])
 
 
@@ -449,7 +447,7 @@ def test_openapi_preserves_live_legacy_backend_contract(client):
         assert "video_editing_db_version" not in properties
 
 
-def test_next_recommendation_recycles_only_record_when_no_alternative(client, auth_headers):
+def test_next_recommendation_reports_exhaustion_when_no_alternative(client, auth_headers):
     _seed_video_editing_db("only_db_record", title="유일한 호환 DB 버전")
 
     fake_service = ShortformAgentService(llm=FakeShortformLLM())
@@ -479,19 +477,14 @@ def test_next_recommendation_recycles_only_record_when_no_alternative(client, au
             headers=auth_headers,
             json={},
         )
-        assert next_response.status_code == 200
-        replacement = next_response.json()["recommendation"]
-        assert replacement["editing_template_id"] == "only_db_record"
-        assert replacement["recommendation_id"] != recommendation_id
+        assert next_response.status_code == 409
+        assert next_response.json()["detail"]["code"] == "NO_MORE_SHORTFORM_RECOMMENDATIONS"
 
         with SessionLocal() as db:
             session = db.get(ShortformSession, session_id)
             assert session is not None
             assert session.status == "WAITING_RECOMMENDATION_ACTION"
-            assert (
-                session.current_recommendation["recommendation_id"]
-                == replacement["recommendation_id"]
-            )
+            assert session.current_recommendation["recommendation_id"] == recommendation_id
             assert session.shown_video_editing_db_ids == ["only_db_record"]
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)

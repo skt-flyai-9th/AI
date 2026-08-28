@@ -14,6 +14,7 @@ from app.schemas.template_knowledge import (
     MAX_SHOOTING_GUIDE_CUTS,
     MAX_INFORMATIONAL_SHOOTING_ELEMENTS,
     MAX_SHOOTING_ELEMENT_INSTRUCTION_CHARS,
+    MAX_SHOOTING_GUIDE_TITLE_CHARS,
     TradeAreaAnalysisResult,
     TradeAreaEvidence,
     TradeAreaDBContent,
@@ -142,6 +143,7 @@ class OpenAITemplateCandidateGenerator:
                 "guide_authoring_rules": [
                     f"Create at most {MAX_SHOOTING_GUIDE_CUTS} ordered shooting-guide scenes and at most {MAX_SHOOTING_GUIDE_CUTS} matching tasks.",
                     "Every scene_dialogue must be at most 9 characters including spaces; use null when no spoken line is required.",
+                    f"Every user-facing shooting task title and shooting-element title must be at most {MAX_SHOOTING_GUIDE_TITLE_CHARS} Korean characters including spaces.",
                     "Treat gemini_video_insights[].segments as the authoritative cut plan.",
                     "Create exactly one shooting-guide scene and one matching task for each authoritative segment, preserving sequence and semantic role.",
                     "For the task matching segment sequence N, set display_order to N and the zero-based scene_index to N-1.",
