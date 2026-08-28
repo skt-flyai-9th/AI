@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from app.agents.editing.service import EditingAgentService, EditingDomainError
+from app.agents.editing.structured_output import EditingLLMError
 from app.agents.editing.types import EditingPlanDecision, VideoContext, VideoKeyframe
 from app.agents.editing.video_context import FFmpegVideoContextBuilder, VideoContextError
 from app.core.config import Settings
@@ -220,6 +221,30 @@ class SourceGapFakeLLM:
 
     def repair_recipe(self, **kwargs):
         raise AssertionError("SOURCE_GAP must not enter repair")
+
+
+class InvalidPlanFakeLLM:
+    def plan_recipe(self, **kwargs):
+        raise EditingLLMError(
+            "Editing GPT request failed: schema=editing_plan; "
+            "reason=schema_validation_root_value_error; attempt=3/3.",
+            retryable=False,
+        )
+
+    def repair_recipe(self, **kwargs):
+        raise AssertionError("invalid structured output must use the ordered fallback")
+
+
+class UnavailablePlanFakeLLM:
+    def plan_recipe(self, **kwargs):
+        raise EditingLLMError(
+            "Editing GPT request failed: schema=editing_plan; "
+            "reason=http_503; attempt=3/3.",
+            retryable=False,
+        )
+
+    def repair_recipe(self, **kwargs):
+        raise AssertionError("an unavailable provider must not enter recipe repair")
 
 
 class FakeRenderer:
@@ -571,6 +596,49 @@ def test_editing_pipeline_renders_ordered_fallback_after_source_gap():
         assert len(renderer.calls) == 1
         assert llm.plan_count == 2
         assert any("SOURCE_ROLE_MATCH_FALLBACK" in item for item in payload.warnings)
+
+
+def test_editing_pipeline_renders_fallback_after_plan_contract_failure():
+    renderer = FakeRenderer()
+    service = EditingAgentService(
+        llm=InvalidPlanFakeLLM(),
+        video_context_builder=FakeVideoContextBuilder(),
+        renderer=renderer,
+    )
+    with SessionLocal() as db:
+        _seed_video_editing_db(db)
+        _seed_shortform_session(db)
+        run = service.create_run(db, _request())
+        result = service.execute(db, run.id)
+        payload = service.result(result)
+
+        assert result.status == EditingRunStatus.COMPLETED.value
+        assert payload.recipe is not None
+        assert payload.publishing is not None
+        assert "딸기 크림 라떼" in payload.recipe.timeline[0].caption.text
+        assert len(renderer.calls) == 1
+        assert any("EDITING_PLAN_FALLBACK" in item for item in payload.warnings)
+
+
+def test_editing_pipeline_does_not_mask_provider_outage_as_contract_fallback():
+    renderer = FakeRenderer()
+    service = EditingAgentService(
+        llm=UnavailablePlanFakeLLM(),
+        video_context_builder=FakeVideoContextBuilder(),
+        renderer=renderer,
+    )
+    with SessionLocal() as db:
+        _seed_video_editing_db(db)
+        run = service.create_run(db, _request())
+
+        with pytest.raises(EditingLLMError, match="http_503"):
+            service.execute(db, run.id)
+
+        failed = db.get(EditingRun, run.id)
+        assert failed is not None
+        assert failed.status == EditingRunStatus.FAILED.value
+        assert not any("EDITING_PLAN_FALLBACK" in item for item in failed.warnings)
+        assert renderer.calls == []
 
 
 @dataclass

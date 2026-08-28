@@ -127,11 +127,47 @@ class EditingPlanDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     outcome: Literal["RECIPE", "SOURCE_GAP"]
-    recipe: EditRecipe | None
-    publishing: PublishingResult | None
-    missing_scene_roles: list[str]
-    available_options: list[Literal["USE_REDUCED_STRUCTURE", "ADD_MORE_VIDEO"]]
+    recipe: EditRecipe | None = Field(
+        description="Required for RECIPE and null for SOURCE_GAP."
+    )
+    publishing: PublishingResult | None = Field(
+        description="Required for RECIPE and null for SOURCE_GAP."
+    )
+    missing_scene_roles: list[str] = Field(
+        description="Empty for RECIPE and non-empty for SOURCE_GAP."
+    )
+    available_options: list[Literal["USE_REDUCED_STRUCTURE", "ADD_MORE_VIDEO"]] = Field(
+        description=(
+            "Empty for RECIPE. SOURCE_GAP must contain USE_REDUCED_STRUCTURE and "
+            "ADD_MORE_VIDEO exactly once each."
+        )
+    )
     rationale: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_unambiguous_outcome_fields(cls, value: Any) -> Any:
+        """Remove contradictory branch fields without inventing creative content."""
+        if not isinstance(value, dict):
+            return value
+
+        normalized = dict(value)
+        outcome = normalized.get("outcome")
+        if (
+            outcome == "RECIPE"
+            and normalized.get("recipe") is not None
+            and normalized.get("publishing") is not None
+        ):
+            normalized["missing_scene_roles"] = []
+            normalized["available_options"] = []
+        elif outcome == "SOURCE_GAP" and normalized.get("missing_scene_roles"):
+            normalized["recipe"] = None
+            normalized["publishing"] = None
+            normalized["available_options"] = [
+                "USE_REDUCED_STRUCTURE",
+                "ADD_MORE_VIDEO",
+            ]
+        return normalized
 
     @model_validator(mode="after")
     def validate_outcome(self) -> EditingPlanDecision:

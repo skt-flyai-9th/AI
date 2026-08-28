@@ -221,31 +221,57 @@ class EditingAgentService:
                     max(run.progress, progress),
                 )
 
-            result = self.graph.invoke(
-                {
-                    "domain_context": self.domain_context,
-                    "project": project_payload,
-                    "selected_shortform": request.selected_shortform.model_dump(mode="json"),
-                    "video_editing_db": database_payload,
-                    "videos": [video.model_dump(mode="json") for video in request.videos],
-                    "video_contexts": [context.model_dump(mode="json") for context in contexts],
-                    "parent_recipe": parent_recipe,
-                    "revision_action": run.revision_action,
-                    "max_repair_attempts": self.settings.editing_max_repair_attempts,
-                    "repair_attempts": 0,
-                    "stage_callback": update_graph_stage,
-                    "checkpoint_callback": save_analysis_checkpoint,
-                }
-            )
-            if result.get("exhausted"):
-                errors = [_format_validation_issue(item) for item in result.get("validation_errors", [])]
-                raise EditingDomainError(
-                    "EDITING_RECIPE_INVALID",
-                    "Recipe validation failed after repair: " + "; ".join(errors),
-                    status_code=500,
+            planning_error: EditingLLMError | None = None
+            try:
+                result = self.graph.invoke(
+                    {
+                        "domain_context": self.domain_context,
+                        "project": project_payload,
+                        "selected_shortform": request.selected_shortform.model_dump(mode="json"),
+                        "video_editing_db": database_payload,
+                        "videos": [video.model_dump(mode="json") for video in request.videos],
+                        "video_contexts": [
+                            context.model_dump(mode="json") for context in contexts
+                        ],
+                        "parent_recipe": parent_recipe,
+                        "revision_action": run.revision_action,
+                        "max_repair_attempts": self.settings.editing_max_repair_attempts,
+                        "repair_attempts": 0,
+                        "stage_callback": update_graph_stage,
+                        "checkpoint_callback": save_analysis_checkpoint,
+                    }
                 )
+            except EditingLLMError as exc:
+                if not _is_editing_plan_contract_error(exc):
+                    raise
+                planning_error = exc
+                result = None
 
-            decision = EditingPlanDecision.model_validate(result["decision"])
+            if planning_error is not None:
+                run.warnings = [
+                    *(run.warnings or []),
+                    (
+                        "EDITING_PLAN_FALLBACK: 편집 GPT 결과 형식 검증에 실패하여 "
+                        "촬영 순서 기반 기본 편집을 적용했습니다."
+                    ),
+                ]
+                decision = self._build_ordered_fallback(
+                    request, database_payload, contexts, shortform_context
+                )
+            else:
+                assert result is not None
+                if result.get("exhausted"):
+                    errors = [
+                        _format_validation_issue(item)
+                        for item in result.get("validation_errors", [])
+                    ]
+                    raise EditingDomainError(
+                        "EDITING_RECIPE_INVALID",
+                        "Recipe validation failed after repair: " + "; ".join(errors),
+                        status_code=500,
+                    )
+                decision = EditingPlanDecision.model_validate(result["decision"])
+
             if decision.outcome == "SOURCE_GAP":
                 # A visual role mismatch must not strand the client waiting for a
                 # render that will never exist. First ask the planner to use the
@@ -379,7 +405,7 @@ class EditingAgentService:
             cursor += duration
 
         subject = request.project.promotion_subject
-        subject_name = str(subject.get("name") or "오늘의 추천")[:40]
+        subject_name = _promotion_subject_name(subject)
         fallback_copy = _fallback_copy_context(shortform_context or {})
         _apply_fallback_promotional_captions(timeline, subject_name, fallback_copy)
         search_keyword = _fallback_search_keyword(
@@ -715,6 +741,39 @@ def _find_shortform_context(
         "recommendation": selected_recommendation,
         "recent_user_statements": user_statements,
     }
+
+
+def _is_editing_plan_contract_error(exc: EditingLLMError) -> bool:
+    message = str(exc)
+    if not (
+        "schema=editing_plan;" in message
+        or "schema=editing_plan_repair;" in message
+    ):
+        return False
+    return any(
+        f"reason={reason}" in message
+        for reason in (
+            "schema_validation",
+            "invalid_json",
+            "invalid_structured_output",
+            "empty_output",
+            "incomplete_",
+            "response_status_",
+            "refusal",
+        )
+    )
+
+
+def _promotion_subject_name(subject: dict[str, Any]) -> str:
+    for key in ("name", "menu_name", "description", "title"):
+        value = " ".join(str(subject.get(key) or "").split())
+        if value:
+            return value[:40]
+    for item in subject.get("elements") or []:
+        value = " ".join(str(item or "").split())
+        if value:
+            return value[:40]
+    return "오늘의 추천"
 
 
 def _apply_fallback_promotional_captions(

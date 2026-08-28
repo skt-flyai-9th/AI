@@ -151,6 +151,53 @@ def test_missing_publishing_title_is_recovered_from_valid_caption(monkeypatch):
     assert len(requests) == 1
 
 
+def test_recipe_branch_discards_contradictory_source_gap_fields(monkeypatch):
+    payload = _recipe_payload_without_publishing_title()
+    payload["missing_scene_roles"] = ["RESULT"]
+    payload["available_options"] = ["ADD_MORE_VIDEO"]
+    requests = _install_responses(
+        monkeypatch,
+        [_FakeResponse(200, _output(payload))],
+    )
+
+    result = _planner()._request_model(
+        schema_model=EditingPlanDecision,
+        instructions="Plan a menu promotion edit.",
+        user_payload={},
+        schema_name="editing_plan",
+    )
+
+    assert result.outcome == "RECIPE"
+    assert result.missing_scene_roles == []
+    assert result.available_options == []
+    assert len(requests) == 1
+
+
+def test_retry_receives_actionable_outcome_validation_feedback(monkeypatch):
+    invalid = _recipe_payload_without_publishing_title()
+    invalid["publishing"] = None
+    requests = _install_responses(
+        monkeypatch,
+        [
+            _FakeResponse(200, _output(invalid)),
+            _FakeResponse(200, _output(_source_gap_payload())),
+        ],
+    )
+
+    result = _planner()._request_model(
+        schema_model=EditingPlanDecision,
+        instructions="Plan a menu promotion edit.",
+        user_payload={},
+        schema_name="editing_plan",
+    )
+
+    assert result.outcome == "SOURCE_GAP"
+    assert len(requests) == 2
+    retry_instructions = requests[1]["instructions"]
+    assert "RECIPE outcome requires recipe and publishing" in retry_instructions
+    assert "For outcome=RECIPE" in retry_instructions
+
+
 def test_incomplete_output_increases_token_limit_before_retry(monkeypatch):
     requests = _install_responses(
         monkeypatch,
