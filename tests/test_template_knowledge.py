@@ -138,13 +138,13 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
     service, _ = _service()
     with SessionLocal() as db:
         result = seed_template_library(db, service=service)
-        assert len(result["created"]) == 6
+        assert len(result["created"]) == 8
         active_trade_area = db.scalar(
             select(TradeAreaDBRecord).where(TradeAreaDBRecord.status == "ACTIVE")
         )
         assert active_trade_area is not None
         assert active_trade_area.template_id == "trade_area_seoul"
-        assert len(list(db.scalars(select(VideoEditingDBRecord)))) == 3
+        assert len(list(db.scalars(select(VideoEditingDBRecord)))) == 5
         imported_editing = db.scalar(
             select(VideoEditingDBRecord).where(
                 VideoEditingDBRecord.template_id == "gt_jujutsu_transition"
@@ -182,7 +182,18 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
             "gt_jujutsu_transition": 6,
             "gt_otsukare_summer": 7,
             "gt_cafe_recommendation": 23,
+            "gt_donggeurio_challenge": 6,
+            "gt_donggeurio_store_promotion": 6,
         }
+        store_promotion = db.get(
+            VideoEditingDBRecord, ("gt_donggeurio_store_promotion", 1)
+        )
+        assert store_promotion is not None
+        assert len(store_promotion.shooting_guide["shooting_elements"]) == 5
+        assert all(
+            len(item["instruction"]) <= 50
+            for item in store_promotion.shooting_guide["shooting_elements"]
+        )
         information_record = db.get(VideoEditingDBRecord, ("gt_cafe_recommendation", 2))
         assert information_record is not None
         assert information_record.recommendation_metadata["format_type"] == "정보형"
@@ -217,7 +228,7 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
         db.refresh(imported_editing)
         db.refresh(information_record)
         assert second["created"] == []
-        assert len(second["skipped"]) == 6
+        assert len(second["skipped"]) == 8
         assert len(imported_editing.shooting_guide["tasks"]) == 6
         assert information_record.recommendation_metadata["format_type"] == "정보형"
         assert len(information_record.shooting_guide["shooting_elements"]) == 4
@@ -614,7 +625,7 @@ def test_template_knowledge_api_bootstrap_and_async_analysis(client, auth_header
             headers=auth_headers,
         )
         assert versions.status_code == 200
-        assert len(versions.json()) == 4
+        assert len(versions.json()) == 6
         sources = client.get("/api/v1/database-knowledge/sources", headers=auth_headers)
         assert sources.status_code == 200
         assert len(sources.json()) == 2

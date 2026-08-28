@@ -7,6 +7,7 @@ import yaml
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
+from app.models.challenge import Challenge
 from app.models.pipeline_run import PipelineRun
 from app.services.initialization import initialize_service_once
 from app.workers.celery_app import celery_app
@@ -42,6 +43,15 @@ def test_initializer_runs_ranking_only_before_the_first_success():
         assert second["ranking"]["run_id"] == first["ranking"]["run_id"]
         assert len(calls) == 1
         assert len(list(db.scalars(select(PipelineRun)))) == 1
+        bundled = list(db.scalars(select(Challenge).order_by(Challenge.automatic_rank)))
+        assert [item.id for item in bundled if item.active] == [
+            "jujutsu_transition",
+            "cafe_recommendation_reels",
+            "otsukare_summer_challenge",
+            "donggeurio_challenge",
+            "donggeurio_store_promotion",
+        ]
+        assert second["bundled_challenges"]["created"] == []
 
 
 def test_celery_beat_only_schedules_operational_editing_recovery():

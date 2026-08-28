@@ -78,6 +78,24 @@ _EDITING_SCOPE_ADAPTERS: dict[str, dict[str, Any]] = {
         "minimum_filming_time": "within_20m",
         "requires_face": False,
     },
+    "donggeurio_challenge": {
+        "format_type": "밈",
+        "supported_subject_types": ["MENU", "PRODUCT"],
+        "supported_objectives": ["awareness", "new_customer", "visit", "sales"],
+        "supported_filming_times": ["within_20m", "30m_plus"],
+        "supported_face_modes": ["allowed", "not_allowed"],
+        "minimum_filming_time": "within_20m",
+        "requires_face": False,
+    },
+    "donggeurio_store_promotion": {
+        "format_type": "정보형",
+        "supported_subject_types": ["MENU", "STORE"],
+        "supported_objectives": ["awareness", "new_customer", "visit", "sales", "trust"],
+        "supported_filming_times": ["within_20m", "30m_plus"],
+        "supported_face_modes": ["allowed", "not_allowed"],
+        "minimum_filming_time": "within_20m",
+        "requires_face": False,
+    },
 }
 
 
