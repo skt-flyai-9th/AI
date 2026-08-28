@@ -177,6 +177,35 @@ def test_validator_returns_structured_issues_from_reals_registry():
     assert "TYPEWRITER" in capabilities["caption_motion_ids"]
 
 
+def test_validator_rejects_effect_window_outside_host_clip():
+    recipe = _recipe().model_copy(deep=True)
+    recipe.timeline[0].effects = [
+        RecipeEffect.model_validate(
+            {
+                "effect_id": "FLASH",
+                "params": {
+                    "start_ms": 1800,
+                    "end_ms": 2100,
+                    "opacity": 0.8,
+                },
+            }
+        )
+    ]
+    video_editing_db = _video_editing_db()
+    video_editing_db["editing_rules"]["allowed_effect_ids"].append("FLASH")
+
+    issues = EditRecipeValidator().validate(
+        recipe,
+        selected_shortform=SelectedShortform.model_validate(
+            _request().selected_shortform.model_dump(mode="json")
+        ),
+        video_editing_db=video_editing_db,
+        video_contexts=_contexts(),
+    )
+
+    assert any(issue.code == "EFFECT_WINDOW_OUTSIDE_CLIP" for issue in issues)
+
+
 def test_validator_rejects_promotional_video_without_regular_captions():
     recipe = _recipe().model_copy(deep=True)
     for clip in recipe.timeline:
@@ -312,6 +341,15 @@ def test_llm_capabilities_publish_free_tier_envelope():
     assert capabilities["max_input_videos"] == 6
     assert capabilities["max_output_duration_sec"] == 15
     assert "SMOOTH_ZOOM" not in capabilities["effects"]
+    assert "SMOOTH_ZOOM" not in capabilities["effect_contracts"]
+    assert capabilities["effect_contracts"]["PUNCH_ZOOM"] == {
+        "required_params": ["scale_end"],
+        "allowed_params": {"scale_end": {"min": 1.0, "max": 1.15}},
+        "time_basis": "UNTIMED",
+    }
+    assert capabilities["effect_contracts"]["FLASH"]["time_basis"] == (
+        "CLIP_RELATIVE_MS"
+    )
 
 
 def test_registry_rejects_drift_from_manifest():

@@ -5,6 +5,7 @@ from typing import Literal
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.editing.llm import EditingLLM
+from app.agents.editing.recipe_normalizer import normalize_recipe_for_rendering
 from app.agents.editing.types import EditingGraphState, EditingPlanDecision, VideoContext
 from app.agents.editing.validator import EditRecipeValidator
 from app.schemas.editing import EditRecipe, SelectedShortform
@@ -37,14 +38,19 @@ def build_editing_graph(llm: EditingLLM, validator: EditRecipeValidator):
         decision = EditingPlanDecision.model_validate(state["decision"])
         if decision.outcome == "SOURCE_GAP":
             return {"validation_errors": [], "validation_passed": True}
+        normalized_recipe = normalize_recipe_for_rendering(
+            EditRecipe.model_validate(decision.recipe)
+        )
+        decision = decision.model_copy(update={"recipe": normalized_recipe})
         errors = validator.validate(
-            EditRecipe.model_validate(decision.recipe),
+            normalized_recipe,
             selected_shortform=SelectedShortform.model_validate(state["selected_shortform"]),
             video_editing_db=state["video_editing_db"],
             video_contexts=_contexts(state),
             project=state["project"],
         )
         return {
+            "decision": decision.model_dump(mode="json"),
             "validation_errors": [error.model_dump(mode="json") for error in errors],
             "validation_passed": not errors,
         }

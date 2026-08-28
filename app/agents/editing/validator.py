@@ -251,6 +251,24 @@ class EditRecipeValidator:
                     effect_path,
                     add,
                 )
+                params = effect.params.model_dump(exclude_none=True)
+                if (
+                    params.get("start_ms") is not None
+                    and params.get("end_ms") is not None
+                    and (
+                        int(params["start_ms"]) < 0
+                        or int(params["end_ms"]) > int(output_duration)
+                    )
+                ):
+                    add(
+                        "EFFECT_WINDOW_OUTSIDE_CLIP",
+                        f"{effect_path}.params",
+                        (
+                            f"{effect.effect_id} effect window must be inside the clip-relative "
+                            f"range 0..{int(output_duration)}ms."
+                        ),
+                        source="REALS_REGISTRY",
+                    )
             if color_tone_count > 1:
                 add(
                     "COLOR_TONE_DUPLICATED",
