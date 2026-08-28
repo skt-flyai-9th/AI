@@ -11,6 +11,7 @@ from PIL import Image
 from pydantic import ValidationError
 
 from app.agents.editing.llm import (
+    EditingLLMError,
     OpenAIEditingLLM,
     _apply_source_preparation,
     _map_cut_analysis_to_produced,
@@ -21,6 +22,7 @@ from app.agents.editing.llm import (
 from app.agents.editing.reals import RealsRegistry
 from app.agents.editing.types import (
     EditingPlanDecision,
+    FrameBatchAnalysis,
     FrameObservation,
     SourceCutDecision,
     SourceCutPlan,
@@ -114,6 +116,58 @@ def test_one_take_analyzes_sampled_frames_once():
     assert planner.calls == [("ONE_TAKE_SAMPLED_EXACT_FRAMES", list(range(10)))]
     assert result["source_preparation"]["mode"] == "ONE_TAKE_PASSTHROUGH"
     assert len(result["produced_frame_context"]["observations"]) == 10
+
+
+def test_frame_batch_timeout_retries_once_as_two_half_batches(monkeypatch):
+    planner = OpenAIEditingLLM.__new__(OpenAIEditingLLM)
+    planner.analysis_batch_frames = 24
+    context = _context("take_1", 1, count=24)
+    image_counts: list[int] = []
+    timeout_attempt_limits: list[int | None] = []
+    completed_batches = 0
+
+    def fake_request_model(**kwargs):
+        content = kwargs["content_override"]
+        frame_indices = [
+            int(item["text"].split("frame_index=")[1].split(",", 1)[0])
+            for item in content
+            if item["type"] == "input_text" and "frame_index=" in item["text"]
+        ]
+        image_counts.append(sum(item["type"] == "input_image" for item in content))
+        timeout_attempt_limits.append(kwargs.get("timeout_max_attempts"))
+        if len(image_counts) == 1:
+            raise EditingLLMError("reason=timeout", reason="timeout")
+        return FrameBatchAnalysis(
+            summary=f"frames {frame_indices[0]}-{frame_indices[-1]}",
+            observations=[
+                FrameObservation(
+                    video_id=context.video_id,
+                    frame_index=index,
+                    timestamp_ms=context.keyframes[index].timestamp_ms,
+                )
+                for index in frame_indices
+            ],
+        )
+
+    def report_complete() -> None:
+        nonlocal completed_batches
+        completed_batches += 1
+
+    monkeypatch.setattr(planner, "_request_model", fake_request_model)
+
+    result = planner._analyze_video_frames(
+        context=context,
+        frames=context.keyframes,
+        purpose="TEST",
+        reference_context={},
+        video_editing_db={},
+        on_batch_complete=report_complete,
+    )
+
+    assert image_counts == [24, 12, 12]
+    assert timeout_attempt_limits == [1, 1, 1]
+    assert completed_batches == 1
+    assert [item["frame_index"] for item in result["observations"]] == list(range(24))
 
 
 def test_multi_cut_reads_each_raw_cut_every_frame_without_reread():

@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     # current 2-vCPU / 8-GiB AI host: source frames are retained as compact
     # 360px JPEGs, then sampled into a bounded set of temporal VLM batches.
     editing_openai_model: str = "gpt-4.1-mini"
-    editing_request_timeout_seconds: int = Field(default=30, ge=5, le=180)
+    editing_request_timeout_seconds: int = Field(default=120, ge=5, le=180)
     editing_max_output_tokens: int = Field(default=5000, ge=512, le=20000)
     editing_llm_max_request_attempts: int = Field(default=3, ge=1, le=5)
     editing_rate_limit_retry_base_seconds: float = Field(default=20.0, ge=1.0, le=120.0)
