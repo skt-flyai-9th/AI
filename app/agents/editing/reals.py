@@ -452,25 +452,35 @@ class RealsRecipeAdapter:
             last_clip.source_end_ms - last_clip.source_start_ms
         ) / last_clip.speed
         cta_output_start = max(last_clip.timeline_start_ms, int(last_output_end) - 2500)
-        overlays.append(
-            RealsOverlay(
-                overlay_id="ov_cta",
-                produced_segment_id=f"ps_{last_clip.clip_order:03d}",
-                text_content=recipe.cta.text,
-                style_id="CTA_BOX",
-                start_ms=_output_to_produced_ms(
-                    last_clip.timeline_start_ms,
-                    cta_output_start,
-                    last_clip.speed,
-                    last_range[0],
-                ),
-                end_ms=last_range[1],
-                placement_id="BOTTOM_SAFE",
-                motion_id="FADE",
-                font_weight="BOLD",
-                actual_video_evidence=f"source_video_id={last_clip.video_id}",
-            )
+        cta_segment_id = f"ps_{last_clip.clip_order:03d}"
+        cta_start_ms = _output_to_produced_ms(
+            last_clip.timeline_start_ms,
+            cta_output_start,
+            last_clip.speed,
+            last_range[0],
         )
+        cta_end_ms = last_range[1]
+        overlaps_existing_caption = any(
+            overlay.produced_segment_id == cta_segment_id
+            and overlay.start_ms < cta_end_ms
+            and overlay.end_ms > cta_start_ms
+            for overlay in overlays
+        )
+        if not overlaps_existing_caption:
+            overlays.append(
+                RealsOverlay(
+                    overlay_id="ov_cta",
+                    produced_segment_id=cta_segment_id,
+                    text_content=recipe.cta.text,
+                    style_id="CTA_BOX",
+                    start_ms=cta_start_ms,
+                    end_ms=cta_end_ms,
+                    placement_id="BOTTOM_SAFE",
+                    motion_id="FADE",
+                    font_weight="BOLD",
+                    actual_video_evidence=f"source_video_id={last_clip.video_id}",
+                )
+            )
 
         reals_recipe = RealsEditRecipe(
             recipe_id=f"{run_id}_recipe",

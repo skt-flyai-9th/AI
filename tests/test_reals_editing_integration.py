@@ -101,11 +101,31 @@ def test_reals_adapter_builds_multicut_assembly_and_engine_recipe():
     assert [effect.effect_id for effect in final.edit_recipe.segments[0].effects] == [
         "PUNCH_ZOOM"
     ]
-    caption, reveal_caption, cta = final.edit_recipe.overlays
+    caption, reveal_caption = final.edit_recipe.overlays
     assert (caption.start_ms, caption.end_ms, caption.style_id) == (0, 1500, "HOOK")
     assert caption.motion_id == "TYPEWRITER"
     assert reveal_caption.style_id == "CAPTION_EMPHASIS"
     assert reveal_caption.motion_id == "POP"
+    assert not any(overlay.overlay_id == "ov_cta" for overlay in final.edit_recipe.overlays)
+
+
+def test_reals_adapter_adds_cta_only_when_last_clip_has_no_overlapping_caption():
+    recipe = _recipe().model_copy(deep=True)
+    recipe.timeline[-1].caption = None
+
+    request = RealsRecipeAdapter().build_request(
+        run_id="edit_non_overlapping_cta",
+        recipe=recipe,
+        videos=_request().videos,
+        video_contexts=_contexts(),
+        video_editing_db=_video_editing_db(),
+    )
+
+    cta = next(
+        overlay
+        for overlay in request.final_render.edit_recipe.overlays
+        if overlay.overlay_id == "ov_cta"
+    )
     assert (cta.start_ms, cta.end_ms, cta.style_id) == (2000, 4000, "CTA_BOX")
 
 
@@ -224,6 +244,34 @@ def test_validator_rejects_promotional_video_without_regular_captions():
     assert "PROMOTIONAL_CAPTIONS_MISSING" in codes
     assert "PROMOTIONAL_HOOK_MISSING" in codes
     assert "PROMOTIONAL_REVEAL_CAPTION_MISSING" in codes
+
+
+def test_validator_requires_project_scoped_verbatim_caption_phrase():
+    recipe = _recipe().model_copy(deep=True)
+    project = _request().project.model_dump(mode="json")
+    project["shortform_context"] = {
+        "copy_directives": {"verbatim_caption_phrases": ["딸기청 톡!"]}
+    }
+    validator = EditRecipeValidator()
+
+    missing = validator.validate(
+        recipe,
+        selected_shortform=_request().selected_shortform,
+        video_editing_db=_video_editing_db(),
+        video_contexts=_contexts(),
+        project=project,
+    )
+    assert any(issue.code == "PROJECT_CAPTION_PHRASE_MISSING" for issue in missing)
+
+    recipe.timeline[0].caption.text = "딸기청 톡!"
+    included = validator.validate(
+        recipe,
+        selected_shortform=_request().selected_shortform,
+        video_editing_db=_video_editing_db(),
+        video_contexts=_contexts(),
+        project=project,
+    )
+    assert not any(issue.code == "PROJECT_CAPTION_PHRASE_MISSING" for issue in included)
 
 
 def test_validator_rejects_typewriter_without_animation_hold_time():
