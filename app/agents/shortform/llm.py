@@ -9,7 +9,7 @@ import httpx
 from app.agents.shortform.types import (
     ShortformTurnDecision,
     VideoEditingDBCandidate,
-    VideoEditingDBSelection,
+    VideoEditingDBSelections,
 )
 from app.core.config import get_settings
 
@@ -41,7 +41,7 @@ class ShortformLLM(Protocol):
         project_state: dict[str, Any],
         conversation: list[dict[str, str]],
         candidates: list[VideoEditingDBCandidate],
-    ) -> VideoEditingDBSelection: ...
+    ) -> VideoEditingDBSelections: ...
 
 
 class OpenAIShortformLLM:
@@ -111,22 +111,22 @@ class OpenAIShortformLLM:
         project_state: dict[str, Any],
         conversation: list[dict[str, str]],
         candidates: list[VideoEditingDBCandidate],
-    ) -> VideoEditingDBSelection:
-        if not candidates:
+    ) -> VideoEditingDBSelections:
+        if len(candidates) < 3:
             raise ShortformLLMError(
-                "No video-editing DB candidates were provided.", retryable=False
+                "At least three video-editing DB candidates are required.", retryable=False
             )
 
         allowed_keys = [candidate.candidate_key for candidate in candidates]
-        selection_schema = VideoEditingDBSelection.model_json_schema()
-        selection_schema["properties"]["candidate_key"] = {
-            "type": "string",
-            "enum": allowed_keys,
+        selection_schema = VideoEditingDBSelections.model_json_schema()
+        selection_schema["$defs"]["VideoEditingDBSelection"]["properties"]["candidate_key"] = {
+            "type": "string", "enum": allowed_keys
         }
 
         prompt = {
             "task": (
-                "Choose exactly one candidate ACTIVE video-editing DB version for the current store/project. "
+                "Choose and rank exactly three distinct candidate ACTIVE video-editing DB versions "
+                "for the current store/project in one response. "
                 "Do not invent a new shortform format."
             ),
             "store_context": store_context,
@@ -136,15 +136,16 @@ class OpenAIShortformLLM:
                 candidate.model_dump(mode="json") for candidate in candidates
             ],
             "requirements": [
-                "Choose only candidate_key from video_editing_db_candidates.",
+                "Return exactly three selections with distinct candidate_key values from video_editing_db_candidates.",
                 "Use the whole user conversation and Store Context, not a fixed weighted ranking.",
-                "project_title/title/concept may adapt wording to this store but must preserve the selected DB concept.",
-                "Keep title and concept concise for UI display.",
+                "project_title and concept may adapt wording to this store but must preserve the selected DB concept.",
+                "title is advisory only; the server always displays the selected DB's original name.",
+                "Keep project_title, title, and concept concise for UI display.",
                 "internal_reason is for logs only and must explain the contextual selection briefly.",
             ],
         }
 
-        return VideoEditingDBSelection.model_validate(
+        return VideoEditingDBSelections.model_validate(
             self._request_json(
                 instructions=domain_context,
                 user_payload=prompt,

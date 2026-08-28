@@ -185,6 +185,9 @@ class ShortformRecommendation(BaseModel):
     concept: str
     editing_template_id: str
     editing_template_version: int
+    reference_url: str
+    guide_video_url: str
+    source_platform: str = "YOUTUBE"
 
 
 class ShortformTurnResponse(BaseModel):
@@ -193,12 +196,20 @@ class ShortformTurnResponse(BaseModel):
     assistant_message: str | None = None
     project_state: ShortformProjectState
     options: list[ShortformOption] = Field(default_factory=list)
-    recommendation: ShortformRecommendation | None = None
+    recommendations: list[ShortformRecommendation] = Field(default_factory=list, max_length=3)
+
+    @model_validator(mode="after")
+    def validate_recommendation_batch(self) -> ShortformTurnResponse:
+        if self.action == ShortformAction.RECOMMEND:
+            template_ids = [item.editing_template_id for item in self.recommendations]
+            if len(template_ids) != 3 or len(set(template_ids)) != 3:
+                raise ValueError("RECOMMEND responses require three distinct templates")
+        return self
 
 
 class NextRecommendationResponse(BaseModel):
     session_id: str
-    recommendation: ShortformRecommendation
+    recommendations: list[ShortformRecommendation] = Field(min_length=3, max_length=3)
     shown_template_ids: list[str]
 
 

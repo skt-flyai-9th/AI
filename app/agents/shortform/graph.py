@@ -44,14 +44,14 @@ def build_shortform_graph(llm: ShortformLLM):
             VideoEditingDBCandidate.model_validate(item)
             for item in state["video_editing_db_candidates"]
         ]
-        selection = llm.select_video_editing_db(
+        selections = llm.select_video_editing_db(
             domain_context=state["domain_context"],
             store_context=state["store_context"],
             project_state=state["project_state"],
             conversation=state.get("conversation", []),
             candidates=candidates,
         )
-        return {"recommendation": selection.model_dump(mode="json")}
+        return {"recommendations": selections.model_dump(mode="json")}
 
     builder = StateGraph(ShortformGraphState)
     builder.add_node("route_start", route_start)
