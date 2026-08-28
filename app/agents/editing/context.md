@@ -44,6 +44,9 @@ request.
   copy a reference video's literal caption sentence as a fixed template.
 - Project-scoped verbatim caption phrases are mandatory. Never reuse wording from another
   project, session, promotion subject or menu, even when the store or editing template matches.
+- Promotional captions address the viewer and sell the verified subject. Never expose production
+  directions such as close-up, transition, scene setup, clothing change, hand movement or showing
+  an item, unless the user explicitly supplied that exact project-scoped caption phrase.
 - When required scene roles cannot be supported by the supplied footage, return `SOURCE_GAP`.
   Never decide that the user must reshoot. Return both allowed options:
   `USE_REDUCED_STRUCTURE` and `ADD_MORE_VIDEO`.

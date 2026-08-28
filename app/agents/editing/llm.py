@@ -323,9 +323,7 @@ class OpenAIEditingLLM:
             }
 
         if len(video_contexts) != 1:
-            raise EditingLLMError(
-                "ONE_TAKE requires exactly one source video.", retryable=False
-            )
+            raise EditingLLMError("ONE_TAKE requires exactly one source video.", retryable=False)
         context = video_contexts[0]
         detailed = self._analyze_video_frames(
             context=context,
@@ -509,9 +507,7 @@ class OpenAIEditingLLM:
             "video_editing_db": video_editing_db,
             "revision_action": revision_action,
             "raw_frame_analysis": analyzed,
-            "source_strategy": (
-                "INFORMATIONAL_REASSEMBLY" if is_information else "CUT_PER_INPUT"
-            ),
+            "source_strategy": ("INFORMATIONAL_REASSEMBLY" if is_information else "CUT_PER_INPUT"),
             "hard_rules": [
                 (
                     "For information-form footage, create one ordered decision per required reference edit segment. "
@@ -535,11 +531,7 @@ class OpenAIEditingLLM:
             schema_name="editing_source_cut_plan",
         )
         return result.model_copy(
-            update={
-                "strategy": (
-                    "INFORMATIONAL_REASSEMBLY" if is_information else "CUT_PER_INPUT"
-                )
-            }
+            update={"strategy": ("INFORMATIONAL_REASSEMBLY" if is_information else "CUT_PER_INPUT")}
         )
 
     def _request_model(
@@ -648,9 +640,7 @@ def _frame_signature(image_url: str) -> np.ndarray | None:
         encoded = image_url.split(",", 1)[1]
         raw = base64.b64decode(encoded, validate=True)
         with Image.open(io.BytesIO(raw)) as image:
-            return np.asarray(
-                image.convert("L").resize((16, 16)), dtype=np.float32
-            ) / 255.0
+            return np.asarray(image.convert("L").resize((16, 16)), dtype=np.float32) / 255.0
     except (ValueError, OSError, IndexError):
         return None
 
@@ -662,10 +652,7 @@ def _uniform_sample(frames: list[Any], limit: int) -> list[Any]:
         return list(frames)
     if limit == 1:
         return [frames[0]]
-    indices = {
-        round(position * (len(frames) - 1) / (limit - 1))
-        for position in range(limit)
-    }
+    indices = {round(position * (len(frames) - 1) / (limit - 1)) for position in range(limit)}
     return [frames[index] for index in sorted(indices)]
 
 
@@ -931,9 +918,7 @@ def _renderer_capabilities(settings: Settings | None = None) -> dict[str, Any]:
     capabilities = get_reals_registry().llm_capabilities()
     disabled_effects = runtime_settings.editing_disabled_effect_ids_set
     capabilities["effects"] = [
-        effect_id
-        for effect_id in capabilities["effects"]
-        if effect_id not in disabled_effects
+        effect_id for effect_id in capabilities["effects"] if effect_id not in disabled_effects
     ]
     enabled_effects = set(capabilities["effects"])
     capabilities["effect_contracts"] = {
@@ -941,9 +926,7 @@ def _renderer_capabilities(settings: Settings | None = None) -> dict[str, Any]:
         for effect_id, contract in capabilities["effect_contracts"].items()
         if effect_id in enabled_effects
     }
-    capabilities["max_output_duration_sec"] = (
-        runtime_settings.editing_max_output_duration_seconds
-    )
+    capabilities["max_output_duration_sec"] = runtime_settings.editing_max_output_duration_seconds
     capabilities["max_input_videos"] = runtime_settings.editing_max_videos_per_run
     capabilities["timed_effect_window"] = "clip-relative start_ms/end_ms"
     return capabilities
@@ -981,6 +964,10 @@ def _requirements(
         "editing_context.project_brief.copy_directives.verbatim_caption_phrases must appear "
         "unchanged in an in-video caption or the CTA. Never import wording from another project, "
         "session, menu, or store.",
+        "Write audience-facing promotional captions, not production notes. Never narrate filming "
+        "or editing directions such as close-up, transition, scene setup, clothing change, hand "
+        "movement, or showing an item, unless that exact wording is a project-scoped required "
+        "verbatim caption phrase.",
         "For a concise first promotional HOOK, prefer motion_id TYPEWRITER so text appears one "
         "Korean character at a time. TYPEWRITER captions must contain at most 18 non-space "
         "characters and allow 80ms per character plus at least 600ms of fully visible hold time.",

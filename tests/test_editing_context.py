@@ -124,9 +124,7 @@ def test_multi_cut_context_joins_ordered_footage_to_guide_and_observations():
     )
 
     assert result["context_version"] == "editing-context-v2"
-    assert result["project_brief"]["verified_user_facts"] == {
-        "taste": "고소하고 부드러운 맛"
-    }
+    assert result["project_brief"]["verified_user_facts"] == {"taste": "고소하고 부드러운 맛"}
     assert result["project_brief"]["recent_user_statements"] == ["크림을 꼭 강조해줘"]
     assert result["project_brief"]["copy_directives"] == {}
     assert result["template_context"]["shoot_mode"] == "MULTI_CUT"
@@ -164,6 +162,32 @@ def test_one_take_context_exposes_the_full_expected_guide_flow():
         "PROCESS",
     ]
     assert source["selected_source"]["decision_reason"] == "ONE_TAKE_PASSTHROUGH"
+
+
+def test_editing_request_subject_and_objective_override_stale_session_state():
+    result = build_editing_context(
+        project={
+            "promotion_subject": {"type": "MENU", "name": "참치마요오니"},
+            "promotion_objective": "sales",
+            "shortform_context": {
+                "project_state": {
+                    "promotion_subject": {"type": "MENU", "name": "이전 메뉴"},
+                    "promotion_objective": "trust",
+                    "brief_confirmed": True,
+                }
+            },
+        },
+        selected_shortform={},
+        video_editing_db=_database(),
+        video_contexts=[_video("take_1", 1)],
+        prepared_analysis={
+            "source_preparation": {"mode": "ONE_TAKE_PASSTHROUGH"},
+            "produced_frame_context": {"mode": "ONE_TAKE", "observations": []},
+        },
+    )
+
+    assert result["project_brief"]["promotion_subject"]["name"] == "참치마요오니"
+    assert result["project_brief"]["promotion_objective"] == "sales"
 
 
 def test_recipe_planner_receives_the_preprocessed_editing_context(monkeypatch):
