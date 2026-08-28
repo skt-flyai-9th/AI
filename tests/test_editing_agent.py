@@ -567,6 +567,68 @@ def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
         assert db.get(EditingRun, completed.id).recipe == original_recipe
 
 
+def test_project_alias_recovers_only_the_matching_confirmed_personalization():
+    request = _request().model_copy(deep=True)
+    request.project.project_id = "123"
+    request.selected_shortform.recommendation_id = "project_123"
+    service = EditingAgentService(
+        llm=RepairingFakeLLM(),
+        video_context_builder=FakeVideoContextBuilder(),
+        renderer=FakeRenderer(),
+    )
+    with SessionLocal() as db:
+        _seed_video_editing_db(db)
+        _seed_shortform_session(db)
+        session = db.get(ShortformSession, "shortform_123")
+        session.conversation = [
+            {"role": "user", "content": "이전 메뉴 -> 칙촉 등장!"},
+            {"role": "user", "content": "이번 메뉴는 딸기 크림 라떼야"},
+            {"role": "user", "content": '자막 문구는 "딸기청 톡!"으로 넣어줘'},
+        ]
+        db.commit()
+
+        run = service.create_run(db, request)
+
+    context = run.request_snapshot["_shortform_context"]
+    assert context["resolution"] == "PROJECT_SCOPED_TEMPLATE_SUBJECT"
+    assert context["resolved_recommendation_id"] == "rec_123"
+    assert context["project_id"] == "123"
+    assert context["copy_directives"]["verbatim_caption_phrases"] == ["딸기청 톡!"]
+    assert all("칙촉" not in item for item in context["recent_user_statements"])
+
+
+def test_project_alias_does_not_guess_between_matching_sessions():
+    request = _request().model_copy(deep=True)
+    request.project.project_id = "123"
+    request.selected_shortform.recommendation_id = "project_123"
+    service = EditingAgentService(
+        llm=RepairingFakeLLM(),
+        video_context_builder=FakeVideoContextBuilder(),
+        renderer=FakeRenderer(),
+    )
+    with SessionLocal() as db:
+        _seed_video_editing_db(db)
+        _seed_shortform_session(db)
+        original = db.get(ShortformSession, "shortform_123")
+        db.add(
+            ShortformSession(
+                id="shortform_ambiguous",
+                status=original.status,
+                store_id=original.store_id,
+                store_context=original.store_context,
+                project_state=original.project_state,
+                conversation=[{"role": "user", "content": "다른 프로젝트 문구"}],
+                current_recommendation=original.current_recommendation,
+            )
+        )
+        db.commit()
+
+        run = service.create_run(db, request)
+
+    assert "_shortform_context" not in run.request_snapshot
+    assert any("PERSONALIZATION_CONTEXT_UNRESOLVED" in item for item in run.warnings)
+
+
 def test_editing_pipeline_renders_ordered_fallback_after_source_gap():
     renderer = FakeRenderer()
     llm = SourceGapFakeLLM()

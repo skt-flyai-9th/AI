@@ -58,6 +58,7 @@ def build_editing_context(
             "recent_user_statements": _string_items(
                 shortform_context.get("recent_user_statements")
             ),
+            "copy_directives": _mapping(shortform_context.get("copy_directives")),
             "brief_confirmed": bool(project_state.get("brief_confirmed")),
         },
         "template_context": {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -81,6 +82,12 @@ class EditingAgentService:
         shortform_context = _find_shortform_context(db, request)
         if shortform_context:
             request_snapshot["_shortform_context"] = shortform_context
+        warnings = []
+        if not shortform_context:
+            warnings.append(
+                "PERSONALIZATION_CONTEXT_UNRESOLVED: 프로젝트에 연결된 확정 대화를 "
+                "안전하게 식별하지 못해 다른 프로젝트 문구를 사용하지 않습니다."
+            )
         run = EditingRun(
             id=f"edit_{uuid.uuid4().hex}",
             status=EditingRunStatus.QUEUED.value,
@@ -89,7 +96,7 @@ class EditingAgentService:
             stage_started_at=datetime.now(timezone.utc),
             request_snapshot=request_snapshot,
             revision_action=request.revision,
-            warnings=[],
+            warnings=warnings,
             video_context=[],
             missing_scene_roles=[],
             available_options=[],
@@ -684,11 +691,9 @@ def _find_shortform_context(
         .order_by(ShortformSession.updated_at.desc())
         .limit(50)
     ).all()
-    matched: tuple[ShortformSession, dict[str, Any]] | None = None
+    matched: tuple[ShortformSession, dict[str, Any], str] | None = None
     for item in sessions:
-        stored = dict(item.current_recommendation or {})
-        batch = stored.get("recommendations")
-        recommendations = batch if isinstance(batch, list) else [stored]
+        recommendations = _session_recommendations(item)
         selected = next(
             (
                 value
@@ -699,11 +704,34 @@ def _find_shortform_context(
             None,
         )
         if selected is not None:
-            matched = (item, dict(selected))
+            matched = (item, dict(selected), "EXACT_RECOMMENDATION_ID")
             break
+    if matched is None and _is_project_scoped_recommendation_alias(request):
+        compatible: list[tuple[ShortformSession, dict[str, Any], str]] = []
+        for item in sessions:
+            if not _session_matches_project(item, request):
+                continue
+            recommendations = [
+                recommendation
+                for recommendation in _session_recommendations(item)
+                if _recommendation_matches_template(recommendation, request)
+            ]
+            if len(recommendations) == 1:
+                compatible.append(
+                    (
+                        item,
+                        dict(recommendations[0]),
+                        "PROJECT_SCOPED_TEMPLATE_SUBJECT",
+                    )
+                )
+        # A compatibility lookup must never guess between conversations. If
+        # more than one confirmed session can own the project, leave the brief
+        # detached instead of leaking copy from another project.
+        if len(compatible) == 1:
+            matched = compatible[0]
     if matched is None:
         return {}
-    session, selected_recommendation = matched
+    session, selected_recommendation, resolution = matched
 
     state = dict(session.project_state or {})
     store_context = dict(session.store_context or {})
@@ -721,9 +749,17 @@ def _find_shortform_context(
         and item.get("role") == "user"
         and str(item.get("content") or "").strip()
     ][-12:]
-    return {
+    if resolution == "PROJECT_SCOPED_TEMPLATE_SUBJECT":
+        user_statements = _scope_user_statements_to_subject(
+            user_statements,
+            request.project.promotion_subject,
+        )
+    context = {
         "session_id": session.id,
         "recommendation_id": recommendation_id,
+        "resolved_recommendation_id": selected_recommendation.get("recommendation_id"),
+        "resolution": resolution,
+        "project_id": request.project.project_id,
         "project_state": {
             key: state.get(key)
             for key in (
@@ -740,6 +776,120 @@ def _find_shortform_context(
         "store_context": safe_store_context,
         "recommendation": selected_recommendation,
         "recent_user_statements": user_statements,
+    }
+    context["copy_directives"] = _build_copy_directives(
+        request=request,
+        user_statements=user_statements,
+        project_state=state,
+    )
+    return context
+
+
+def _session_recommendations(session: ShortformSession) -> list[dict[str, Any]]:
+    stored = dict(session.current_recommendation or {})
+    batch = stored.get("recommendations")
+    values = batch if isinstance(batch, list) else [stored]
+    return [dict(value) for value in values if isinstance(value, dict)]
+
+
+def _is_project_scoped_recommendation_alias(request: EditingRunCreateRequest) -> bool:
+    return request.selected_shortform.recommendation_id == f"project_{request.project.project_id}"
+
+
+def _recommendation_matches_template(
+    recommendation: dict[str, Any],
+    request: EditingRunCreateRequest,
+) -> bool:
+    return (
+        str(recommendation.get("editing_template_id") or "")
+        == request.selected_shortform.editing_template_id
+        and recommendation.get("editing_template_version")
+        == request.selected_shortform.editing_template_version
+    )
+
+
+def _session_matches_project(
+    session: ShortformSession,
+    request: EditingRunCreateRequest,
+) -> bool:
+    state = dict(session.project_state or {})
+    if not bool(state.get("brief_confirmed")):
+        return False
+    request_terms = _promotion_subject_terms(request.project.promotion_subject)
+    session_terms = _promotion_subject_terms(state.get("promotion_subject"))
+    return bool(request_terms and session_terms and request_terms & session_terms)
+
+
+def _promotion_subject_terms(value: Any) -> set[str]:
+    if not isinstance(value, dict):
+        return set()
+    terms: set[str] = set()
+    for key in ("name", "menu_name", "title", "description"):
+        normalized = "".join(str(value.get(key) or "").split()).casefold()
+        if normalized:
+            terms.add(normalized)
+    for item in value.get("elements") or []:
+        normalized = "".join(str(item or "").split()).casefold()
+        if normalized:
+            terms.add(normalized)
+    return terms
+
+
+def _scope_user_statements_to_subject(
+    statements: list[str],
+    promotion_subject: dict[str, Any],
+) -> list[str]:
+    subject_terms = _promotion_subject_terms(promotion_subject)
+    anchor_index: int | None = None
+    for index, statement in enumerate(statements):
+        normalized_statement = "".join(statement.split()).casefold()
+        if any(term in normalized_statement for term in subject_terms):
+            anchor_index = index
+    if anchor_index is None:
+        return []
+    return statements[anchor_index:]
+
+
+def _build_copy_directives(
+    *,
+    request: EditingRunCreateRequest,
+    user_statements: list[str],
+    project_state: dict[str, Any],
+) -> dict[str, Any]:
+    phrases: list[str] = []
+    copy_markers = ("자막", "문구", "띄우", "표시", "카피", "대사")
+    for statement in user_statements:
+        if any(marker in statement for marker in copy_markers):
+            for phrase in re.findall(r'[\"“‘]([^\"”’]{1,40})[\"”’]', statement):
+                normalized = " ".join(phrase.split())
+                if normalized and normalized not in phrases:
+                    phrases.append(normalized)
+        for line in statement.splitlines():
+            arrow = re.search(r"(?:->|→)\s*(.{1,40})$", line.strip())
+            if arrow is not None:
+                normalized = " ".join(arrow.group(1).strip(" `\"'“”").split())
+                if normalized and normalized not in phrases:
+                    phrases.append(normalized)
+
+    state_subject = project_state.get("promotion_subject")
+    subject_terms = sorted(
+        _promotion_subject_terms(state_subject)
+        | _promotion_subject_terms(request.project.promotion_subject)
+    )
+    return {
+        "scope": {
+            "project_id": request.project.project_id,
+            "store_id": request.project.store_id,
+            "editing_template_id": request.selected_shortform.editing_template_id,
+            "editing_template_version": request.selected_shortform.editing_template_version,
+        },
+        "verbatim_caption_phrases": phrases,
+        "verified_subject_terms": subject_terms,
+        "user_wording": user_statements,
+        "instruction": (
+            "Use only wording from this project scope. Preserve every verbatim caption phrase "
+            "exactly, and never import wording from another session or project."
+        ),
     }
 
 

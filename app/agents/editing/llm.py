@@ -977,6 +977,10 @@ def _requirements(
         "Prefer concrete verified details and the user's own concise wording over generic phrases. "
         "When project_brief contains a usable detail, do not replace it with vague copy such as "
         "'특별한 순간' or '매력'. Never invent a price, benefit, review, or store fact.",
+        "Use only copy directives scoped to this project. Every phrase in "
+        "editing_context.project_brief.copy_directives.verbatim_caption_phrases must appear "
+        "unchanged in an in-video caption or the CTA. Never import wording from another project, "
+        "session, menu, or store.",
         "For a concise first promotional HOOK, prefer motion_id TYPEWRITER so text appears one "
         "Korean character at a time. TYPEWRITER captions must contain at most 18 non-space "
         "characters and allow 80ms per character plus at least 600ms of fully visible hold time.",

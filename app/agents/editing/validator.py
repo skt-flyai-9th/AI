@@ -420,6 +420,20 @@ class EditRecipeValidator:
                 source="REALS_REGISTRY",
                 repairable=False,
             )
+        rendered_copy = "\n".join(
+            [
+                *(clip.caption.text for clip in recipe.timeline if clip.caption is not None),
+                recipe.cta.text,
+            ]
+        )
+        normalized_rendered_copy = unicodedata.normalize("NFC", rendered_copy)
+        for phrase in _required_verbatim_caption_phrases(project):
+            if unicodedata.normalize("NFC", phrase) not in normalized_rendered_copy:
+                add(
+                    "PROJECT_CAPTION_PHRASE_MISSING",
+                    "timeline",
+                    f"Project-scoped caption phrase must be preserved exactly: {phrase!r}.",
+                )
         if expected_start > max_duration_ms:
             add(
                 "OUTPUT_TOO_LONG",
@@ -499,6 +513,21 @@ def _is_promotional_project(project: dict[str, Any] | None) -> bool:
     objective = str(project.get("promotion_objective") or "").strip()
     subject = project.get("promotion_subject")
     return bool(objective and isinstance(subject, dict) and subject)
+
+
+def _required_verbatim_caption_phrases(project: dict[str, Any] | None) -> list[str]:
+    if not isinstance(project, dict):
+        return []
+    shortform_context = project.get("shortform_context")
+    if not isinstance(shortform_context, dict):
+        return []
+    directives = shortform_context.get("copy_directives")
+    if not isinstance(directives, dict):
+        return []
+    phrases = directives.get("verbatim_caption_phrases")
+    if not isinstance(phrases, list):
+        return []
+    return [str(phrase).strip() for phrase in phrases if str(phrase).strip()]
 
 
 def _typewriter_unit_count(value: str) -> int:

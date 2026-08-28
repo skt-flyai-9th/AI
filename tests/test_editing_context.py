@@ -128,6 +128,7 @@ def test_multi_cut_context_joins_ordered_footage_to_guide_and_observations():
         "taste": "고소하고 부드러운 맛"
     }
     assert result["project_brief"]["recent_user_statements"] == ["크림을 꼭 강조해줘"]
+    assert result["project_brief"]["copy_directives"] == {}
     assert result["template_context"]["shoot_mode"] == "MULTI_CUT"
     assert result["template_context"]["reference_segment_count"] == 1
     assert [item["video_id"] for item in result["source_scenes"]] == ["take_1", "take_2"]

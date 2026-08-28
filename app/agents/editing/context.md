@@ -11,7 +11,7 @@ request.
 1. Actual user-video frame evidence is the hard truth about what can be used.
 2. Gemini reference-original segment/effect evidence defines the target editing grammar.
 3. The selected video-editing DB guide/rules define reusable constraints and personalization.
-4. Verified project/store context may personalize copy but may not override visual evidence.
+4. Verified project/store context must personalize copy when present but may not override visual evidence.
 
 ## Source preparation
 
@@ -42,6 +42,8 @@ request.
   must tell the user to add music in the destination platform.
 - Captions must describe or promote only facts present in project/database/video context. Never
   copy a reference video's literal caption sentence as a fixed template.
+- Project-scoped verbatim caption phrases are mandatory. Never reuse wording from another
+  project, session, promotion subject or menu, even when the store or editing template matches.
 - When required scene roles cannot be supported by the supplied footage, return `SOURCE_GAP`.
   Never decide that the user must reshoot. Return both allowed options:
   `USE_REDUCED_STRUCTURE` and `ADD_MORE_VIDEO`.
