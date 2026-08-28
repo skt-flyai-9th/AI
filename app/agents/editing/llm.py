@@ -920,6 +920,12 @@ def _renderer_capabilities(settings: Settings | None = None) -> dict[str, Any]:
         for effect_id in capabilities["effects"]
         if effect_id not in disabled_effects
     ]
+    enabled_effects = set(capabilities["effects"])
+    capabilities["effect_contracts"] = {
+        effect_id: contract
+        for effect_id, contract in capabilities["effect_contracts"].items()
+        if effect_id in enabled_effects
+    }
     capabilities["max_output_duration_sec"] = (
         runtime_settings.editing_max_output_duration_seconds
     )

@@ -104,6 +104,7 @@ class RealsRegistry:
         speed = self.effect_rules("SPEED") or {}
         speed_params = speed.get("allowed_params", {}).get("multiplier", {})
         policies = self.edit_policies
+        creative_effect_ids = sorted(self.creative_effect_ids)
         return {
             "registry_bundle_id": self.template_bundle_id,
             "registry_versions": {
@@ -114,7 +115,26 @@ class RealsRegistry:
             "speed_range": [speed_params.get("min", 0.5), speed_params.get("max", 2.0)],
             "crop_modes": ["KEEP", "SUBJECT_CENTER", "CENTER_9_16"],
             "transitions": sorted((self.transition_ids - {"NONE"}) | {"CUT"}),
-            "effects": sorted(self.creative_effect_ids),
+            "effects": creative_effect_ids,
+            "effect_contracts": {
+                effect_id: {
+                    "required_params": sorted(
+                        (self.effect_rules(effect_id) or {}).get("allowed_params", {})
+                    ),
+                    "allowed_params": (
+                        (self.effect_rules(effect_id) or {}).get("allowed_params", {})
+                    ),
+                    "time_basis": (
+                        "CLIP_RELATIVE_MS"
+                        if "start_ms"
+                        in (self.effect_rules(effect_id) or {}).get(
+                            "allowed_params", {}
+                        )
+                        else "UNTIMED"
+                    ),
+                }
+                for effect_id in creative_effect_ids
+            },
             "caption_positions": ["BOTTOM", "MIDDLE", "TOP"],
             "caption_style_ids": sorted(self.caption_style_ids()),
             "caption_motion_ids": sorted(self.caption_motion_ids()),
