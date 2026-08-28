@@ -233,12 +233,19 @@ def _ass_text(value: str) -> str:
 
 
 def _rounded_rect_path(width: int, height: int, radius: int) -> str:
-    """Return a centered ASS vector path with gently rounded corners."""
-    half_w = max(1, width // 2)
-    half_h = max(1, height // 2)
-    radius = max(1, min(radius, half_w, half_h))
-    left, right = -half_w, half_w
-    top, bottom = -half_h, half_h
+    """Return a local-coordinate ASS vector path with gently rounded corners.
+
+    libass applies ``\\an5`` alignment to the drawing's bounding box before
+    placing it at ``\\pos``.  A path that is already centred around (0, 0)
+    therefore gets centred twice and shifts left/up.  Keep drawing coordinates
+    in the normal 0..width / 0..height range so the background and its text
+    share the exact same centre point.
+    """
+    width = max(2, width)
+    height = max(2, height)
+    radius = max(1, min(radius, width // 2, height // 2))
+    left, right = 0, width
+    top, bottom = 0, height
     control = int(round(radius * 0.55228475))
     return (
         f"m {left + radius} {top} "
