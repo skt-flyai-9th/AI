@@ -79,8 +79,7 @@ class MultiQuestionLLM(FakeShortformLLM):
         return ShortformTurnDecision(
             action=ShortformAction.ASK,
             assistant_message=(
-                "메뉴 홍보를 원하시는군요. 어떤 메뉴를 홍보할까요? "
-                "촬영 시간은 얼마나 되나요?"
+                "메뉴 홍보를 원하시는군요. 어떤 메뉴를 홍보할까요? 촬영 시간은 얼마나 되나요?"
             ),
             state_updates=StateUpdates(
                 promotion_category=None,
@@ -375,9 +374,7 @@ def test_shortform_promotion_guide_exposes_only_v21_categories(client, auth_head
         app.dependency_overrides.pop(get_shortform_agent_service, None)
 
 
-def test_shortform_filters_removed_categories_and_stores_one_question(
-    client, auth_headers
-):
+def test_shortform_filters_removed_categories_and_stores_one_question(client, auth_headers):
     fake_service = ShortformAgentService(llm=MultiQuestionLLM())
     app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
     try:
@@ -397,9 +394,7 @@ def test_shortform_filters_removed_categories_and_stores_one_question(
         payload = response.json()
         assert payload["assistant_message"].count("?") == 1
         assert payload["project_state"]["current_question"].count("?") == 1
-        assert payload["options"] == [
-            {"id": "trust", "label": "신뢰 높이기"}
-        ]
+        assert payload["options"] == [{"id": "trust", "label": "신뢰 높이기"}]
 
         with SessionLocal() as db:
             session = db.get(ShortformSession, session_id)
@@ -432,9 +427,7 @@ def test_shooting_guide_accepts_challenge_id_alias(client, auth_headers):
     assert response.json()["version"] == 2
 
 
-def test_information_shooting_guide_returns_elements_instead_of_edit_cuts(
-    client, auth_headers
-):
+def test_information_shooting_guide_returns_scene_linked_capture_cuts(client, auth_headers):
     with SessionLocal() as db:
         seed_template_library(db)
 
@@ -446,14 +439,10 @@ def test_information_shooting_guide_returns_elements_instead_of_edit_cuts(
     assert response.status_code == 200
     payload = response.json()
     assert payload["format_type"] == "정보형"
-    assert payload["scenes"] == []
-    assert payload["tasks"] == []
-    assert len(payload["shooting_elements"]) == 4
-    assert all(
-        len(item["title"]) <= MAX_SHOOTING_GUIDE_TITLE_CHARS
-        for item in payload["shooting_elements"]
-    )
-    assert all(len(item["instruction"]) <= 50 for item in payload["shooting_elements"])
+    assert len(payload["scenes"]) == 6
+    assert len(payload["tasks"]) == 6
+    assert [item["scene_index"] for item in payload["tasks"]] == list(range(6))
+    assert "shooting_elements" not in payload
 
 
 def test_openapi_preserves_live_legacy_backend_contract(client):

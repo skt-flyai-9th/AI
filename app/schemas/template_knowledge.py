@@ -11,8 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 # Short references can contain more than six jump cuts while retaining the
 # same subject or action, so the schema must not force those cuts to merge.
 MAX_SHOOTING_GUIDE_CUTS = 60
-MAX_INFORMATIONAL_SHOOTING_ELEMENTS = 5
-MAX_SHOOTING_ELEMENT_INSTRUCTION_CHARS = 50
 MAX_SHOOTING_GUIDE_TITLE_CHARS = 20
 
 
@@ -180,31 +178,6 @@ class EditingRecommendationMetadata(BaseModel):
     format_type: Literal["밈", "챌린지", "정보형"] = "밈"
 
 
-class InformationalShootingElement(BaseModel):
-    """User-facing capture requirement derived from several internal edit cuts."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    element_id: str = Field(pattern=r"^ELEMENT_[0-9]{2}$")
-    display_order: int = Field(ge=1, le=MAX_INFORMATIONAL_SHOOTING_ELEMENTS)
-    title: str = Field(min_length=1, max_length=MAX_SHOOTING_GUIDE_TITLE_CHARS)
-    instruction: str = Field(
-        min_length=1, max_length=MAX_SHOOTING_ELEMENT_INSTRUCTION_CHARS
-    )
-    minimum_recording_sec: int = Field(ge=1, le=300)
-    reference_segment_sequences: list[int] = Field(min_length=1, max_length=60)
-
-    @model_validator(mode="after")
-    def validate_reference_sequences(self) -> InformationalShootingElement:
-        if len(self.reference_segment_sequences) != len(
-            set(self.reference_segment_sequences)
-        ):
-            raise ValueError("reference_segment_sequences must be unique")
-        if any(value < 1 for value in self.reference_segment_sequences):
-            raise ValueError("reference_segment_sequences must be positive")
-        return self
-
-
 class EditingShootingGuide(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -212,13 +185,8 @@ class EditingShootingGuide(BaseModel):
     required_people: int = Field(default=1, ge=1)
     props: list[str] = Field(default_factory=list, max_length=30)
     difficulty: str
-    scenes: list[ShootingGuideScene] = Field(
-        min_length=1, max_length=MAX_SHOOTING_GUIDE_CUTS
-    )
+    scenes: list[ShootingGuideScene] = Field(min_length=1, max_length=MAX_SHOOTING_GUIDE_CUTS)
     tasks: list[ShootingGuideTask] = Field(max_length=MAX_SHOOTING_GUIDE_CUTS)
-    shooting_elements: list[InformationalShootingElement] = Field(
-        default_factory=list, max_length=MAX_INFORMATIONAL_SHOOTING_ELEMENTS
-    )
 
 
 class VideoEditingDBRules(BaseModel):
@@ -245,33 +213,6 @@ class VideoEditingDBContent(BaseModel):
     shooting_guide: EditingShootingGuide
     editing_rules: VideoEditingDBRules
     trend_ids: list[str] = Field(max_length=50)
-
-    @model_validator(mode="after")
-    def validate_information_capture_elements(self) -> VideoEditingDBContent:
-        elements = self.shooting_guide.shooting_elements
-        is_information = self.recommendation_metadata.format_type == "정보형"
-        if not is_information and elements:
-            raise ValueError("shooting_elements are allowed only for 정보형 shortforms")
-        if is_information:
-            if not elements:
-                raise ValueError("정보형 shortforms require shooting_elements")
-            orders = [item.display_order for item in elements]
-            if orders != list(range(1, len(elements) + 1)):
-                raise ValueError("shooting_elements.display_order must be consecutive from 1")
-            element_ids = [item.element_id for item in elements]
-            if len(element_ids) != len(set(element_ids)):
-                raise ValueError("shooting_elements.element_id must be unique")
-            assigned = [
-                sequence
-                for item in elements
-                for sequence in item.reference_segment_sequences
-            ]
-            expected = list(range(1, len(self.shooting_guide.scenes) + 1))
-            if sorted(assigned) != expected:
-                raise ValueError(
-                    "정보형 shooting_elements must assign every guide scene exactly once"
-                )
-        return self
 
 
 class ReferenceVideoSegment(BaseModel):
@@ -302,12 +243,8 @@ class EditingVideoInsight(BaseModel):
     youtube_url: str
     summary: str = Field(min_length=1, max_length=2000)
     hook_patterns: list[str] = Field(min_length=1, max_length=20)
-    shot_sequence: list[str] = Field(
-        min_length=1, max_length=MAX_SHOOTING_GUIDE_CUTS
-    )
-    segments: list[ReferenceVideoSegment] = Field(
-        min_length=1, max_length=MAX_SHOOTING_GUIDE_CUTS
-    )
+    shot_sequence: list[str] = Field(min_length=1, max_length=MAX_SHOOTING_GUIDE_CUTS)
+    segments: list[ReferenceVideoSegment] = Field(min_length=1, max_length=MAX_SHOOTING_GUIDE_CUTS)
     pacing: VideoPacing
     caption_patterns: list[str] = Field(max_length=20)
     camera_patterns: list[str] = Field(max_length=20)

@@ -223,6 +223,5 @@ class ShootingGuideResponse(BaseModel):
     props: list[str] = Field(default_factory=list)
     difficulty: str
     format_type: str = "밈"
-    shooting_elements: list[dict[str, Any]] = Field(default_factory=list)
     scenes: list[dict[str, Any]] = Field(default_factory=list)
     tasks: list[dict[str, Any]] = Field(default_factory=list)

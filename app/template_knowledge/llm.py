@@ -12,8 +12,6 @@ from app.schemas.template_knowledge import (
     VideoEditingDBContent,
     EditingVideoInsight,
     MAX_SHOOTING_GUIDE_CUTS,
-    MAX_INFORMATIONAL_SHOOTING_ELEMENTS,
-    MAX_SHOOTING_ELEMENT_INSTRUCTION_CHARS,
     MAX_SHOOTING_GUIDE_TITLE_CHARS,
     TradeAreaAnalysisResult,
     TradeAreaEvidence,
@@ -155,11 +153,7 @@ class OpenAITemplateCandidateGenerator:
                     "Keep measurable effect values such as angle, amplitude, duration frames, scale, direction and damping in concise existing text fields when supported by evidence.",
                     "Do not copy reference caption wording; preserve only caption role/style/placement/timing grammar.",
                     "Set recommendation_metadata.format_type from trend_context: 밈, 챌린지, or 정보형.",
-                    "Only when format_type is 정보형, group all authoritative edit segments into user-facing shooting_elements.",
-                    f"정보형 shooting_elements must contain 1 to {MAX_INFORMATIONAL_SHOOTING_ELEMENTS} elements and every instruction must be at most {MAX_SHOOTING_ELEMENT_INSTRUCTION_CHARS} Korean characters including spaces.",
-                    "Group information-form cuts only when they can be captured in one continuous take with the same subject, location, and setup.",
-                    "Assign every authoritative segment sequence to exactly one shooting element; one element may cover multiple edit segments.",
-                    "For 밈 and 챌린지, shooting_elements must be an empty list and the existing cut-based shooting guide remains unchanged.",
+                    "For every format, keep the cut-based shooting guide and return one scene-linked task per capture interval.",
                 ],
                 "renderer_contract": {
                     "source_type": "VIDEO_ONLY",
@@ -313,51 +307,51 @@ class GeminiYouTubeVideoAnalyzer:
         )
         prompt_payload = {
             "task": (
-                    "Analyze the supplied public YouTube video as reference-original editing evidence "
-                    "for a Korean small-business short-form video-editing database. Preserve the "
-                    "original edit-cut order and describe the meaning of every cut. Analyze "
-                    "observable hooks, pacing, captions, composition, camera motion, cut-transition "
-                    "points and effects. For SHAKE, VIBRATION, ROTATION/TILT, ZOOM, POSITION_MOVE, "
-                    "FLASH and COLOR, estimate measurable parameters when visually supportable: "
-                    "timestamp/frame window, duration frames, direction, translation as frame %, "
-                    "rotation degrees, scale, frequency, damping and color/tone. Put compact numeric "
-                    "observations into camera_patterns, transition_patterns, reusable_editing_rules "
-                    "and evidence_notes; the output schema must not be expanded. Describe when an "
-                    "effect happens semantically (for example PRODUCT_REVEAL or IMPACT), not only "
-                    "its appearance. Do not recommend TTS, generated narration, still-photo scenes, "
-                    "platform UI reproduction, or unobserved content. First perform a frame-to-frame "
-                    "discontinuity audit, then divide the complete reference "
-                    f"into no more than {MAX_SHOOTING_GUIDE_CUTS} ordered edit cuts. "
-                    "Return every cut in segments with explicit sequence, start_sec, end_sec, "
-                    "scene_role, description, shot_type, transition_out and timestamped evidence. "
-                    "segments is the authoritative cut plan; shot_sequence must contain the same "
-                    "number of items in the same order. Do not merge two physical edit cuts merely "
-                    "because they share one semantic role. A new segment is mandatory whenever an "
-                    "object suddenly appears or disappears (including a food reveal), a person "
-                    "suddenly enters or leaves, a person's pose or screen position jumps without "
-                    "continuous motion, the background or camera framing discontinuously resets, "
-                    "or a transition effect bridges two shots. These remain cut boundaries even "
-                    "when the subject and action are otherwise unchanged. "
-                    "Cuts must not overlap and must cover the observed content from the opening hook "
-                    "through the final meaningful frame."
+                "Analyze the supplied public YouTube video as reference-original editing evidence "
+                "for a Korean small-business short-form video-editing database. Preserve the "
+                "original edit-cut order and describe the meaning of every cut. Analyze "
+                "observable hooks, pacing, captions, composition, camera motion, cut-transition "
+                "points and effects. For SHAKE, VIBRATION, ROTATION/TILT, ZOOM, POSITION_MOVE, "
+                "FLASH and COLOR, estimate measurable parameters when visually supportable: "
+                "timestamp/frame window, duration frames, direction, translation as frame %, "
+                "rotation degrees, scale, frequency, damping and color/tone. Put compact numeric "
+                "observations into camera_patterns, transition_patterns, reusable_editing_rules "
+                "and evidence_notes; the output schema must not be expanded. Describe when an "
+                "effect happens semantically (for example PRODUCT_REVEAL or IMPACT), not only "
+                "its appearance. Do not recommend TTS, generated narration, still-photo scenes, "
+                "platform UI reproduction, or unobserved content. First perform a frame-to-frame "
+                "discontinuity audit, then divide the complete reference "
+                f"into no more than {MAX_SHOOTING_GUIDE_CUTS} ordered edit cuts. "
+                "Return every cut in segments with explicit sequence, start_sec, end_sec, "
+                "scene_role, description, shot_type, transition_out and timestamped evidence. "
+                "segments is the authoritative cut plan; shot_sequence must contain the same "
+                "number of items in the same order. Do not merge two physical edit cuts merely "
+                "because they share one semantic role. A new segment is mandatory whenever an "
+                "object suddenly appears or disappears (including a food reveal), a person "
+                "suddenly enters or leaves, a person's pose or screen position jumps without "
+                "continuous motion, the background or camera framing discontinuously resets, "
+                "or a transition effect bridges two shots. These remain cut boundaries even "
+                "when the subject and action are otherwise unchanged. "
+                "Cuts must not overlap and must cover the observed content from the opening hook "
+                "through the final meaningful frame."
             ),
             "trend_id": trend_id,
             "youtube_url": youtube_url,
             "trend_context": trend_context,
             "effect_analysis_format_examples": [
-                    "SEGMENT|id=seg_02|role=PROCESS|start=2.10s|end=4.80s|subject=drink|composition=close-up",
-                    "EFFECT|segment=seg_03|event=PRODUCT_REVEAL|type=SHAKE|start=5.40s|duration=4f|x=1.8%|y=0.7%|rotation=0.5deg|scale=1.018|damping=true",
-                    "EFFECT|segment=seg_01|event=HOOK|type=ROTATION|start=0.20s|duration=8f|rotation=-1.2deg",
+                "SEGMENT|id=seg_02|role=PROCESS|start=2.10s|end=4.80s|subject=drink|composition=close-up",
+                "EFFECT|segment=seg_03|event=PRODUCT_REVEAL|type=SHAKE|start=5.40s|duration=4f|x=1.8%|y=0.7%|rotation=0.5deg|scale=1.018|damping=true",
+                "EFFECT|segment=seg_01|event=HOOK|type=ROTATION|start=0.20s|duration=8f|rotation=-1.2deg",
             ],
             "cut_boundary_rules": [
-                    "Start a new cut at every observable shot change, action-state discontinuity, subject change, or intentional transition boundary.",
-                    "Treat a prop or food item popping into or out of view between adjacent frames as a mandatory cut boundary.",
-                    "Treat a person disappearing, reappearing, teleporting, or jumping instantly to a different pose or screen position as a mandatory cut boundary.",
-                    "A continuous action may stay in one cut only when the motion between frames is visually continuous.",
-                    "Do not collapse multiple physical edit cuts into one semantic chapter.",
-                    "Use timestamps from the supplied video; do not invent evenly spaced cuts.",
-                    "Do not overlap segments or reverse their order.",
-                    "Record the visual observation that justifies every boundary in segments[].evidence.",
+                "Start a new cut at every observable shot change, action-state discontinuity, subject change, or intentional transition boundary.",
+                "Treat a prop or food item popping into or out of view between adjacent frames as a mandatory cut boundary.",
+                "Treat a person disappearing, reappearing, teleporting, or jumping instantly to a different pose or screen position as a mandatory cut boundary.",
+                "A continuous action may stay in one cut only when the motion between frames is visually continuous.",
+                "Do not collapse multiple physical edit cuts into one semantic chapter.",
+                "Use timestamps from the supplied video; do not invent evenly spaced cuts.",
+                "Do not overlap segments or reverse their order.",
+                "Record the visual observation that justifies every boundary in segments[].evidence.",
             ],
             "human_reviewed_reference_cut_review": reference_cut_review,
             "allowed_audio_roles": ["PLATFORM_MUSIC", "ORIGINAL_AMBIENCE", "NONE"],
@@ -373,8 +367,8 @@ class GeminiYouTubeVideoAnalyzer:
             if attempt:
                 assert previous_insight is not None
                 previous_count = len(previous_insight.segments)
-                prompt_payload["previous_mismatched_cut_analysis"] = (
-                    previous_insight.model_dump(mode="json")
+                prompt_payload["previous_mismatched_cut_analysis"] = previous_insight.model_dump(
+                    mode="json"
                 )
                 prompt_payload["correction"] = (
                     f"The previous analysis returned {previous_count} cuts instead of the "
@@ -429,8 +423,10 @@ def _human_reviewed_reference_cut_review(
     if not isinstance(expected, int) or not 1 <= expected <= MAX_SHOOTING_GUIDE_CUTS:
         return None
     basis = review.get("boundary_basis")
-    if not isinstance(basis, list) or not basis or not all(
-        isinstance(item, str) and item.strip() for item in basis
+    if (
+        not isinstance(basis, list)
+        or not basis
+        or not all(isinstance(item, str) and item.strip() for item in basis)
     ):
         return None
     return {

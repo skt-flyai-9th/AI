@@ -238,8 +238,7 @@ class InvalidPlanFakeLLM:
 class UnavailablePlanFakeLLM:
     def plan_recipe(self, **kwargs):
         raise EditingLLMError(
-            "Editing GPT request failed: schema=editing_plan; "
-            "reason=http_503; attempt=3/3.",
+            "Editing GPT request failed: schema=editing_plan; reason=http_503; attempt=3/3.",
             retryable=False,
         )
 
@@ -351,18 +350,18 @@ def test_archived_pinned_database_version_remains_executable():
     assert run.status == EditingRunStatus.QUEUED.value
 
 
-def test_information_editing_accepts_element_ids_and_assigns_internal_order():
+def test_information_editing_preserves_scene_order():
     request_payload = _request().model_dump(mode="json")
     request_payload["videos"] = [
         {
             "video_id": "take_menu",
             "footage_url": "https://cdn.example/menu.mp4",
-            "shooting_element_id": "ELEMENT_02",
+            "shooting_scene_order": 2,
         },
         {
             "video_id": "take_process",
             "footage_url": "https://cdn.example/process.mp4",
-            "shooting_element_id": "ELEMENT_01",
+            "shooting_scene_order": 1,
         },
     ]
     request = EditingRunCreateRequest.model_validate(request_payload)
@@ -373,23 +372,40 @@ def test_information_editing_accepts_element_ids_and_assigns_internal_order():
     )
     with SessionLocal() as db:
         _seed_video_editing_db(db)
-        record = db.get(VideoEditingDBRecord, ("video_editing_db_014", 3))
-        record.recommendation_metadata = {"format_type": "정보형"}
-        record.shooting_guide = {
-            "shooting_elements": [
-                {"element_id": "ELEMENT_01", "display_order": 1},
-                {"element_id": "ELEMENT_02", "display_order": 2},
-            ]
-        }
-        db.commit()
-
         run = service.create_run(db, request)
 
-        assert [item["shooting_element_id"] for item in run.request_snapshot["videos"]] == [
-            "ELEMENT_01",
-            "ELEMENT_02",
+        assert [item["video_id"] for item in run.request_snapshot["videos"]] == [
+            "take_process",
+            "take_menu",
         ]
         assert [item["shooting_scene_order"] for item in run.request_snapshot["videos"]] == [1, 2]
+
+
+def test_legacy_information_element_inputs_are_converted_at_boundary():
+    request_payload = _request().model_dump(mode="json")
+    request_payload["videos"] = [
+        {
+            "video_id": "take_process",
+            "footage_url": "https://cdn.example/process.mp4",
+            "shooting_element_id": "ELEMENT_01",
+        },
+        {
+            "video_id": "take_menu",
+            "footage_url": "https://cdn.example/menu.mp4",
+            "shooting_element_id": "ELEMENT_02",
+        },
+    ]
+    service = EditingAgentService(
+        llm=RepairingFakeLLM(),
+        video_context_builder=FakeVideoContextBuilder(),
+        renderer=FakeRenderer(),
+    )
+    with SessionLocal() as db:
+        _seed_video_editing_db(db)
+        run = service.create_run(db, EditingRunCreateRequest.model_validate(request_payload))
+
+    assert [item["shooting_scene_order"] for item in run.request_snapshot["videos"]] == [1, 2]
+    assert all(item["shooting_element_id"] is None for item in run.request_snapshot["videos"])
 
 
 def test_legacy_recipe_result_does_not_raise_for_operational_cta():
@@ -514,7 +530,10 @@ def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
             run.request_snapshot["_shortform_context"]["recommendation"]["recommendation_id"]
             == "rec_123"
         )
-        assert "store_photos" not in run.request_snapshot["_shortform_context"]["store_context"]["store"]
+        assert (
+            "store_photos"
+            not in run.request_snapshot["_shortform_context"]["store_context"]["store"]
+        )
         completed = service.execute(db, run.id)
 
         assert completed.status == EditingRunStatus.COMPLETED.value
@@ -553,12 +572,13 @@ def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
                 videos=refreshed_videos,
             ),
         )
-        assert [
-            video["footage_url"] for video in revision.request_snapshot["videos"]
-        ] == [video.footage_url for video in refreshed_videos]
-        assert revision.request_snapshot["_shortform_context"] == completed.request_snapshot[
-            "_shortform_context"
+        assert [video["footage_url"] for video in revision.request_snapshot["videos"]] == [
+            video.footage_url for video in refreshed_videos
         ]
+        assert (
+            revision.request_snapshot["_shortform_context"]
+            == completed.request_snapshot["_shortform_context"]
+        )
         revised = service.execute(db, revision.id)
         assert revised.status == EditingRunStatus.COMPLETED.value
         assert revised.parent_run_id == completed.id
@@ -731,9 +751,7 @@ def test_editing_api_contract(client, auth_headers, monkeypatch):
     assert created["status"] == "QUEUED"
     assert created["task_id"] == "task-editing-1"
 
-    status_response = client.get(
-        f"/api/v1/editing-runs/{created['run_id']}", headers=auth_headers
-    )
+    status_response = client.get(f"/api/v1/editing-runs/{created['run_id']}", headers=auth_headers)
     assert status_response.status_code == 200
     assert status_response.json()["stage"] == "QUEUED"
     assert status_response.json()["queue_position"] == 1

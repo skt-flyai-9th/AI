@@ -361,35 +361,6 @@ class ShortformAgentService:
         }
         guide = _personalize_guide_value(dict(template.shooting_guide or {}), normalized_context)
         format_type = str((template.recommendation_metadata or {}).get("format_type") or "밈")
-        shooting_elements = []
-        if format_type == "정보형":
-            for index, item in enumerate(guide.get("shooting_elements") or [], start=1):
-                element = dict(item)
-                title = _validated_guide_title(element.get("title"), "촬영 요소")
-                instruction = str(element.get("instruction") or "").strip()
-                if not instruction or len(instruction) > 50:
-                    raise ShortformDomainError(
-                        "SHOOTING_ELEMENT_INSTRUCTION_INVALID",
-                        "정보형 촬영 요소 설명은 공백 포함 50자 이하여야 합니다.",
-                        status_code=422,
-                    )
-                shooting_elements.append(
-                    {
-                        "element_id": str(element.get("element_id") or f"ELEMENT_{index:02d}"),
-                        "display_order": int(element.get("display_order") or index),
-                        "title": title,
-                        "instruction": instruction,
-                        "minimum_recording_sec": max(
-                            int(element.get("minimum_recording_sec") or 1), 1
-                        ),
-                    }
-                )
-            if not 1 <= len(shooting_elements) <= 5:
-                raise ShortformDomainError(
-                    "SHOOTING_ELEMENT_COUNT_INVALID",
-                    "정보형 촬영 요소는 1개 이상 5개 이하여야 합니다.",
-                    status_code=422,
-                )
         scenes = []
         for item in guide.get("scenes") or []:
             scene = dict(item)
@@ -469,9 +440,8 @@ class ShortformAgentService:
                 or "중"
             ),
             format_type=format_type,
-            shooting_elements=shooting_elements,
-            scenes=[] if format_type == "정보형" else scenes,
-            tasks=[] if format_type == "정보형" else tasks,
+            scenes=scenes,
+            tasks=tasks,
             context_applied=normalized_context,
         )
 
@@ -598,9 +568,7 @@ class ShortformAgentService:
             {
                 "role": "assistant",
                 "content": "[RECOMMENDATIONS] "
-                + " | ".join(
-                    f"{item.title} — {item.concept}" for item in recommendations
-                ),
+                + " | ".join(f"{item.title} — {item.concept}" for item in recommendations),
             }
         )
         session.conversation = conversation[-40:]
@@ -1026,10 +994,7 @@ def _validated_guide_title(value: Any, fallback: str) -> str:
     if len(title) > MAX_SHOOTING_GUIDE_TITLE_CHARS:
         raise ShortformDomainError(
             "SHOOTING_GUIDE_TITLE_TOO_LONG",
-            (
-                "촬영 컷 설명은 공백 포함 "
-                f"{MAX_SHOOTING_GUIDE_TITLE_CHARS}자 이하여야 합니다."
-            ),
+            (f"촬영 컷 설명은 공백 포함 {MAX_SHOOTING_GUIDE_TITLE_CHARS}자 이하여야 합니다."),
             status_code=422,
         )
     return title

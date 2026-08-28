@@ -81,7 +81,6 @@ class FFmpegVideoContextBuilder:
         return VideoContext(
             video_id=video.video_id,
             shooting_scene_order=int(video.shooting_scene_order or 1),
-            shooting_element_id=video.shooting_element_id,
             duration_ms=duration_ms,
             width=int(metadata["width"]),
             height=int(metadata["height"]),
@@ -199,10 +198,7 @@ class FFmpegVideoContextBuilder:
                 "-map",
                 "0:v:0",
                 "-vf",
-                (
-                    f"scale={self.analysis_frame_width}:-2:"
-                    "force_original_aspect_ratio=decrease"
-                ),
+                (f"scale={self.analysis_frame_width}:-2:force_original_aspect_ratio=decrease"),
                 "-fps_mode",
                 "passthrough",
                 "-q:v",
@@ -270,13 +266,9 @@ class FFmpegVideoContextBuilder:
 
             if completed.returncode != 0:
                 retry_error = _stderr_tail(completed.stderr)
-                details = " | ".join(
-                    detail for detail in (primary_error, retry_error) if detail
-                )
+                details = " | ".join(detail for detail in (primary_error, retry_error) if detail)
                 suffix = f" ffmpeg: {details}" if details else ""
-                raise VideoContextError(
-                    f"Frame extraction failed for video_id={video_id}.{suffix}"
-                )
+                raise VideoContextError(f"Frame extraction failed for video_id={video_id}.{suffix}")
 
             paths = sorted(Path(temp_dir).glob("frame-*.jpg"))
             if not paths:

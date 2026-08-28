@@ -22,7 +22,6 @@ class VideoContext(BaseModel):
 
     video_id: str
     shooting_scene_order: int
-    shooting_element_id: str | None = None
     duration_ms: int
     width: int
     height: int
@@ -91,26 +90,8 @@ class SourceCutPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mode: Literal["MULTI_CUT"] = "MULTI_CUT"
-    strategy: Literal["CUT_PER_INPUT", "INFORMATIONAL_REASSEMBLY"] = "CUT_PER_INPUT"
     cuts: list[SourceCutDecision] = Field(min_length=1)
     rationale: str = Field(max_length=2000)
-
-    @model_validator(mode="after")
-    def validate_non_overlapping_source_ranges(self) -> SourceCutPlan:
-        reference_ids = [item.mapped_reference_segment_id for item in self.cuts]
-        if len(reference_ids) != len(set(reference_ids)):
-            raise ValueError("each reference segment must be assigned exactly once")
-        by_video: dict[str, list[SourceCutDecision]] = {}
-        for item in self.cuts:
-            by_video.setdefault(item.video_id, []).append(item)
-        for video_id, cuts in by_video.items():
-            ordered = sorted(cuts, key=lambda item: (item.trim_in_ms, item.trim_out_ms))
-            for previous, current in zip(ordered, ordered[1:], strict=False):
-                if current.trim_in_ms < previous.trim_out_ms:
-                    raise ValueError(
-                        f"source ranges must not overlap for video_id={video_id}"
-                    )
-        return self
 
 
 class ValidationIssue(BaseModel):
@@ -127,9 +108,7 @@ class EditingPlanDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     outcome: Literal["RECIPE", "SOURCE_GAP"]
-    recipe: EditRecipe | None = Field(
-        description="Required for RECIPE and null for SOURCE_GAP."
-    )
+    recipe: EditRecipe | None = Field(description="Required for RECIPE and null for SOURCE_GAP.")
     publishing: PublishingResult | None = Field(
         description="Required for RECIPE and null for SOURCE_GAP."
     )
