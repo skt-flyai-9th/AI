@@ -13,6 +13,7 @@ from app.agents.shortform.types import (
 )
 from app.db.session import SessionLocal
 from app.main import app
+from app.models.challenge import Challenge
 from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.models.shortform_session import ShortformSession
 from app.schemas.shortform import PromotionCategory, ShortformAction
@@ -144,6 +145,21 @@ def _seed_video_editing_db(
     evidence_summary: dict | None = None,
 ) -> None:
     with SessionLocal() as db:
+        linked_trend_ids = trend_ids or [f"trend_{template_id}"]
+        for trend_id in linked_trend_ids:
+            if db.get(Challenge, trend_id) is None:
+                db.add(
+                    Challenge(
+                        id=trend_id,
+                        automatic_name=title,
+                        automatic_representative_youtube_url=(
+                            f"https://www.youtube.com/shorts/{trend_id[-11:].ljust(11, 'x')}"
+                        ),
+                        automatic_guide_youtube_url=(
+                            f"https://www.youtube.com/shorts/{trend_id[-11:].ljust(11, 'x')}"
+                        ),
+                    )
+                )
         recommendation_metadata = {
             "supported_subject_types": ["MENU"],
             "supported_objectives": ["sales"],
@@ -187,7 +203,7 @@ def _seed_video_editing_db(
                     ],
                 },
                 editing_rules={},
-                trend_ids=trend_ids or [],
+                trend_ids=linked_trend_ids,
                 evidence_summary=evidence_summary or {},
             )
         )
@@ -508,6 +524,22 @@ def test_next_recommendation_reports_exhaustion_when_no_alternative(client, auth
 
 
 def test_shortform_recommendation_bootstraps_packaged_database(client, auth_headers):
+    with SessionLocal() as db:
+        seed_template_library(db)
+        for trend_id, title in (
+            ("cafe_recommendation_reels", "카페 추천 리뷰 릴스"),
+            ("jujutsu_transition", "주술회전 트랜지션"),
+            ("otsukare_summer_challenge", "오츠카레 썸머 챌린지"),
+        ):
+            db.add(
+                Challenge(
+                    id=trend_id,
+                    automatic_name=title,
+                    automatic_representative_youtube_url="https://youtu.be/dQw4w9WgXcQ",
+                    automatic_guide_youtube_url="https://youtu.be/dQw4w9WgXcQ",
+                )
+            )
+        db.commit()
     fake_service = ShortformAgentService(llm=FakeShortformLLM())
     app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
     try:

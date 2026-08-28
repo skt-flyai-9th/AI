@@ -185,6 +185,9 @@ class ShortformRecommendation(BaseModel):
     concept: str
     editing_template_id: str
     editing_template_version: int
+    reference_url: str
+    guide_video_url: str
+    source_platform: str = "YOUTUBE"
 
 
 class ShortformTurnResponse(BaseModel):

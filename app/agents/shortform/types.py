@@ -82,6 +82,9 @@ class VideoEditingDBCandidate(BaseModel):
     recommendation_concept: str
     recommendation_metadata: dict[str, Any] = Field(default_factory=dict)
     trend_context: list[dict[str, Any]] = Field(default_factory=list)
+    reference_url: str
+    guide_video_url: str
+    source_platform: str = "YOUTUBE"
 
 
 class VideoEditingDBSelection(BaseModel):

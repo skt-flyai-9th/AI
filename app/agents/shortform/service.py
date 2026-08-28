@@ -6,6 +6,7 @@ import uuid
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -575,6 +576,9 @@ class ShortformAgentService:
                 ).strip(),
                 editing_template_id=selected.video_editing_db_id,
                 editing_template_version=selected.video_editing_db_version,
+                reference_url=selected.reference_url,
+                guide_video_url=selected.guide_video_url,
+                source_platform=selected.source_platform,
             )
             stored = recommendation.model_dump(mode="json")
             stored["internal_reason"] = selection.internal_reason
@@ -728,6 +732,18 @@ class ShortformAgentService:
                 metadata, project_state
             ):
                 continue
+            trend_context = self._trend_context(db, template.trend_ids or [])
+            playable_trend = next(
+                (
+                    item
+                    for item in trend_context
+                    if _is_playable_youtube_url(item.get("representative_youtube_url"))
+                    and _is_playable_youtube_url(item.get("guide_youtube_url"))
+                ),
+                None,
+            )
+            if playable_trend is None:
+                continue
             result.append(
                 VideoEditingDBCandidate(
                     candidate_key=f"{template.template_id}@{template.version}",
@@ -737,7 +753,9 @@ class ShortformAgentService:
                     recommendation_title=template.recommendation_title or template.name,
                     recommendation_concept=template.recommendation_concept or template.name,
                     recommendation_metadata=metadata,
-                    trend_context=self._trend_context(db, template.trend_ids or []),
+                    trend_context=trend_context,
+                    reference_url=str(playable_trend["representative_youtube_url"]),
+                    guide_video_url=str(playable_trend["guide_youtube_url"]),
                 )
             )
         return result
@@ -767,20 +785,9 @@ class ShortformAgentService:
         return load()
 
     def _trend_context(self, db: Session, trend_ids: list[str]) -> list[dict[str, Any]]:
-        if trend_ids:
-            rows = list(db.scalars(select(Challenge).where(Challenge.id.in_(trend_ids))))
-        else:
-            rows = list(
-                db.scalars(
-                    select(Challenge)
-                    .where(Challenge.active.is_(True))
-                    .order_by(
-                        Challenge.automatic_rank.asc().nullslast(),
-                        Challenge.automatic_score.desc(),
-                    )
-                    .limit(5)
-                )
-            )
+        if not trend_ids:
+            return []
+        rows = list(db.scalars(select(Challenge).where(Challenge.id.in_(trend_ids))))
         return [
             {
                 "trend_id": row.id,
@@ -792,6 +799,11 @@ class ShortformAgentService:
                     row.override_representative_youtube_url
                     if row.representative_video_overridden
                     else row.automatic_representative_youtube_url
+                ),
+                "guide_youtube_url": (
+                    row.override_guide_youtube_url
+                    if row.guide_video_overridden
+                    else row.automatic_guide_youtube_url
                 ),
             }
             for row in rows
@@ -1325,6 +1337,15 @@ def _personalize_guide_value(value: Any, context: dict[str, str]) -> Any:
     if isinstance(value, dict):
         return {key: _personalize_guide_value(item, context) for key, item in value.items()}
     return value
+
+
+def _is_playable_youtube_url(value: Any) -> bool:
+    parsed = urlparse(str(value or "").strip())
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme in {"http", "https"} and (
+        host in {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+        or host.endswith(".youtube.com")
+    )
 
 
 @lru_cache(maxsize=1)
