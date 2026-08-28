@@ -103,7 +103,7 @@
       "display_order": 4,
       "start_ms": 5000,
       "end_ms": 8000,
-      "task_title": "에너지 있는 팔 동작으로 리듬 이어가기",
+      "task_title": "팔 동작으로 리듬 이어가기",
       "scene_role": "DANCE_MOVE_3",
       "instructions": ["팔 동작을 크게 유지하면서 박자에 맞춰 다음 안무를 이어가세요."],
       "source_row_number": 12
@@ -143,7 +143,7 @@
       "display_order": 1,
       "start_ms": 0,
       "end_ms": 1250,
-      "task_title": "애정 카페 선언 · 제조 플래시 → 대표 메뉴",
+      "task_title": "애정 카페와 대표 메뉴 소개",
       "scene_role": "PERSONAL_HOOK",
       "instructions": ["0.2~0.4초 제조/서빙 동작을 짧게 보여준 뒤 대표 메뉴 Hero로 전환해 1인칭 애정 추천으로 시작"],
       "source_row_number": 14
@@ -153,7 +153,7 @@
       "display_order": 2,
       "start_ms": 1250,
       "end_ms": 4125,
-      "task_title": "사람/손이 있는 체험 컷 → 매장만의 뷰 증거",
+      "task_title": "체험 컷과 매장 뷰 담기",
       "scene_role": "USP_PROOF",
       "instructions": ["컵을 든 사람 또는 손·POV를 전경에 두고 공간을 즐기는 장면을 보여준 뒤, 차별점이 한눈에 보이는 와이드 뷰로 전환"],
       "source_row_number": 15
@@ -163,7 +163,7 @@
       "display_order": 3,
       "start_ms": 4125,
       "end_ms": 7375,
-      "task_title": "시그니처 음료 한 장면 위 순차 메뉴 자막",
+      "task_title": "시그니처 음료와 메뉴 자막",
       "scene_role": "MENU_PROOF_PRIMARY",
       "instructions": ["대표 음료를 안정적으로 약 3초 유지하면서 향/맛 설명과 메뉴명을 3~4개의 짧은 자막 이벤트로 순차 교체"],
       "source_row_number": 16
@@ -173,7 +173,7 @@
       "display_order": 4,
       "start_ms": 7375,
       "end_ms": 9500,
-      "task_title": "제조 디테일 → 디저트/두 번째 메뉴 증거",
+      "task_title": "제조와 디저트 메뉴 담기",
       "scene_role": "MENU_PROOF_SECONDARY",
       "instructions": ["드립·푸어링·플레이팅 등 짧은 제조 동작을 보여준 뒤 디저트 또는 두 번째 대표 메뉴를 클로즈업"],
       "source_row_number": 17
@@ -183,7 +183,7 @@
       "display_order": 5,
       "start_ms": 9500,
       "end_ms": 12250,
-      "task_title": "공간 분위기 → 매장명 → 질문형 CTA",
+      "task_title": "공간 분위기와 매장명 CTA",
       "scene_role": "STORE_REVEAL_CTA",
       "instructions": ["빛·인테리어가 잘 보이는 공간 장면에서 분위기를 한 줄로 설명하고 매장명을 공개한 뒤, 마지막 음료 동작 위에 부드러운 질문 CTA를 표시"],
       "source_row_number": 18

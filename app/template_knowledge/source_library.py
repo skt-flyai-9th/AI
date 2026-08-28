@@ -50,6 +50,15 @@ _TRADE_AREA_APPROVAL_DATASETS = {
     "content_region_trade_area_map",
     "official_category_map",
 }
+_SHOOTING_GUIDE_ROLE_TITLES = {
+    "OVERHEAD_INSERT_A_ENTRY": "오버헤드 A 진입",
+    "OVERHEAD_INSERT_A_HOLD": "오버헤드 A 유지",
+    "OVERHEAD_INSERT_B_ENTRY": "오버헤드 B 진입",
+    "OVERHEAD_INSERT_B_HOLD": "오버헤드 B 유지",
+    "OVERHEAD_INSERT_C_ENTRY": "오버헤드 C 진입",
+    "OVERHEAD_INSERT_C_HOLD": "오버헤드 C 유지",
+    "FINALE_JUMP_CUT_RESET": "피날레 점프컷 리셋",
+}
 
 _EDITING_SCOPE_ADAPTERS: dict[str, dict[str, Any]] = {
     "jujutsu_transition": {
@@ -743,9 +752,7 @@ def _editing_content(
             tasks.append(
                 {
                     "display_order": order,
-                    "task_title": _bounded(
-                        str(row["narrative_role"]), MAX_SHOOTING_GUIDE_TITLE_CHARS
-                    ),
+                    "task_title": _shooting_guide_title(str(row["narrative_role"])),
                     "scene_index": order - 1,
                     "guide": {"instructions": [summary]},
                 }
@@ -783,9 +790,7 @@ def _editing_content(
             tasks.append(
                 {
                     "display_order": order,
-                    "task_title": _bounded(
-                        str(interval["task_title"]), MAX_SHOOTING_GUIDE_TITLE_CHARS
-                    ),
+                    "task_title": _shooting_guide_title(str(interval["task_title"])),
                     "scene_index": order - 1,
                     "guide": {"instructions": instructions},
                 }
@@ -808,9 +813,7 @@ def _editing_content(
                 {
                     "element_id": str(item["shooting_element_id"]),
                     "display_order": int(item["display_order"]),
-                    "title": _bounded(
-                        str(item["title"]), MAX_SHOOTING_GUIDE_TITLE_CHARS
-                    ),
+                    "title": _shooting_guide_title(str(item["title"])),
                     "instruction": _bounded(str(item["instruction"]), 50),
                     "minimum_recording_sec": int(item["minimum_recording_sec"]),
                     "reference_segment_sequences": sequences,
@@ -904,3 +907,13 @@ def _bounded(value: str | None, limit: int) -> str:
     if value is None:
         return ""
     return value if len(value) <= limit else f"{value[: limit - 1]}…"
+
+
+def _shooting_guide_title(value: str) -> str:
+    title = _SHOOTING_GUIDE_ROLE_TITLES.get(value, value).strip()
+    if not title or len(title) > MAX_SHOOTING_GUIDE_TITLE_CHARS:
+        raise ValueError(
+            "shooting guide title must contain 1 to "
+            f"{MAX_SHOOTING_GUIDE_TITLE_CHARS} characters: {value!r}"
+        )
+    return title
