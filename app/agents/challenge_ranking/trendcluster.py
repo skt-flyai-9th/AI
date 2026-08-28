@@ -11,25 +11,29 @@ from typing import Any
 
 TRENDCLUSTER_FILENAME = "trendcluster.json"
 
-# 운영 trendcluster는 영상편집 DB에서 검증을 마친 이 세 영상만 사용한다.
+# 운영 trendcluster는 영상편집 DB에서 검증을 마친 이 다섯 숏폼만 사용한다.
 # 파이프라인이 더 많은 후보를 찾아도 API/DB에 다시 유입시키지 않는다.
 TRENDCLUSTER_CHALLENGE_IDS = (
     "jujutsu_transition",
     "cafe_recommendation_reels",
     "otsukare_summer_challenge",
+    "donggeurio_challenge",
+    "donggeurio_store_promotion",
 )
 
 _SEED_CATEGORIES = {
     "jujutsu_transition": "meme",
     "cafe_recommendation_reels": "food",
     "otsukare_summer_challenge": "challenge",
+    "donggeurio_challenge": "meme",
+    "donggeurio_store_promotion": "food",
 }
 
 _SEED_GUIDE_URL_OVERRIDES = {
     "jujutsu_transition": "https://www.youtube.com/shorts/02afQgwCDSc",
 }
 
-# These labels describe the three guide videos that were actually analysed in
+# These labels describe the guide videos that were actually analysed in
 # the bundled video-editing DB.  Duration and difficulty are derived from the
 # analysis rows below; type and whether a face is required are classification
 # results that are stable for each analysed guide.
@@ -37,6 +41,8 @@ _GUIDE_CLASSIFICATIONS: dict[str, tuple[str, bool]] = {
     "jujutsu_transition": ("밈", False),
     "otsukare_summer_challenge": ("챌린지", True),
     "cafe_recommendation_reels": ("정보형", False),
+    "donggeurio_challenge": ("밈", False),
+    "donggeurio_store_promotion": ("정보형", False),
 }
 
 _REFERENCE_CUT_REVIEWS: dict[str, dict[str, Any]] = {
@@ -58,6 +64,15 @@ _REFERENCE_CUT_REVIEWS: dict[str, dict[str, Any]] = {
             "같은 안무 구간이어도 점프컷을 하나의 연속 장면으로 합치지 않음",
         ],
     },
+    "donggeurio_challenge": {
+        "status": "GEMINI_REPORT_REVIEWED",
+        "expected_cut_count": 6,
+        "boundary_basis": [
+            "완성 결과물에서 제조 공정으로 바뀌는 지점마다 Hard Cut",
+            "반죽·접기·토핑·포장·토치의 각 동작 완료점을 컷 경계로 사용",
+            "토치 후 표면 색 변화는 중간 분할 없이 연속 보존",
+        ],
+    },
 }
 
 
@@ -70,7 +85,7 @@ def _difficulty_label(source_lines: list[dict[str, Any]], challenge_id: str) -> 
         line = str(row.get("raw_markdown_line") or "")
         if "난이도" not in line and "shooting_difficulty" not in line:
             continue
-        match = re.search(r"(?:촬영|shooting_difficulty[^★]*)\s*(★{1,3})", line)
+        match = re.search(r"(?:촬영|shooting_difficulty)[^★]{0,30}(★{1,3})", line)
         if match:
             return {1: "하", 2: "중", 3: "상"}[len(match.group(1))]
     return None
@@ -152,9 +167,9 @@ def build_video_editing_db_trendcluster() -> dict[str, Any]:
             result["reference_cut_review"] = _REFERENCE_CUT_REVIEWS[challenge_id]
         results.append(result)
     results.sort(key=lambda item: (item["rank"], item["id"]))
-    if len(results) != 3:
+    if len(results) != 5:
         raise ValueError(
-            f"Expected exactly 3 PASS entries in the provided video-editing DB, got {len(results)}."
+            f"Expected exactly 5 PASS entries in the provided video-editing DB, got {len(results)}."
         )
     return {
         "generated_at": max(generated_at),

@@ -15,17 +15,21 @@ def test_checked_in_trendcluster_matches_provided_video_editing_db():
     checked_in = json.loads(Path("exports/trendcluster.json").read_text(encoding="utf-8"))
 
     assert checked_in == expected
-    assert checked_in["count"] == 3
-    assert [item["rank"] for item in checked_in["results"]] == [1, 2, 3]
+    assert checked_in["count"] == 5
+    assert [item["rank"] for item in checked_in["results"]] == [1, 2, 3, 4, 5]
     assert [item["name"] for item in checked_in["results"]] == [
         "주술회전 트랜지션",
         "카페 추천 리뷰 릴스",
         "오츠카레 썸머 챌린지",
+        "동그리오(챌린지)",
+        "동그리오(매장 홍보)",
     ]
     assert [item["category"] for item in checked_in["results"]] == [
         "meme",
         "food",
         "challenge",
+        "meme",
+        "food",
     ]
     assert all(
         item["representative_youtube_url"] == item["guide_youtube_url"]
@@ -45,6 +49,12 @@ def test_checked_in_trendcluster_matches_provided_video_editing_db():
     )
     assert checked_in["results"][0]["reference_cut_review"]["expected_cut_count"] == 6
     assert checked_in["results"][2]["reference_cut_review"]["expected_cut_count"] == 7
+    assert checked_in["results"][3]["reference_cut_review"]["expected_cut_count"] == 6
+    assert all(
+        item["representative_youtube_url"]
+        == "https://www.youtube.com/shorts/6duJ3WOzeuQ"
+        for item in checked_in["results"][3:]
+    )
     assert [
         (
             item["format_type"],
@@ -57,6 +67,8 @@ def test_checked_in_trendcluster_matches_provided_video_editing_db():
         ("밈", 13, "중", False),
         ("정보형", 13, "중", False),
         ("챌린지", 13, "중", True),
+        ("밈", 45, "중", False),
+        ("정보형", 45, "중", False),
     ]
     assert not Path("exports/ranking_latest.json").exists()
 

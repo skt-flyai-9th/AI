@@ -2,10 +2,10 @@
   "format_version": 1,
   "source": {
     "filename": "영상편집DB.xlsx",
-    "bundled_filename": "영상편집DB_원본구간.xlsx",
-    "sha256": "0EE2350B66F9B878F294B65914DC0EFF67725758CE248869B6560FD5176FE004",
+    "bundled_filename": "영상편집DB.xlsx",
+    "sha256": "E3775079E6F2F6DE21466B64229F8A0A2C960EB66EFEE96F6FD361387C888000",
     "sheet": "03_GUIDE_TEMPLATES",
-    "range": "A5:W19"
+    "range": "A5:X99"
   },
   "intervals": [
     {
@@ -15,7 +15,9 @@
       "end_ms": 1500,
       "task_title": "1컷 훅 장면 촬영",
       "scene_role": "HOOK",
-      "instructions": ["초록색 상의를 입고 빈 테이블 앞에서 손동작을 시작하세요. 음식과 음료는 아직 보이지 않게 촬영하세요."],
+      "instructions": [
+        "초록색 상의를 입고 빈 테이블 앞에서 손동작을 시작하세요. 음식과 음료는 아직 보이지 않게 촬영하세요."
+      ],
       "source_row_number": 5
     },
     {
@@ -25,7 +27,9 @@
       "end_ms": 4500,
       "task_title": "음료와 디저트 즉시 등장 컷 촬영",
       "scene_role": "PRODUCT_REVEAL",
-      "instructions": ["손을 펼치는 타이밍에 맞춰 음료와 디저트가 나타나도록 같은 구도에서 촬영하세요."],
+      "instructions": [
+        "손을 펼치는 타이밍에 맞춰 음료와 디저트가 나타나도록 같은 구도에서 촬영하세요."
+      ],
       "source_row_number": 5
     },
     {
@@ -35,7 +39,9 @@
       "end_ms": 6800,
       "task_title": "손 가림 전환용 클로즈업 촬영",
       "scene_role": "TRANSITION",
-      "instructions": ["손바닥이 렌즈를 완전히 가리도록 가까이 가져와 화면 전환에 쓸 장면을 촬영하세요."],
+      "instructions": [
+        "손바닥이 렌즈를 완전히 가리도록 가까이 가져와 화면 전환에 쓸 장면을 촬영하세요."
+      ],
       "source_row_number": 6
     },
     {
@@ -45,7 +51,9 @@
       "end_ms": 8500,
       "task_title": "다른 의상 설정 샷 촬영",
       "scene_role": "SETUP",
-      "instructions": ["흰색 상의로 바꾸고 같은 장소와 카메라 위치에서 다음 손동작을 준비하세요."],
+      "instructions": [
+        "흰색 상의로 바꾸고 같은 장소와 카메라 위치에서 다음 손동작을 준비하세요."
+      ],
       "source_row_number": 6
     },
     {
@@ -55,7 +63,9 @@
       "end_ms": 10000,
       "task_title": "피자 소환 컷 촬영",
       "scene_role": "PRODUCT_REVEAL",
-      "instructions": ["양손을 펼치는 순간 피자가 나타나도록 앞 장면과 같은 구도로 촬영하세요."],
+      "instructions": [
+        "양손을 펼치는 순간 피자가 나타나도록 앞 장면과 같은 구도로 촬영하세요."
+      ],
       "source_row_number": 7
     },
     {
@@ -65,7 +75,9 @@
       "end_ms": 11200,
       "task_title": "애니메이션 오버레이 엔딩 촬영",
       "scene_role": "OUTRO",
-      "instructions": ["피자와 인물이 잘 보이는 안정된 엔딩을 유지하고 화면 위쪽에는 오버레이 여백을 남기세요."],
+      "instructions": [
+        "피자와 인물이 잘 보이는 안정된 엔딩을 유지하고 화면 위쪽에는 오버레이 여백을 남기세요."
+      ],
       "source_row_number": 7
     },
     {
@@ -75,7 +87,9 @@
       "end_ms": 1000,
       "task_title": "정면 인사 포즈로 훅 시작하기",
       "scene_role": "HOOK",
-      "instructions": ["정면을 바라보며 인사 포즈와 표정으로 시작하고 전신이 보이게 촬영하세요."],
+      "instructions": [
+        "정면을 바라보며 인사 포즈와 표정으로 시작하고 전신이 보이게 촬영하세요."
+      ],
       "source_row_number": 9
     },
     {
@@ -85,7 +99,9 @@
       "end_ms": 4000,
       "task_title": "첫 안무를 큰 동작으로 보여주기",
       "scene_role": "DANCE_MOVE_1",
-      "instructions": ["팔과 상체를 크게 움직이는 첫 안무를 전신 구도에서 리듬에 맞춰 촬영하세요."],
+      "instructions": [
+        "팔과 상체를 크게 움직이는 첫 안무를 전신 구도에서 리듬에 맞춰 촬영하세요."
+      ],
       "source_row_number": 10
     },
     {
@@ -95,7 +111,9 @@
       "end_ms": 5000,
       "task_title": "옆 스텝 전환 포즈 짧게 잡기",
       "scene_role": "DANCE_MOVE_2",
-      "instructions": ["옆으로 이동하는 스텝과 전환 포즈를 짧고 분명하게 보여주세요."],
+      "instructions": [
+        "옆으로 이동하는 스텝과 전환 포즈를 짧고 분명하게 보여주세요."
+      ],
       "source_row_number": 11
     },
     {
@@ -105,7 +123,9 @@
       "end_ms": 8000,
       "task_title": "팔 동작으로 리듬 이어가기",
       "scene_role": "DANCE_MOVE_3",
-      "instructions": ["팔 동작을 크게 유지하면서 박자에 맞춰 다음 안무를 이어가세요."],
+      "instructions": [
+        "팔 동작을 크게 유지하면서 박자에 맞춰 다음 안무를 이어가세요."
+      ],
       "source_row_number": 12
     },
     {
@@ -115,7 +135,9 @@
       "end_ms": 9000,
       "task_title": "손 아래턱 귀여운 포즈 넣기",
       "scene_role": "DANCE_MOVE_4",
-      "instructions": ["손을 아래턱에 대는 포즈를 표정과 함께 짧게 유지하세요."],
+      "instructions": [
+        "손을 아래턱에 대는 포즈를 표정과 함께 짧게 유지하세요."
+      ],
       "source_row_number": 13
     },
     {
@@ -125,7 +147,9 @@
       "end_ms": 11000,
       "task_title": "빠른 스윙과 스텝으로 다시 가속하기",
       "scene_role": "DANCE_MOVE_5",
-      "instructions": ["빠른 팔 스윙과 스텝을 박자에 맞춰 수행하고 전신이 프레임 밖으로 나가지 않게 하세요."],
+      "instructions": [
+        "빠른 팔 스윙과 스텝을 박자에 맞춰 수행하고 전신이 프레임 밖으로 나가지 않게 하세요."
+      ],
       "source_row_number": 13
     },
     {
@@ -135,7 +159,9 @@
       "end_ms": 12000,
       "task_title": "마지막 제스처로 엔딩 마무리하기",
       "scene_role": "OUTRO",
-      "instructions": ["마지막 손 제스처와 표정을 카메라 정면에서 잠시 유지해 엔딩을 완성하세요."],
+      "instructions": [
+        "마지막 손 제스처와 표정을 카메라 정면에서 잠시 유지해 엔딩을 완성하세요."
+      ],
       "source_row_number": 13
     },
     {
@@ -145,7 +171,9 @@
       "end_ms": 1250,
       "task_title": "애정 카페와 대표 메뉴 소개",
       "scene_role": "PERSONAL_HOOK",
-      "instructions": ["0.2~0.4초 제조/서빙 동작을 짧게 보여준 뒤 대표 메뉴 Hero로 전환해 1인칭 애정 추천으로 시작"],
+      "instructions": [
+        "0.2~0.4초 제조/서빙 동작을 짧게 보여준 뒤 대표 메뉴 Hero로 전환해 1인칭 애정 추천으로 시작"
+      ],
       "source_row_number": 14
     },
     {
@@ -155,7 +183,9 @@
       "end_ms": 4125,
       "task_title": "체험 컷과 매장 뷰 담기",
       "scene_role": "USP_PROOF",
-      "instructions": ["컵을 든 사람 또는 손·POV를 전경에 두고 공간을 즐기는 장면을 보여준 뒤, 차별점이 한눈에 보이는 와이드 뷰로 전환"],
+      "instructions": [
+        "컵을 든 사람 또는 손·POV를 전경에 두고 공간을 즐기는 장면을 보여준 뒤, 차별점이 한눈에 보이는 와이드 뷰로 전환"
+      ],
       "source_row_number": 15
     },
     {
@@ -165,7 +195,9 @@
       "end_ms": 7375,
       "task_title": "시그니처 음료와 메뉴 자막",
       "scene_role": "MENU_PROOF_PRIMARY",
-      "instructions": ["대표 음료를 안정적으로 약 3초 유지하면서 향/맛 설명과 메뉴명을 3~4개의 짧은 자막 이벤트로 순차 교체"],
+      "instructions": [
+        "대표 음료를 안정적으로 약 3초 유지하면서 향/맛 설명과 메뉴명을 3~4개의 짧은 자막 이벤트로 순차 교체"
+      ],
       "source_row_number": 16
     },
     {
@@ -175,7 +207,9 @@
       "end_ms": 9500,
       "task_title": "제조와 디저트 메뉴 담기",
       "scene_role": "MENU_PROOF_SECONDARY",
-      "instructions": ["드립·푸어링·플레이팅 등 짧은 제조 동작을 보여준 뒤 디저트 또는 두 번째 대표 메뉴를 클로즈업"],
+      "instructions": [
+        "드립·푸어링·플레이팅 등 짧은 제조 동작을 보여준 뒤 디저트 또는 두 번째 대표 메뉴를 클로즈업"
+      ],
       "source_row_number": 17
     },
     {
@@ -185,7 +219,9 @@
       "end_ms": 12250,
       "task_title": "공간 분위기와 매장명 CTA",
       "scene_role": "STORE_REVEAL_CTA",
-      "instructions": ["빛·인테리어가 잘 보이는 공간 장면에서 분위기를 한 줄로 설명하고 매장명을 공개한 뒤, 마지막 음료 동작 위에 부드러운 질문 CTA를 표시"],
+      "instructions": [
+        "빛·인테리어가 잘 보이는 공간 장면에서 분위기를 한 줄로 설명하고 매장명을 공개한 뒤, 마지막 음료 동작 위에 부드러운 질문 CTA를 표시"
+      ],
       "source_row_number": 18
     },
     {
@@ -195,8 +231,154 @@
       "end_ms": 12583,
       "task_title": "공간 배경 위 강한 추천 엔드카드",
       "scene_role": "END_CARD",
-      "instructions": ["여백 있는 실제 공간 영상 위에 큰 2줄 추천 문구를 표시해 영상을 닫음. 참고 영상의 12.58초 이후 시작 장면 재등장은 루프 리셋으로 제외"],
+      "instructions": [
+        "여백 있는 실제 공간 영상 위에 큰 2줄 추천 문구를 표시해 영상을 닫음. 참고 영상의 12.58초 이후 시작 장면 재등장은 루프 리셋으로 제외"
+      ],
       "source_row_number": 19
+    },
+    {
+      "challenge_id": "donggeurio_challenge",
+      "display_order": 1,
+      "start_ms": 0,
+      "end_ms": 2500,
+      "task_title": "완성 메뉴 선공개 촬영",
+      "scene_role": "HOOK",
+      "instructions": [
+        "완성 메뉴 전체와 표면 질감이 보이도록 중앙에서 천천히 기울여 촬영하세요."
+      ],
+      "source_row_number": 88
+    },
+    {
+      "challenge_id": "donggeurio_challenge",
+      "display_order": 2,
+      "start_ms": 2500,
+      "end_ms": 8500,
+      "task_title": "반죽 붓고 펴는 과정 촬영",
+      "scene_role": "BUILD_UP",
+      "instructions": [
+        "반죽이 조리판에 닿는 순간부터 원형으로 고르게 펴질 때까지 끊지 말고 촬영하세요."
+      ],
+      "source_row_number": 89
+    },
+    {
+      "challenge_id": "donggeurio_challenge",
+      "display_order": 3,
+      "start_ms": 8500,
+      "end_ms": 15200,
+      "task_title": "굽고 접는 형태 변화 촬영",
+      "scene_role": "BUILD_UP",
+      "instructions": [
+        "익은 메뉴를 도구로 들어 올리고 접어 형태가 완성되는 순간까지 촬영하세요."
+      ],
+      "source_row_number": 90
+    },
+    {
+      "challenge_id": "donggeurio_challenge",
+      "display_order": 4,
+      "start_ms": 15200,
+      "end_ms": 28000,
+      "task_title": "크림과 토핑 추가 과정 촬영",
+      "scene_role": "CORE_ACTION",
+      "instructions": [
+        "크림과 핵심 재료를 실제 제조 순서대로 올리는 손과 도구를 길게 촬영하세요."
+      ],
+      "source_row_number": 91
+    },
+    {
+      "challenge_id": "donggeurio_challenge",
+      "display_order": 5,
+      "start_ms": 28000,
+      "end_ms": 38000,
+      "task_title": "포장과 표면 마무리 촬영",
+      "scene_role": "CLIMAX_PREP",
+      "instructions": [
+        "포장해 형태를 잡고 표면을 평탄화한 뒤 마무리 재료를 뿌리는 과정을 촬영하세요."
+      ],
+      "source_row_number": 92
+    },
+    {
+      "challenge_id": "donggeurio_challenge",
+      "display_order": 6,
+      "start_ms": 38000,
+      "end_ms": 45000,
+      "task_title": "토치와 완성 질감 촬영",
+      "scene_role": "CLIMAX_OUTRO",
+      "instructions": [
+        "토치가 표면에 닿아 색과 광택이 변하고 완성 질감이 드러날 때까지 가까이 촬영하세요."
+      ],
+      "source_row_number": 93
+    },
+    {
+      "challenge_id": "donggeurio_store_promotion",
+      "display_order": 1,
+      "start_ms": 0,
+      "end_ms": 2500,
+      "task_title": "완성 메뉴 선공개 촬영",
+      "scene_role": "HOOK",
+      "instructions": [
+        "완성 메뉴 전체와 표면 질감이 보이도록 중앙에서 천천히 기울여 촬영하세요."
+      ],
+      "source_row_number": 94
+    },
+    {
+      "challenge_id": "donggeurio_store_promotion",
+      "display_order": 2,
+      "start_ms": 2500,
+      "end_ms": 8500,
+      "task_title": "반죽 붓고 펴는 과정 촬영",
+      "scene_role": "BUILD_UP",
+      "instructions": [
+        "반죽이 조리판에 닿는 순간부터 원형으로 고르게 펴질 때까지 끊지 말고 촬영하세요."
+      ],
+      "source_row_number": 95
+    },
+    {
+      "challenge_id": "donggeurio_store_promotion",
+      "display_order": 3,
+      "start_ms": 8500,
+      "end_ms": 15200,
+      "task_title": "굽고 접는 형태 변화 촬영",
+      "scene_role": "BUILD_UP",
+      "instructions": [
+        "익은 메뉴를 도구로 들어 올리고 접어 형태가 완성되는 순간까지 촬영하세요."
+      ],
+      "source_row_number": 96
+    },
+    {
+      "challenge_id": "donggeurio_store_promotion",
+      "display_order": 4,
+      "start_ms": 15200,
+      "end_ms": 28000,
+      "task_title": "크림과 토핑 추가 과정 촬영",
+      "scene_role": "CORE_ACTION",
+      "instructions": [
+        "크림과 핵심 재료를 실제 제조 순서대로 올리는 손과 도구를 길게 촬영하세요."
+      ],
+      "source_row_number": 97
+    },
+    {
+      "challenge_id": "donggeurio_store_promotion",
+      "display_order": 5,
+      "start_ms": 28000,
+      "end_ms": 38000,
+      "task_title": "포장과 표면 마무리 촬영",
+      "scene_role": "CLIMAX_PREP",
+      "instructions": [
+        "포장해 형태를 잡고 표면을 평탄화한 뒤 마무리 재료를 뿌리는 과정을 촬영하세요."
+      ],
+      "source_row_number": 98
+    },
+    {
+      "challenge_id": "donggeurio_store_promotion",
+      "display_order": 6,
+      "start_ms": 38000,
+      "end_ms": 45000,
+      "task_title": "토치와 완성 질감 촬영",
+      "scene_role": "CLIMAX_OUTRO",
+      "instructions": [
+        "토치가 표면에 닿아 색과 광택이 변하고 완성 질감이 드러날 때까지 가까이 촬영하세요."
+      ],
+      "source_row_number": 99
     }
   ]
 }
