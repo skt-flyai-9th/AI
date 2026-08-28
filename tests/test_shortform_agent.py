@@ -17,6 +17,7 @@ from app.models.challenge import Challenge
 from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.models.shortform_session import ShortformSession
 from app.schemas.shortform import PromotionCategory, ShortformAction
+from app.schemas.template_knowledge import MAX_SHOOTING_GUIDE_TITLE_CHARS
 from app.template_knowledge.seeds import seed_template_library
 
 
@@ -280,7 +281,7 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
         assert guide.json()["scenes"][0]["scene_order"] == 1
         task = guide.json()["tasks"][0]
         assert task["display_order"] == 1
-        assert len(task["task_title"]) <= 9
+        assert len(task["task_title"]) <= MAX_SHOOTING_GUIDE_TITLE_CHARS
         assert task["scene_index"] == 0
         assert task["guide"] == {
             "instructions": ["완성된 메뉴를 화면 중앙에 촬영합니다."],
@@ -448,7 +449,10 @@ def test_information_shooting_guide_returns_elements_instead_of_edit_cuts(
     assert payload["scenes"] == []
     assert payload["tasks"] == []
     assert len(payload["shooting_elements"]) == 4
-    assert all(len(item["title"]) <= 9 for item in payload["shooting_elements"])
+    assert all(
+        len(item["title"]) <= MAX_SHOOTING_GUIDE_TITLE_CHARS
+        for item in payload["shooting_elements"]
+    )
     assert all(len(item["instruction"]) <= 50 for item in payload["shooting_elements"])
 
 

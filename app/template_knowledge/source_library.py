@@ -16,6 +16,7 @@ from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.models.trade_area_db_record import TradeAreaDBRecord
 from app.models.template_source import TemplateSourceBundle, TemplateSourceRecord
 from app.schemas.template_knowledge import (
+    MAX_SHOOTING_GUIDE_TITLE_CHARS,
     VideoEditingDBContent,
     TradeAreaDBContent,
     TemplateSourceBundleRead,
@@ -742,7 +743,9 @@ def _editing_content(
             tasks.append(
                 {
                     "display_order": order,
-                    "task_title": _bounded(str(row["narrative_role"]), 9),
+                    "task_title": _bounded(
+                        str(row["narrative_role"]), MAX_SHOOTING_GUIDE_TITLE_CHARS
+                    ),
                     "scene_index": order - 1,
                     "guide": {"instructions": [summary]},
                 }
@@ -780,7 +783,9 @@ def _editing_content(
             tasks.append(
                 {
                     "display_order": order,
-                    "task_title": _bounded(str(interval["task_title"]), 9),
+                    "task_title": _bounded(
+                        str(interval["task_title"]), MAX_SHOOTING_GUIDE_TITLE_CHARS
+                    ),
                     "scene_index": order - 1,
                     "guide": {"instructions": instructions},
                 }
@@ -803,7 +808,9 @@ def _editing_content(
                 {
                     "element_id": str(item["shooting_element_id"]),
                     "display_order": int(item["display_order"]),
-                    "title": _bounded(str(item["title"]), 9),
+                    "title": _bounded(
+                        str(item["title"]), MAX_SHOOTING_GUIDE_TITLE_CHARS
+                    ),
                     "instruction": _bounded(str(item["instruction"]), 50),
                     "minimum_recording_sec": int(item["minimum_recording_sec"]),
                     "reference_segment_sequences": sequences,
