@@ -207,26 +207,12 @@ def persist_result(
     db.commit()
 
 
-def _effective_record(challenge: Challenge) -> dict[str, Any]:
-    return {
-        "id": challenge.id,
-        "rank": challenge.override_rank if challenge.rank_overridden else challenge.automatic_rank,
-        "name": challenge.override_name if challenge.name_overridden else challenge.automatic_name,
-        "representative_youtube_url": (
-            challenge.override_representative_youtube_url
-            if challenge.representative_video_overridden
-            else challenge.automatic_representative_youtube_url
-        ),
-        "guide_youtube_url": (
-            challenge.override_guide_youtube_url
-            if challenge.guide_video_overridden
-            else challenge.automatic_guide_youtube_url
-        ),
-    }
-
-
 def export_trendcluster(db: Session) -> Path:
-    from app.services.challenges import effective_rank_expression
+    from app.services.challenges import (
+        active_template_refs,
+        effective_rank_expression,
+        to_export_record,
+    )
     from sqlalchemy import select
 
     settings = get_settings()
@@ -239,9 +225,13 @@ def export_trendcluster(db: Session) -> Path:
             .limit(100)
         )
     )
+    template_refs = active_template_refs(db, {row.id for row in rows})
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "count": len(rows),
-        "results": [_effective_record(row) for row in rows],
+        "results": [
+            to_export_record(row, template_refs.get(row.id))
+            for row in rows
+        ],
     }
     return write_trendcluster(payload, settings.export_dir)

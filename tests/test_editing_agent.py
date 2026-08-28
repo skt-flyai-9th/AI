@@ -314,6 +314,72 @@ def test_archived_pinned_database_version_remains_executable():
     assert run.status == EditingRunStatus.QUEUED.value
 
 
+def test_information_editing_accepts_element_ids_and_assigns_internal_order():
+    request_payload = _request().model_dump(mode="json")
+    request_payload["videos"] = [
+        {
+            "video_id": "take_menu",
+            "footage_url": "https://cdn.example/menu.mp4",
+            "shooting_element_id": "ELEMENT_02",
+        },
+        {
+            "video_id": "take_process",
+            "footage_url": "https://cdn.example/process.mp4",
+            "shooting_element_id": "ELEMENT_01",
+        },
+    ]
+    request = EditingRunCreateRequest.model_validate(request_payload)
+    service = EditingAgentService(
+        llm=RepairingFakeLLM(),
+        video_context_builder=FakeVideoContextBuilder(),
+        renderer=FakeRenderer(),
+    )
+    with SessionLocal() as db:
+        _seed_video_editing_db(db)
+        record = db.get(VideoEditingDBRecord, ("video_editing_db_014", 3))
+        record.recommendation_metadata = {"format_type": "정보형"}
+        record.shooting_guide = {
+            "shooting_elements": [
+                {"element_id": "ELEMENT_01", "display_order": 1},
+                {"element_id": "ELEMENT_02", "display_order": 2},
+            ]
+        }
+        db.commit()
+
+        run = service.create_run(db, request)
+
+        assert [item["shooting_element_id"] for item in run.request_snapshot["videos"]] == [
+            "ELEMENT_01",
+            "ELEMENT_02",
+        ]
+        assert [item["shooting_scene_order"] for item in run.request_snapshot["videos"]] == [1, 2]
+
+
+def test_legacy_recipe_result_does_not_raise_for_operational_cta():
+    service = EditingAgentService(
+        llm=RepairingFakeLLM(),
+        video_context_builder=FakeVideoContextBuilder(),
+        renderer=FakeRenderer(),
+    )
+    recipe = _recipe().model_dump(mode="json")
+    recipe["cta"]["text"] = "음악은 플랫폼에서 직접 추가하세요"
+    run = EditingRun(
+        id="edit_legacy_result",
+        status="COMPLETED",
+        stage="COMPLETED",
+        progress=100,
+        recipe=recipe,
+        warnings=[],
+        missing_scene_roles=[],
+        available_options=[],
+    )
+
+    result = service.result(run)
+
+    assert result.recipe is not None
+    assert result.recipe.cta.text == "영상의 포인트를 지금 확인해보세요"
+
+
 def test_editing_run_rejects_more_videos_than_free_tier_limit():
     request_payload = _request().model_dump(mode="json")
     request_payload["videos"] = [

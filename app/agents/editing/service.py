@@ -75,7 +75,8 @@ class EditingAgentService:
 
     def create_run(self, db: Session, request: EditingRunCreateRequest) -> EditingRun:
         self._validate_video_limit(request.videos)
-        self._get_active_database(db, request.selected_shortform)
+        database = self._get_active_database(db, request.selected_shortform)
+        request.videos = _normalize_video_inputs(request.videos, database)
         request_snapshot = request.model_dump(mode="json")
         shortform_context = _find_shortform_context(db, request)
         if shortform_context:
@@ -120,11 +121,15 @@ class EditingAgentService:
         parent_snapshot = dict(parent.request_snapshot or {})
         shortform_context = parent_snapshot.pop("_shortform_context", None)
         snapshot = EditingRunCreateRequest.model_validate(parent_snapshot)
+        database = self._get_active_database(db, snapshot.selected_shortform)
+        normalized_revision_videos = _normalize_video_inputs(request.videos, database)
         parent_identity = {
-            video.video_id: video.shooting_scene_order for video in snapshot.videos
+            video.video_id: (video.shooting_scene_order, video.shooting_element_id)
+            for video in snapshot.videos
         }
         refreshed_identity = {
-            video.video_id: video.shooting_scene_order for video in request.videos
+            video.video_id: (video.shooting_scene_order, video.shooting_element_id)
+            for video in normalized_revision_videos
         }
         existing_changed = any(
             refreshed_identity.get(video_id) != order
@@ -141,9 +146,8 @@ class EditingAgentService:
                 "New videos are accepted only for a source-gap revision.",
                 status_code=409,
             )
-        snapshot.videos = sorted(request.videos, key=lambda video: video.shooting_scene_order)
+        snapshot.videos = normalized_revision_videos
         snapshot.revision = request.revision_action
-        self._get_active_database(db, snapshot.selected_shortform)
         revision_snapshot = snapshot.model_dump(mode="json")
         if shortform_context:
             revision_snapshot["_shortform_context"] = shortform_context
@@ -448,13 +452,26 @@ class EditingAgentService:
         db.commit()
 
     def result(self, run: EditingRun) -> EditingRunResultResponse:
+        warnings = [str(item) for item in (run.warnings or [])]
+        recipe = _recipe_for_result(run.recipe)
+        if run.recipe and recipe is None:
+            warnings.append(
+                "LEGACY_RECIPE_UNAVAILABLE: 이전 편집 레시피는 현재 형식으로 변환할 수 없습니다."
+            )
+        try:
+            publishing = _publishing_for_result(run)
+        except ValidationError:
+            publishing = None
+            warnings.append(
+                "LEGACY_PUBLISHING_UNAVAILABLE: 이전 게시 문구는 현재 형식으로 변환할 수 없습니다."
+            )
         return EditingRunResultResponse(
             run_id=run.id,
             status=EditingRunStatus(run.status),
-            recipe=EditRecipe.model_validate(run.recipe) if run.recipe else None,
+            recipe=recipe,
             render=run.render_result,
-            publishing=_publishing_for_result(run),
-            warnings=[str(item) for item in (run.warnings or [])],
+            publishing=publishing,
+            warnings=warnings,
             missing_scene_roles=[str(item) for item in (run.missing_scene_roles or [])],
             available_options=run.available_options or [],
         )
@@ -567,6 +584,66 @@ def _database_payload(database_record: VideoEditingDBRecord) -> dict[str, Any]:
         # segment/effect context without extending the video-editing DB schema.
         "reference_evidence": database_record.evidence_summary or {},
     }
+
+
+def _normalize_video_inputs(
+    videos: list[Any],
+    database_record: VideoEditingDBRecord,
+) -> list[Any]:
+    metadata = database_record.recommendation_metadata or {}
+    is_information = str(metadata.get("format_type") or "") == "정보형"
+    if not is_information:
+        if any(video.shooting_scene_order is None for video in videos):
+            raise EditingDomainError(
+                "SHOOTING_SCENE_ORDER_REQUIRED",
+                "밈과 챌린지 영상은 shooting_scene_order가 필요합니다.",
+                status_code=422,
+            )
+        return sorted(videos, key=lambda video: int(video.shooting_scene_order))
+
+    elements = (database_record.shooting_guide or {}).get("shooting_elements") or []
+    element_orders = {
+        str(item.get("element_id")): int(item.get("display_order") or 0)
+        for item in elements
+        if item.get("element_id")
+    }
+    if not element_orders:
+        raise EditingDomainError(
+            "INFORMATIONAL_SHOOTING_ELEMENTS_MISSING",
+            "정보형 템플릿에 활성 촬영 요소가 없습니다.",
+            status_code=409,
+        )
+    missing = [video.video_id for video in videos if not video.shooting_element_id]
+    if missing:
+        raise EditingDomainError(
+            "SHOOTING_ELEMENT_ID_REQUIRED",
+            "정보형 영상은 각 업로드에 shooting_element_id가 필요합니다.",
+            status_code=422,
+        )
+    unknown = sorted(
+        {
+            str(video.shooting_element_id)
+            for video in videos
+            if str(video.shooting_element_id) not in element_orders
+        }
+    )
+    if unknown:
+        raise EditingDomainError(
+            "SHOOTING_ELEMENT_ID_INVALID",
+            "선택한 템플릿에 없는 촬영 요소입니다: " + ", ".join(unknown),
+            status_code=422,
+        )
+    ordered = sorted(
+        enumerate(videos),
+        key=lambda pair: (
+            element_orders[str(pair[1].shooting_element_id)],
+            pair[0],
+        ),
+    )
+    return [
+        video.model_copy(update={"shooting_scene_order": index})
+        for index, (_, video) in enumerate(ordered, start=1)
+    ]
 
 
 def _find_shortform_context(
@@ -762,9 +839,12 @@ def _publishing_for_result(run: EditingRun) -> PublishingResult | None:
     project = (run.request_snapshot or {}).get("project") or {}
     subject = project.get("promotion_subject") or {}
     subject_name = str(subject.get("name") or "오늘의 추천")[:40]
+    data["title"] = _strip_legacy_operational_copy(str(data.get("title") or ""))
+    data["caption"] = _strip_legacy_operational_copy(raw_caption)
     if not data.get("title"):
         data["title"] = f"{subject_name}의 매력을 만나보세요"
-        data["caption"] = _strip_legacy_operational_copy(raw_caption) or (
+    if not data.get("caption"):
+        data["caption"] = (
             f"{subject_name}의 모습을 짧은 영상으로 확인해 보세요."
         )
 
@@ -801,6 +881,24 @@ def _publishing_for_result(run: EditingRun) -> PublishingResult | None:
         )
     data["track"] = track
     return PublishingResult.model_validate(data)
+
+
+def _recipe_for_result(raw: dict[str, Any] | None) -> EditRecipe | None:
+    """Adapt persisted pre-contract recipes without leaking validation errors as HTTP 500."""
+
+    if not raw:
+        return None
+    data = dict(raw)
+    cta = dict(data.get("cta") or {})
+    cleaned = _strip_legacy_operational_copy(str(cta.get("text") or ""))
+    if not cleaned:
+        cleaned = "영상의 포인트를 지금 확인해보세요"
+    cta["text"] = cleaned[:80]
+    data["cta"] = cta
+    try:
+        return EditRecipe.model_validate(data)
+    except ValidationError:
+        return None
 
 
 def _strip_legacy_operational_copy(value: str) -> str:

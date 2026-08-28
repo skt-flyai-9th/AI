@@ -23,12 +23,11 @@ class VideoContextBuilder(Protocol):
 
 
 class FFmpegVideoContextBuilder:
-    """Extract frame-accurate evidence once, then let the VLM choose its stride.
+    """Extract every source-frame timestamp and image once on the CPU host.
 
-    MULTI_CUT analysis consumes every frame before source trimming. ONE_TAKE first
-    consumes every third frame for global context, then consumes every frame for
-    the final editing decision. Extracting the source only once keeps that quality
-    policy feasible on the CPU-only AI host.
+    Every extracted frame participates in CPU change detection. The vision model
+    receives bounded transition windows plus uniform temporal coverage so that a
+    short transition is not discarded merely because it falls between fixed samples.
     """
 
     def __init__(self) -> None:
@@ -45,7 +44,7 @@ class FFmpegVideoContextBuilder:
     def build(self, videos: list[EditingVideoInput]) -> list[VideoContext]:
         return [
             self._build_one(video)
-            for video in sorted(videos, key=lambda item: item.shooting_scene_order)
+            for video in sorted(videos, key=lambda item: item.shooting_scene_order or 0)
         ]
 
     def _build_one(self, video: EditingVideoInput) -> VideoContext:
@@ -81,7 +80,8 @@ class FFmpegVideoContextBuilder:
             raise VideoContextError(f"No frames could be extracted for video_id={video.video_id}.")
         return VideoContext(
             video_id=video.video_id,
-            shooting_scene_order=video.shooting_scene_order,
+            shooting_scene_order=int(video.shooting_scene_order or 1),
+            shooting_element_id=video.shooting_element_id,
             duration_ms=duration_ms,
             width=int(metadata["width"]),
             height=int(metadata["height"]),

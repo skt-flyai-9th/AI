@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import boto3
 import httpx
@@ -14,6 +16,10 @@ class SourceAssetDownloadError(RuntimeError):
 
 
 class SourceAssetTooLargeError(SourceAssetDownloadError):
+    pass
+
+
+class SourceAssetUnsafeURLError(SourceAssetDownloadError):
     pass
 
 
@@ -110,16 +116,57 @@ def _download_http(
     timeout_seconds: int,
 ) -> None:
     timeout = httpx.Timeout(timeout_seconds)
-    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-        with client.stream("GET", url) as response:
-            response.raise_for_status()
-            declared = int(response.headers.get("content-length") or 0)
-            if declared > max_bytes:
-                raise SourceAssetTooLargeError("Source asset exceeds the download limit.")
-            size = 0
-            with target.open("wb") as output:
-                for chunk in response.iter_bytes():
-                    size += len(chunk)
-                    if size > max_bytes:
-                        raise SourceAssetTooLargeError("Source asset exceeds the download limit.")
-                    output.write(chunk)
+    current_url = url
+    with httpx.Client(timeout=timeout, follow_redirects=False) as client:
+        for _ in range(6):
+            _assert_public_http_url(current_url)
+            with client.stream("GET", current_url) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise SourceAssetDownloadError("Source asset redirect was invalid.")
+                    current_url = urljoin(current_url, location)
+                    continue
+                response.raise_for_status()
+                declared = int(response.headers.get("content-length") or 0)
+                if declared > max_bytes:
+                    raise SourceAssetTooLargeError("Source asset exceeds the download limit.")
+                size = 0
+                with target.open("wb") as output:
+                    for chunk in response.iter_bytes():
+                        size += len(chunk)
+                        if size > max_bytes:
+                            raise SourceAssetTooLargeError(
+                                "Source asset exceeds the download limit."
+                            )
+                        output.write(chunk)
+                return
+    raise SourceAssetDownloadError("Source asset exceeded the redirect limit.")
+
+
+def _assert_public_http_url(url: str) -> None:
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if parsed.scheme not in {"http", "https"} or not hostname:
+        raise SourceAssetUnsafeURLError("Source asset URL must be public HTTP(S).")
+    if parsed.username is not None or parsed.password is not None:
+        raise SourceAssetUnsafeURLError("Source asset URL credentials are forbidden.")
+    try:
+        addresses = {
+            item[4][0]
+            for item in socket.getaddrinfo(
+                hostname,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                type=socket.SOCK_STREAM,
+            )
+        }
+    except socket.gaierror as exc:
+        raise SourceAssetUnsafeURLError("Source asset host could not be resolved.") from exc
+    if not addresses:
+        raise SourceAssetUnsafeURLError("Source asset host could not be resolved.")
+    for value in addresses:
+        address = ipaddress.ip_address(value)
+        if not address.is_global:
+            raise SourceAssetUnsafeURLError(
+                "Private, loopback, link-local, and reserved source hosts are forbidden."
+            )

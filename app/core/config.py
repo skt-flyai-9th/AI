@@ -114,6 +114,7 @@ class Settings(BaseSettings):
         default=268_435_456, ge=1_048_576, le=10_737_418_240
     )
     renderer_download_timeout_seconds: int = Field(default=300, ge=10, le=3600)
+    renderer_file_url_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
     editing_reals_engine_path: Path = Path("reals-video-engine")
 
     @property

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import base64
+from io import BytesIO
 import sys
 import math
 from pathlib import Path
 
 import pytest
+from PIL import Image
 from pydantic import ValidationError
 
 from app.agents.editing.llm import (
@@ -153,6 +156,23 @@ def test_frame_sampling_caps_each_video_and_total_while_retaining_endpoints():
         assert [frame.frame_index for frame in frames] == sorted(
             frame.frame_index for frame in frames
         )
+
+
+def test_frame_sampling_prioritizes_a_short_scene_change():
+    def encoded_frame(value: int) -> str:
+        stream = BytesIO()
+        Image.new("L", (16, 16), color=value).save(stream, format="JPEG")
+        return "data:image/jpeg;base64," + base64.b64encode(stream.getvalue()).decode()
+
+    context = _context("cut", 1, count=20)
+    for index, frame in enumerate(context.keyframes):
+        frame.image_url = encoded_frame(0 if index < 10 else 255)
+
+    sampled = _sample_video_frames([context], max_per_video=6, max_total=6)["cut"]
+    indices = {frame.frame_index for frame in sampled}
+
+    assert {9, 10}.issubset(indices)
+    assert {0, 19}.issubset(indices)
 
 
 def test_frame_analysis_reports_progress_for_each_bounded_batch():

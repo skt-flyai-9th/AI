@@ -4,6 +4,7 @@ import pytest
 
 from app.services import source_assets
 from app.services.source_assets import (
+    SourceAssetUnsafeURLError,
     SourceAssetTooLargeError,
     download_source_asset,
     parse_s3_object_url,
@@ -78,3 +79,13 @@ def test_private_s3_asset_enforces_download_limit(tmp_path, monkeypatch):
 
     assert not target.exists()
     assert body.closed is True
+
+
+def test_http_source_rejects_ec2_metadata_address(tmp_path):
+    with pytest.raises(SourceAssetUnsafeURLError):
+        download_source_asset(
+            "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+            tmp_path / "metadata",
+            max_bytes=1024,
+            timeout_seconds=1,
+        )

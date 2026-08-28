@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
+import json
 
 from app.db.session import SessionLocal
 from app.models.challenge import Challenge
 from app.models.video_editing_db_record import VideoEditingDBRecord
+from app.services.pipeline import export_trendcluster
 
 
 def seed_challenge():
@@ -68,6 +70,44 @@ def test_challenge_exposes_active_editing_template_reference(client, auth_header
     item = response.json()["results"][0]
     assert item["editing_template_id"] == "gt_bad_challenge"
     assert item["editing_template_version"] == 3
+
+
+def test_scheduled_export_preserves_card_metadata_and_template_reference():
+    with SessionLocal() as db:
+        db.add(
+            Challenge(
+                id="cafe_recommendation_reels",
+                automatic_name="카페 추천 리뷰 릴스",
+                automatic_rank=1,
+                automatic_score=90,
+                category="food",
+                automatic_representative_youtube_url="https://example.com/cafe.mp4",
+                automatic_guide_youtube_url="https://example.com/cafe.mp4",
+                active=True,
+            )
+        )
+        db.add(
+            VideoEditingDBRecord(
+                template_id="gt_cafe_recommendation",
+                version=4,
+                status="ACTIVE",
+                name="카페 추천",
+                recommendation_metadata={"format_type": "정보형"},
+                shooting_guide={"shooting_elements": []},
+                trend_ids=["cafe_recommendation_reels"],
+            )
+        )
+        db.commit()
+
+        path = export_trendcluster(db)
+        item = json.loads(path.read_text(encoding="utf-8"))["results"][0]
+
+    assert item["category"] == "food"
+    assert item["format_type"] == "정보형"
+    assert item["requires_face"] is False
+    assert item["reference_cut_review"] is None
+    assert item["editing_template_id"] == "gt_cafe_recommendation"
+    assert item["editing_template_version"] == 4
 
 
 def test_clear_override_with_null(client, auth_headers):

@@ -4,15 +4,17 @@ import hashlib
 import math
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Callable
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 from app.agents.editing.reals import RealsRenderJobRequest
 from app.core.config import Settings, get_settings
+from app.core.security import sign_renderer_file
 from app.services.source_assets import (
     SourceAssetDownloadError,
     SourceAssetTooLargeError,
@@ -141,10 +143,12 @@ class RealsRendererService:
             return payload
 
         rendered = result.render_manifest.output_file
+        expires = int(time.time()) + self.settings.renderer_file_url_ttl_seconds
+        signature = sign_renderer_file(output_name, expires)
         payload["render"] = {
             "output_video_url": (
                 f"{self.settings.renderer_public_base_url.rstrip('/')}/files/"
-                f"{quote(output_name)}"
+                f"{quote(output_name)}?{urlencode({'expires': expires, 'signature': signature})}"
             ),
             "resolution": f"{rendered.width}x{rendered.height}",
             "duration_sec": rendered.duration_ms / 1000,

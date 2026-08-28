@@ -269,11 +269,15 @@ Content-Type: application/json
     {
       "video_id": "task_1",
       "footage_url": "https://example.com/task-1.mp4",
-      "shooting_scene_order": 1
+      "shooting_element_id": "ELEMENT_01"
     }
   ]
 }
 ```
+
+정보형 숏폼은 촬영 가이드의 `shooting_element_id`를 전달한다. AI 서버가 요소 표시
+순서를 내부 편집 순서로 변환하며, 한 요소에 여러 영상을 연결할 수 있다. 밈·챌린지는
+기존처럼 `shooting_scene_order`를 사용한다.
 
 생성 응답은 `202 Accepted`입니다. 백엔드는 상태 API를 polling하고 `COMPLETED`가 되면 결과 API를 조회합니다.
 

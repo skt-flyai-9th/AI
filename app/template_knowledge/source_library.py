@@ -13,9 +13,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.video_editing_db_record import VideoEditingDBRecord
+from app.models.trade_area_db_record import TradeAreaDBRecord
 from app.models.template_source import TemplateSourceBundle, TemplateSourceRecord
 from app.schemas.template_knowledge import (
     VideoEditingDBContent,
+    TradeAreaDBContent,
     TemplateSourceBundleRead,
     TemplateSourceRecordRead,
     TemplateSourceStatus,
@@ -211,6 +213,15 @@ def import_provided_template_library(
     trade_area_eligible = _trade_area_service_eligible(
         payloads[TemplateType.TRADE_AREA]
     )
+    trade_area_result = _import_trade_area_db(
+        db,
+        payloads[TemplateType.TRADE_AREA],
+        bundles[TemplateType.TRADE_AREA],
+        service_eligible=trade_area_eligible,
+        validator=validator or TemplateCandidateValidator(),
+    )
+    imported.extend(trade_area_result["created"])
+    skipped.extend(trade_area_result["skipped"])
     return {
         "created": imported,
         "skipped": skipped,
@@ -221,6 +232,7 @@ def import_provided_template_library(
         "trade_area": {
             "status": bundles[TemplateType.TRADE_AREA].status,
             "service_eligible": trade_area_eligible,
+            "database": trade_area_result,
             "reason": (
                 "The provided trade-area DB is provisionally approved pending the next research cycle."
                 if trade_area_eligible
@@ -228,6 +240,134 @@ def import_provided_template_library(
             ),
         },
     }
+
+
+def _import_trade_area_db(
+    db: Session,
+    payload: dict[str, Any],
+    bundle: TemplateSourceBundle,
+    *,
+    service_eligible: bool,
+    validator: TemplateCandidateValidator,
+) -> dict[str, list[str]]:
+    marker = "TRADE_AREA:trade_area_seoul:v1"
+    if not service_eligible:
+        return {"created": [], "skipped": [f"{marker}:SOURCE_NOT_APPROVED"]}
+    existing = db.get(TradeAreaDBRecord, ("trade_area_seoul", 1))
+    if existing is not None:
+        return {"created": [], "skipped": [marker]}
+
+    category_names = list(
+        dict.fromkeys(
+            str(item.get("name") or "").strip()
+            for item in payload["datasets"]["categories"]["records"]
+            if str(item.get("name") or "").strip()
+        )
+    )[:30]
+    area_types = list(
+        dict.fromkeys(
+            str(item.get("area_type") or "").strip()
+            for item in payload["datasets"]["regions"]["records"]
+            if str(item.get("area_type") or "").strip()
+        )
+    )[:30]
+    content = TradeAreaDBContent.model_validate(
+        {
+            "name": "서울 상권분석DB",
+            "description": (
+                "사용자가 제공한 서울 공식 골목상권 데이터와 콘텐츠 지역·업종 매핑을 "
+                "근거로 집계 신호만 해석하는 초기 실행 버전입니다."
+            ),
+            "industry_categories": category_names,
+            "area_types": area_types or ["기타"],
+            "analysis_dimensions": [
+                {
+                    "key": "visitor_flow",
+                    "description": "시간대별 유동·방문 신호를 함께 해석합니다.",
+                    "evidence_keys": ["population_by_hour", "visits_by_hour"],
+                },
+                {
+                    "key": "customer_mix",
+                    "description": "집계된 연령·방문 목적 분포를 해석합니다.",
+                    "evidence_keys": ["age_distribution", "visit_purpose_distribution"],
+                },
+                {
+                    "key": "market_fit",
+                    "description": "업종 적합도와 경쟁·매출 집계 신호를 해석합니다.",
+                    "evidence_keys": ["fit_score", "competition_density", "estimated_sales"],
+                },
+            ],
+            "inference_rules": [
+                {
+                    "rule_id": "agreeing_flow_signals",
+                    "description": "유동과 방문 신호가 함께 높을 때만 핵심 시간대로 판단합니다.",
+                    "when": {
+                        "evidence_keys": ["population_by_hour", "visits_by_hour"],
+                        "operator": "AGREEING_SIGNALS",
+                        "minimum_sample_size": 30,
+                    },
+                    "outputs": {
+                        "characteristic_candidates": ["시간대 집중형", "생활 유동형"],
+                        "include_top_age_ranges": 2,
+                        "include_peak_time": True,
+                        "caution": "충돌하거나 표본이 부족한 신호는 불확실성으로 표시합니다.",
+                    },
+                    "minimum_confidence": 0.65,
+                }
+            ],
+            "recommendation_hints": [
+                "집계 근거가 일치하는 특성만 추천에 사용합니다.",
+                "공식 상권 코드와 콘텐츠 지역 매핑을 함께 제시합니다.",
+                "표본 부족과 상충 신호는 반드시 주의사항으로 반환합니다.",
+            ],
+            "prompt_context": (
+                "개인의 민감 속성을 추론하지 말고 제공된 집계 상권 신호만 사용하세요. "
+                "공식 골목상권·업종·콘텐츠 지역 매핑을 근거 ID와 함께 해석하세요."
+            ),
+            "policy": {
+                "aggregate_only": True,
+                "no_individual_attribute_assertions": True,
+                "minimum_sample_size": 30,
+                "conflicting_signals": "REPORT_UNCERTAINTY",
+                "sensitive_attribute_inference": "FORBIDDEN",
+            },
+        }
+    )
+    errors = validator.validate(
+        TemplateType.TRADE_AREA,
+        content.model_dump(mode="json"),
+        is_initial_version=True,
+    )
+    if errors:
+        raise TemplateSourceImportError(
+            f"Provided trade-area DB failed initial activation validation: {errors}"
+        )
+    db.add(
+        TradeAreaDBRecord(
+            template_id="trade_area_seoul",
+            version=1,
+            status="ACTIVE",
+            name=content.name,
+            description=content.description,
+            industry_categories=content.industry_categories,
+            area_types=content.area_types,
+            analysis_dimensions=[item.model_dump(mode="json") for item in content.analysis_dimensions],
+            inference_rules=[item.model_dump(mode="json") for item in content.inference_rules],
+            recommendation_hints=content.recommendation_hints,
+            prompt_context=content.prompt_context,
+            policy=content.policy.model_dump(mode="json"),
+            evidence_summary={
+                "provided_source": {
+                    "bundle_id": bundle.id,
+                    "source_file": bundle.source_filename,
+                    "source_sha256": bundle.source_sha256,
+                }
+            },
+            activated_at=datetime.now(timezone.utc),
+        )
+    )
+    db.commit()
+    return {"created": [marker], "skipped": []}
 
 
 def _load_source_payload(template_type: TemplateType) -> dict[str, Any]:
@@ -437,6 +577,64 @@ def _import_video_editing_db(
             evidence_summary["shooting_task_intervals"] = interval_evidence
             existing.evidence_summary = evidence_summary
             db.commit()
+            active = db.scalar(
+                select(VideoEditingDBRecord)
+                .where(
+                    VideoEditingDBRecord.template_id == template_id,
+                    VideoEditingDBRecord.status == "ACTIVE",
+                )
+                .order_by(VideoEditingDBRecord.version.desc())
+            )
+            if (
+                active is not None
+                and active.version > source_version
+                and not _has_required_editing_contract(active, content)
+            ):
+                latest_version = db.scalar(
+                    select(VideoEditingDBRecord.version)
+                    .where(VideoEditingDBRecord.template_id == template_id)
+                    .order_by(VideoEditingDBRecord.version.desc())
+                    .limit(1)
+                )
+                repaired_version = int(latest_version or active.version) + 1
+                for current in db.scalars(
+                    select(VideoEditingDBRecord).where(
+                        VideoEditingDBRecord.template_id == template_id,
+                        VideoEditingDBRecord.status == "ACTIVE",
+                    )
+                ):
+                    current.status = "ARCHIVED"
+                db.add(
+                    VideoEditingDBRecord(
+                        template_id=template_id,
+                        version=repaired_version,
+                        status="ACTIVE",
+                        name=content.name,
+                        recommendation_title=content.recommendation_title,
+                        recommendation_concept=content.recommendation_concept,
+                        recommendation_metadata=(
+                            content.recommendation_metadata.model_dump(mode="json")
+                        ),
+                        shooting_guide=content.shooting_guide.model_dump(mode="json"),
+                        editing_rules=content.editing_rules.model_dump(mode="json"),
+                        trend_ids=content.trend_ids,
+                        evidence_summary={
+                            "provided_source": evidence_summary.get("provided_source", {}),
+                            "shooting_task_intervals": interval_evidence,
+                            "contract_repair": {
+                                "repaired_from_version": active.version,
+                                "authoritative_source_version": source_version,
+                                "reason": "ACTIVE_VERSION_MISSING_REQUIRED_FORMAT_CONTRACT",
+                            },
+                        },
+                        activated_at=datetime.now(timezone.utc),
+                    )
+                )
+                db.commit()
+                created.append(
+                    f"VIDEO_EDITING:{template_id}:v{repaired_version}:CONTRACT_REPAIR"
+                )
+                continue
             skipped.append(marker)
             continue
         for current in db.scalars(
@@ -477,6 +675,22 @@ def _import_video_editing_db(
         created.append(marker)
     db.commit()
     return {"created": created, "skipped": skipped}
+
+
+def _has_required_editing_contract(
+    record: VideoEditingDBRecord,
+    authoritative: VideoEditingDBContent,
+) -> bool:
+    expected_format = authoritative.recommendation_metadata.format_type
+    actual_format = str((record.recommendation_metadata or {}).get("format_type") or "")
+    if actual_format != expected_format:
+        return False
+    if expected_format != "정보형":
+        return True
+    elements = (record.shooting_guide or {}).get("shooting_elements") or []
+    return 1 <= len(elements) <= 5 and all(
+        len(str(item.get("instruction") or "")) <= 50 for item in elements
+    )
 
 
 def _editing_content(

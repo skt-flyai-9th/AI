@@ -767,8 +767,8 @@ class TemplateKnowledgeService:
             industries = {str(value).casefold() for value in item.industry_categories}
             areas = {str(value).casefold() for value in item.area_types}
             return (
-                2 if industry in industries else 1 if "all" in industries else 0,
                 2 if area_type and area_type in areas else 1 if "all" in areas else 0,
+                2 if industry in industries else 1 if "all" in industries else 0,
             )
 
         compatible = [item for item in templates if score(item) > (0, 0)]

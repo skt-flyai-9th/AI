@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from app.agents.challenge_ranking.trendcluster import get_video_format_metadata
+from app.agents.challenge_ranking.trendcluster import (
+    get_reference_cut_review,
+    get_video_format_metadata,
+)
 from app.models.challenge import Challenge
 from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.schemas.challenge import ChallengeRead, ChallengeUpdate, OverrideImportItem
@@ -64,6 +68,7 @@ def to_read(
         representative_youtube_url=representative,
         guide_youtube_url=guide,
         **format_metadata,
+        reference_cut_review=get_reference_cut_review(challenge.id),
         editing_template_id=template_ref[0] if template_ref else None,
         editing_template_version=template_ref[1] if template_ref else None,
         automatic_rank=challenge.automatic_rank,
@@ -79,6 +84,33 @@ def to_read(
         guide_video_overridden=challenge.guide_video_overridden,
         updated_at=challenge.updated_at,
     )
+
+
+def to_export_record(
+    challenge: Challenge,
+    template_ref: tuple[str, int] | None = None,
+) -> dict[str, Any]:
+    """Serialize trendcluster from the same normalized contract as the API."""
+
+    item = to_read(challenge, template_ref).model_dump(mode="json")
+    return {
+        key: item[key]
+        for key in (
+            "id",
+            "rank",
+            "name",
+            "category",
+            "representative_youtube_url",
+            "guide_youtube_url",
+            "format_type",
+            "expected_duration_sec",
+            "shooting_difficulty",
+            "requires_face",
+            "reference_cut_review",
+            "editing_template_id",
+            "editing_template_version",
+        )
+    }
 
 
 def list_challenges(db: Session, *, limit: int, offset: int, include_inactive: bool) -> list[Challenge]:
