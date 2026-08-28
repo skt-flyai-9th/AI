@@ -8,11 +8,11 @@
 - `shortform`: 대화로 프로젝트 brief를 확정하고 호환 영상편집DB 버전 1개 추천
 - `editing`: 촬영 영상 분석, EditRecipe 검증·수정, REALS Renderer 실행
 
-OpenAI를 사용하는 `shortform`, `editing` Agent의 기본 모델은 `gpt-4.1-mini`다.
+OpenAI를 사용하는 `shortform`, `editing` Agent의 기본 모델은 `gpt-5.4-mini`다.
 
 `Database Knowledge Manager`는 Agent와 별도의 운영 컴포넌트로, 상권분석DB와
 영상편집DB의 후보·검증·승인·활성화 수명주기를 관리한다. 새 Agent는 실제 API 계약과
 실행 모델이 확정된 뒤 추가한다. Database Knowledge Manager를 포함한 모든 GPT 기반
-컴포넌트도 기본적으로 `gpt-4.1-mini`를 사용한다.
+컴포넌트도 기본적으로 `gpt-5.4-mini`를 사용한다.
 
 등록 정보는 `app/agents/registry.py`, 확장 규칙은 `docs/ADDING_AN_AGENT.md`를 참고한다.

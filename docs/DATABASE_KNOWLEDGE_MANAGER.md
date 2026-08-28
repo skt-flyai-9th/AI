@@ -30,7 +30,7 @@ evidence
 - 최소 표본과 불확실성 정책 명시
 - 중복 차원·규칙 ID 금지
 
-GPT-4.1 mini는 신규 상권 근거와 현재 상권분석DB를 비교해 다음 버전 후보를 만든다. ACTIVE DB 버전을 실제 근거에 적용한 결과는 `trade_area_analyses`에 근거 스냅샷과 함께 저장된다.
+GPT-5.4 mini는 신규 상권 근거와 현재 상권분석DB를 비교해 다음 버전 후보를 만든다. ACTIVE DB 버전을 실제 근거에 적용한 결과는 `trade_area_analyses`에 근거 스냅샷과 함께 저장된다.
 
 ## 영상편집DB
 
@@ -41,7 +41,7 @@ Challenge Research / trendcluster
   → representative public YouTube URL
   → Gemini native video understanding
   → persisted timestamped editing insight
-  → GPT-4.1 mini video-editing DB candidate
+  → GPT-5.4 mini video-editing DB candidate
   → REALS registry/product validation
 ```
 
@@ -92,7 +92,7 @@ python -m app.cli analyze-trade-area-db evidence.json --database-id trade_area_o
 
 초기 `exports/trendcluster.json`은 영상편집DB의 다섯 숏폼과 원본 순위 1~5를 그대로 사용한다. 대표영상과 가이드영상은 같은 DB URL로 맞췄으며, 동그리오 2종은 `https://www.youtube.com/shorts/6duJ3WOzeuQ`를 공유하되 챌린지(밈)와 매장 홍보(정보형) 템플릿을 분리한다.
 
-AI 서버 내부 운영 API도 `/api/v1/database-knowledge` 아래에 준비되어 있다. Gemini/GPT-4.1 mini를 호출하는 생성·분석 요청은 `202 Accepted`와 `run_id`를 반환하고 Celery worker가 실행한다. `/runs/{run_id}`를 polling한 뒤 `/runs/{run_id}/result`에서 결과를 조회한다.
+AI 서버 내부 운영 API도 `/api/v1/database-knowledge` 아래에 준비되어 있다. Gemini/GPT-5.4 mini를 호출하는 생성·분석 요청은 `202 Accepted`와 `run_id`를 반환하고 Celery worker가 실행한다. `/runs/{run_id}`를 polling한 뒤 `/runs/{run_id}/result`에서 결과를 조회한다.
 
 | Method | Endpoint | 역할 |
 |---|---|---|

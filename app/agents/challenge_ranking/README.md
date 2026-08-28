@@ -3,7 +3,7 @@
 Instagram Reels 스타일의 국내 챌린지를 자동 발견하고 Top 100을 산출한다.
 
 이 Agent의 군집화·오탐 제거는 Gemini를 사용하며 GPT를 호출하지 않는다. GPT를 사용하는
-다른 Agent의 공통 기본 모델은 `gpt-4.1-mini`다.
+다른 Agent의 공통 기본 모델은 `gpt-5.4-mini`다.
 
 공개 Agent 경계:
 

@@ -11,6 +11,6 @@ def test_all_gpt_components_default_to_gpt_4_1_mini(monkeypatch):
 
     settings = Settings(_env_file=None)
 
-    assert settings.shortform_openai_model == "gpt-4.1-mini"
-    assert settings.database_openai_model == "gpt-4.1-mini"
-    assert settings.editing_openai_model == "gpt-4.1-mini"
+    assert settings.shortform_openai_model == "gpt-5.4-mini"
+    assert settings.database_openai_model == "gpt-5.4-mini"
+    assert settings.editing_openai_model == "gpt-5.4-mini"
