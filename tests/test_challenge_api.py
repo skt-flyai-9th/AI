@@ -93,7 +93,7 @@ def test_scheduled_export_preserves_card_metadata_and_template_reference():
                 status="ACTIVE",
                 name="카페 추천",
                 recommendation_metadata={"format_type": "정보형"},
-                shooting_guide={"shooting_elements": []},
+                shooting_guide={"scenes": [], "tasks": []},
                 trend_ids=["cafe_recommendation_reels"],
             )
         )

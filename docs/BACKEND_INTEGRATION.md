@@ -292,16 +292,15 @@ Content-Type: application/json
     {
       "video_id": "take_501",
       "footage_url": "https://cdn.example/takes/501.mp4",
-      "shooting_element_id": "ELEMENT_01"
+      "shooting_scene_order": 1
     }
   ],
   "revision": null
 }
 ```
 
-정보형 숏폼은 촬영 가이드에서 받은 `shooting_element_id`를 그대로 보낸다. 같은 요소를
-여러 영상이 참조할 수 있으며 AI 서버가 요소 순서와 업로드 순서를 이용해 고유한 내부
-`shooting_scene_order`를 생성한다. 밈·챌린지는 `shooting_scene_order`가 필수다.
+모든 숏폼은 촬영 가이드의 장면 순서와 같은 `shooting_scene_order`를 보낸다. 촬영 영상
+하나는 촬영 컷 하나와 대응하며 중복되지 않는 순서를 가져야 한다.
 
 응답은 `202 Accepted`이며 `run_id`, `status=QUEUED`, `task_id`를 반환한다. 이후 다음 상태 API를 polling한다.
 
@@ -331,8 +330,8 @@ GET /api/v1/editing-runs/{run_id}/result
 ```
 
 자연어 수정은 기존 run을 변경하지 않고 새 immutable child run을 만든다. 영상 URL은
-입력 영상 서명 만료가 가능하므로 수정 요청마다 같은 `video_id`와 촬영 요소 또는 촬영
-순서에 대한 새 URL을 다시 전달해야 한다. `SOURCE_GAP` run에서는 기존 영상을 보존하면서
+입력 영상 서명 만료가 가능하므로 수정 요청마다 같은 `video_id`와 촬영 순서에 대한 새
+URL을 다시 전달해야 한다. `SOURCE_GAP` run에서는 기존 영상을 보존하면서
 새 영상을 추가할 수 있다.
 
 ```http
@@ -345,7 +344,7 @@ Content-Type: application/json
     {
       "video_id":"take_501",
       "footage_url":"https://cdn.example/takes/501.mp4?refreshed-signature",
-      "shooting_element_id":"ELEMENT_01"
+      "shooting_scene_order":1
     }
   ]
 }

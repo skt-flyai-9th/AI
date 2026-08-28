@@ -381,31 +381,12 @@ def test_information_editing_preserves_scene_order():
         assert [item["shooting_scene_order"] for item in run.request_snapshot["videos"]] == [1, 2]
 
 
-def test_legacy_information_element_inputs_are_converted_at_boundary():
+def test_shooting_element_input_is_rejected():
     request_payload = _request().model_dump(mode="json")
-    request_payload["videos"] = [
-        {
-            "video_id": "take_process",
-            "footage_url": "https://cdn.example/process.mp4",
-            "shooting_element_id": "ELEMENT_01",
-        },
-        {
-            "video_id": "take_menu",
-            "footage_url": "https://cdn.example/menu.mp4",
-            "shooting_element_id": "ELEMENT_02",
-        },
-    ]
-    service = EditingAgentService(
-        llm=RepairingFakeLLM(),
-        video_context_builder=FakeVideoContextBuilder(),
-        renderer=FakeRenderer(),
-    )
-    with SessionLocal() as db:
-        _seed_video_editing_db(db)
-        run = service.create_run(db, EditingRunCreateRequest.model_validate(request_payload))
+    request_payload["videos"][0]["shooting_element_id"] = "ELEMENT_01"
 
-    assert [item["shooting_scene_order"] for item in run.request_snapshot["videos"]] == [1, 2]
-    assert all(item["shooting_element_id"] is None for item in run.request_snapshot["videos"])
+    with pytest.raises(ValueError, match="shooting_element_id"):
+        EditingRunCreateRequest.model_validate(request_payload)
 
 
 def test_legacy_recipe_result_does_not_raise_for_operational_cta():

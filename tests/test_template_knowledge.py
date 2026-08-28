@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
@@ -715,3 +718,20 @@ def test_video_editing_schemas_allow_physical_edit_cuts_beyond_six():
     insight_schema = EditingVideoInsight.model_json_schema()
     assert insight_schema["properties"]["shot_sequence"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
     assert insight_schema["properties"]["segments"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
+
+
+def test_video_editing_source_contains_no_shooting_element_data():
+    source_path = (
+        Path(__file__).parents[1]
+        / "app"
+        / "template_knowledge"
+        / "sources"
+        / "video_editing.json"
+    )
+    payload = json.loads(source_path.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload, ensure_ascii=False)
+
+    assert "03A_SHOOTING_ELEMENTS" not in payload["datasets"]
+    assert "shooting_element" not in serialized
+    assert "ELEMENT_01" not in serialized
+    assert "촬영 요소" not in serialized

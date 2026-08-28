@@ -616,17 +616,6 @@ def _database_payload(database_record: VideoEditingDBRecord) -> dict[str, Any]:
 def _normalize_video_inputs(
     videos: list[Any],
 ) -> list[Any]:
-    # Rolling-deploy compatibility: the previous backend sent already ordered
-    # information-form uploads with only shooting_element_id. Convert that
-    # legacy envelope once at the boundary; the planner itself remains purely
-    # scene-order/cut based. New clients must send shooting_scene_order.
-    if videos and all(
-        video.shooting_scene_order is None and video.shooting_element_id for video in videos
-    ):
-        return [
-            video.model_copy(update={"shooting_scene_order": index, "shooting_element_id": None})
-            for index, video in enumerate(videos, start=1)
-        ]
     if any(video.shooting_scene_order is None for video in videos):
         raise EditingDomainError(
             "SHOOTING_SCENE_ORDER_REQUIRED",

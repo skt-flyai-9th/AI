@@ -442,7 +442,6 @@ def test_information_shooting_guide_returns_scene_linked_capture_cuts(client, au
     assert len(payload["scenes"]) == 6
     assert len(payload["tasks"]) == 6
     assert [item["scene_index"] for item in payload["tasks"]] == list(range(6))
-    assert "shooting_elements" not in payload
 
 
 def test_openapi_preserves_live_legacy_backend_contract(client):
