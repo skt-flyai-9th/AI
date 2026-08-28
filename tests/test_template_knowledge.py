@@ -152,12 +152,15 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
         )
         assert imported_editing is not None
         assert imported_editing.version == 4
-        assert len(imported_editing.shooting_guide["tasks"]) == 3
-        assert len(imported_editing.shooting_guide["scenes"]) == 3
+        assert len(imported_editing.shooting_guide["tasks"]) == 6
+        assert len(imported_editing.shooting_guide["scenes"]) == 6
         assert len(imported_editing.evidence_summary["reference_segments"]) == 17
         assert imported_editing.evidence_summary["shooting_task_intervals"]["source_rows"] == [
             5,
+            5,
             6,
+            6,
+            7,
             7,
         ]
         first_task = imported_editing.shooting_guide["tasks"][0]
@@ -176,8 +179,8 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
             for record in db.scalars(select(VideoEditingDBRecord))
         }
         assert task_counts == {
-            "gt_jujutsu_transition": 3,
-            "gt_otsukare_summer": 5,
+            "gt_jujutsu_transition": 6,
+            "gt_otsukare_summer": 7,
             "gt_cafe_recommendation": 23,
         }
         information_record = db.get(VideoEditingDBRecord, ("gt_cafe_recommendation", 2))
@@ -215,7 +218,7 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
         db.refresh(information_record)
         assert second["created"] == []
         assert len(second["skipped"]) == 6
-        assert len(imported_editing.shooting_guide["tasks"]) == 3
+        assert len(imported_editing.shooting_guide["tasks"]) == 6
         assert information_record.recommendation_metadata["format_type"] == "정보형"
         assert len(information_record.shooting_guide["shooting_elements"]) == 4
 
@@ -252,6 +255,47 @@ def test_bootstrap_repairs_a_newer_active_version_with_missing_format_contract()
         assert len(repaired.shooting_guide["shooting_elements"]) == 4
         assert db.get(VideoEditingDBRecord, ("gt_cafe_recommendation", 3)).status == "ARCHIVED"
         assert any("CONTRACT_REPAIR" in item for item in result["created"])
+
+
+def test_bootstrap_repairs_newer_active_version_with_stale_shooting_cuts():
+    service, _ = _service()
+    with SessionLocal() as db:
+        seed_template_library(db, service=service)
+        source = db.get(VideoEditingDBRecord, ("gt_jujutsu_transition", 4))
+        assert source is not None
+        source.status = "ARCHIVED"
+        stale_guide = dict(source.shooting_guide)
+        stale_guide["tasks"] = list(stale_guide["tasks"][:3])
+        stale_guide["scenes"] = list(stale_guide["scenes"][:3])
+        db.add(
+            VideoEditingDBRecord(
+                template_id="gt_jujutsu_transition",
+                version=5,
+                status="ACTIVE",
+                name=source.name,
+                recommendation_title=source.recommendation_title,
+                recommendation_concept=source.recommendation_concept,
+                recommendation_metadata=source.recommendation_metadata,
+                shooting_guide=stale_guide,
+                editing_rules=source.editing_rules,
+                trend_ids=source.trend_ids,
+            )
+        )
+        db.commit()
+
+        result = seed_template_library(db, service=service)
+
+        repaired = db.get(VideoEditingDBRecord, ("gt_jujutsu_transition", 6))
+        assert repaired is not None
+        assert repaired.status == "ACTIVE"
+        assert len(repaired.shooting_guide["tasks"]) == 6
+        assert len(repaired.shooting_guide["scenes"]) == 6
+        assert db.get(VideoEditingDBRecord, ("gt_jujutsu_transition", 5)).status == "ARCHIVED"
+        assert any("CONTRACT_REPAIR" in item for item in result["created"])
+
+        second = seed_template_library(db, service=service)
+        assert second["created"] == []
+        assert db.get(VideoEditingDBRecord, ("gt_jujutsu_transition", 7)) is None
 
 
 def test_candidate_lifecycle_creates_new_version_and_archives_base():
