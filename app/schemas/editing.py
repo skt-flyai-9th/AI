@@ -66,6 +66,8 @@ class EditingVideoInput(BaseModel):
     video_id: str
     footage_url: str
     shooting_scene_order: int | None = Field(default=None, ge=1)
+    # Deprecated rolling-deploy input only. The service converts a complete
+    # legacy list to shooting_scene_order and never forwards this to planning.
     shooting_element_id: str | None = Field(
         default=None,
         pattern=r"^ELEMENT_[0-9]{2}$",

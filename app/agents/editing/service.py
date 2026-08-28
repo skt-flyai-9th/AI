@@ -76,8 +76,8 @@ class EditingAgentService:
 
     def create_run(self, db: Session, request: EditingRunCreateRequest) -> EditingRun:
         self._validate_video_limit(request.videos)
-        database = self._get_active_database(db, request.selected_shortform)
-        request.videos = _normalize_video_inputs(request.videos, database)
+        self._get_active_database(db, request.selected_shortform)
+        request.videos = _normalize_video_inputs(request.videos)
         request_snapshot = request.model_dump(mode="json")
         shortform_context = _find_shortform_context(db, request)
         if shortform_context:
@@ -115,7 +115,9 @@ class EditingAgentService:
         self._validate_video_limit(request.videos)
         parent = db.get(EditingRun, parent_run_id)
         if parent is None:
-            raise EditingDomainError("EDITING_RUN_NOT_FOUND", "Editing run not found.", status_code=404)
+            raise EditingDomainError(
+                "EDITING_RUN_NOT_FOUND", "Editing run not found.", status_code=404
+            )
         if parent.status not in {
             EditingRunStatus.COMPLETED.value,
             EditingRunStatus.SOURCE_GAP.value,
@@ -128,24 +130,18 @@ class EditingAgentService:
         parent_snapshot = dict(parent.request_snapshot or {})
         shortform_context = parent_snapshot.pop("_shortform_context", None)
         snapshot = EditingRunCreateRequest.model_validate(parent_snapshot)
-        database = self._get_active_database(db, snapshot.selected_shortform)
-        normalized_revision_videos = _normalize_video_inputs(request.videos, database)
-        parent_identity = {
-            video.video_id: (video.shooting_scene_order, video.shooting_element_id)
-            for video in snapshot.videos
-        }
+        self._get_active_database(db, snapshot.selected_shortform)
+        normalized_revision_videos = _normalize_video_inputs(request.videos)
+        parent_identity = {video.video_id: video.shooting_scene_order for video in snapshot.videos}
         refreshed_identity = {
-            video.video_id: (video.shooting_scene_order, video.shooting_element_id)
-            for video in normalized_revision_videos
+            video.video_id: video.shooting_scene_order for video in normalized_revision_videos
         }
         existing_changed = any(
-            refreshed_identity.get(video_id) != order
-            for video_id, order in parent_identity.items()
+            refreshed_identity.get(video_id) != order for video_id, order in parent_identity.items()
         )
-        completed_video_set_changed = (
-            parent.status == EditingRunStatus.COMPLETED.value
-            and set(refreshed_identity) != set(parent_identity)
-        )
+        completed_video_set_changed = parent.status == EditingRunStatus.COMPLETED.value and set(
+            refreshed_identity
+        ) != set(parent_identity)
         if existing_changed or completed_video_set_changed:
             raise EditingDomainError(
                 "EDITING_REVISION_VIDEO_MISMATCH",
@@ -189,7 +185,9 @@ class EditingAgentService:
     def execute(self, db: Session, run_id: str) -> EditingRun:
         run = db.get(EditingRun, run_id)
         if run is None:
-            raise EditingDomainError("EDITING_RUN_NOT_FOUND", "Editing run not found.", status_code=404)
+            raise EditingDomainError(
+                "EDITING_RUN_NOT_FOUND", "Editing run not found.", status_code=404
+            )
         if run.status != EditingRunStatus.QUEUED.value:
             return run
 
@@ -237,9 +235,7 @@ class EditingAgentService:
                         "selected_shortform": request.selected_shortform.model_dump(mode="json"),
                         "video_editing_db": database_payload,
                         "videos": [video.model_dump(mode="json") for video in request.videos],
-                        "video_contexts": [
-                            context.model_dump(mode="json") for context in contexts
-                        ],
+                        "video_contexts": [context.model_dump(mode="json") for context in contexts],
                         "parent_recipe": parent_recipe,
                         "revision_action": run.revision_action,
                         "max_repair_attempts": self.settings.editing_max_repair_attempts,
@@ -294,10 +290,14 @@ class EditingAgentService:
                         {
                             "domain_context": self.domain_context,
                             "project": project_payload,
-                            "selected_shortform": request.selected_shortform.model_dump(mode="json"),
+                            "selected_shortform": request.selected_shortform.model_dump(
+                                mode="json"
+                            ),
                             "video_editing_db": database_payload,
                             "videos": [video.model_dump(mode="json") for video in request.videos],
-                            "video_contexts": [context.model_dump(mode="json") for context in contexts],
+                            "video_contexts": [
+                                context.model_dump(mode="json") for context in contexts
+                            ],
                             "parent_recipe": parent_recipe,
                             "revision_action": "USE_REDUCED_STRUCTURE",
                             "max_repair_attempts": self.settings.editing_max_repair_attempts,
@@ -429,9 +429,7 @@ class EditingAgentService:
             source_type="VIDEO_ONLY",
             timeline=timeline,
             cta=RecipeCta(
-                text=_fit_caption(
-                    fallback_copy.get("cta") or f"{subject_name}, 지금 만나보세요"
-                )
+                text=_fit_caption(fallback_copy.get("cta") or f"{subject_name}, 지금 만나보세요")
             ),
         )
         recipe = self.effect_planner.apply_recipe(
@@ -467,9 +465,7 @@ class EditingAgentService:
                     mode="SUGGESTED",
                     search_keyword=search_keyword,
                 ),
-                post_note=(
-                    f"플랫폼 음원 검색에서 ‘{search_keyword}’을 검색해 직접 추가해주세요."
-                ),
+                post_note=(f"플랫폼 음원 검색에서 ‘{search_keyword}’을 검색해 직접 추가해주세요."),
             ),
             missing_scene_roles=[],
             available_options=[],
@@ -530,9 +526,7 @@ class EditingAgentService:
         run.llm_output_tokens = usage.output_tokens
         run.llm_estimated_cost_usd = round(
             usage.input_tokens * self.settings.editing_input_cost_per_million_usd / 1_000_000
-            + usage.output_tokens
-            * self.settings.editing_output_cost_per_million_usd
-            / 1_000_000,
+            + usage.output_tokens * self.settings.editing_output_cost_per_million_usd / 1_000_000,
             8,
         )
 
@@ -621,62 +615,25 @@ def _database_payload(database_record: VideoEditingDBRecord) -> dict[str, Any]:
 
 def _normalize_video_inputs(
     videos: list[Any],
-    database_record: VideoEditingDBRecord,
 ) -> list[Any]:
-    metadata = database_record.recommendation_metadata or {}
-    is_information = str(metadata.get("format_type") or "") == "정보형"
-    if not is_information:
-        if any(video.shooting_scene_order is None for video in videos):
-            raise EditingDomainError(
-                "SHOOTING_SCENE_ORDER_REQUIRED",
-                "밈과 챌린지 영상은 shooting_scene_order가 필요합니다.",
-                status_code=422,
-            )
-        return sorted(videos, key=lambda video: int(video.shooting_scene_order))
-
-    elements = (database_record.shooting_guide or {}).get("shooting_elements") or []
-    element_orders = {
-        str(item.get("element_id")): int(item.get("display_order") or 0)
-        for item in elements
-        if item.get("element_id")
-    }
-    if not element_orders:
+    # Rolling-deploy compatibility: the previous backend sent already ordered
+    # information-form uploads with only shooting_element_id. Convert that
+    # legacy envelope once at the boundary; the planner itself remains purely
+    # scene-order/cut based. New clients must send shooting_scene_order.
+    if videos and all(
+        video.shooting_scene_order is None and video.shooting_element_id for video in videos
+    ):
+        return [
+            video.model_copy(update={"shooting_scene_order": index, "shooting_element_id": None})
+            for index, video in enumerate(videos, start=1)
+        ]
+    if any(video.shooting_scene_order is None for video in videos):
         raise EditingDomainError(
-            "INFORMATIONAL_SHOOTING_ELEMENTS_MISSING",
-            "정보형 템플릿에 활성 촬영 요소가 없습니다.",
-            status_code=409,
-        )
-    missing = [video.video_id for video in videos if not video.shooting_element_id]
-    if missing:
-        raise EditingDomainError(
-            "SHOOTING_ELEMENT_ID_REQUIRED",
-            "정보형 영상은 각 업로드에 shooting_element_id가 필요합니다.",
+            "SHOOTING_SCENE_ORDER_REQUIRED",
+            "모든 촬영 영상에 shooting_scene_order가 필요합니다.",
             status_code=422,
         )
-    unknown = sorted(
-        {
-            str(video.shooting_element_id)
-            for video in videos
-            if str(video.shooting_element_id) not in element_orders
-        }
-    )
-    if unknown:
-        raise EditingDomainError(
-            "SHOOTING_ELEMENT_ID_INVALID",
-            "선택한 템플릿에 없는 촬영 요소입니다: " + ", ".join(unknown),
-            status_code=422,
-        )
-    ordered = sorted(
-        enumerate(videos),
-        key=lambda pair: (
-            element_orders[str(pair[1].shooting_element_id)],
-            pair[0],
-        ),
-    )
-    return [
-        video.model_copy(update={"shooting_scene_order": index})
-        for index, (_, video) in enumerate(ordered, start=1)
-    ]
+    return sorted(videos, key=lambda video: int(video.shooting_scene_order))
 
 
 def _find_shortform_context(
@@ -860,7 +817,7 @@ def _build_copy_directives(
     copy_markers = ("자막", "문구", "띄우", "표시", "카피", "대사")
     for statement in user_statements:
         if any(marker in statement for marker in copy_markers):
-            for phrase in re.findall(r'[\"“‘]([^\"”’]{1,40})[\"”’]', statement):
+            for phrase in re.findall(r"[\"“‘]([^\"”’]{1,40})[\"”’]", statement):
                 normalized = " ".join(phrase.split())
                 if normalized and normalized not in phrases:
                     phrases.append(normalized)
@@ -895,10 +852,7 @@ def _build_copy_directives(
 
 def _is_editing_plan_contract_error(exc: EditingLLMError) -> bool:
     message = str(exc)
-    if not (
-        "schema=editing_plan;" in message
-        or "schema=editing_plan_repair;" in message
-    ):
+    if not ("schema=editing_plan;" in message or "schema=editing_plan_repair;" in message):
         return False
     return any(
         f"reason={reason}" in message
@@ -1062,9 +1016,7 @@ def _publishing_for_result(run: EditingRun) -> PublishingResult | None:
     if not data.get("title"):
         data["title"] = f"{subject_name}의 매력을 만나보세요"
     if not data.get("caption"):
-        data["caption"] = (
-            f"{subject_name}의 모습을 짧은 영상으로 확인해 보세요."
-        )
+        data["caption"] = f"{subject_name}의 모습을 짧은 영상으로 확인해 보세요."
 
     hashtags = [str(value) for value in (data.get("hashtags") or [])]
     for fallback in ("#숏폼", "#릴스", "#매장소개", "#가게소개", "#동네맛집"):
@@ -1075,9 +1027,7 @@ def _publishing_for_result(run: EditingRun) -> PublishingResult | None:
     data["hashtags"] = hashtags
 
     selected = (run.request_snapshot or {}).get("selected_shortform") or {}
-    fallback_keyword = _fallback_search_keyword(
-        str(selected.get("editing_template_id") or "")
-    )
+    fallback_keyword = _fallback_search_keyword(str(selected.get("editing_template_id") or ""))
     track = dict(data.get("track") or {})
     track["start_sec"] = None
     track["end_sec"] = None
@@ -1094,9 +1044,7 @@ def _publishing_for_result(run: EditingRun) -> PublishingResult | None:
                 "search_keyword": keyword,
             }
         )
-        data["post_note"] = (
-            f"플랫폼 음원 검색에서 ‘{keyword}’을 검색해 직접 추가해주세요."
-        )
+        data["post_note"] = f"플랫폼 음원 검색에서 ‘{keyword}’을 검색해 직접 추가해주세요."
     data["track"] = track
     return PublishingResult.model_validate(data)
 

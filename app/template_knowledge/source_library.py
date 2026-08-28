@@ -168,9 +168,7 @@ class TemplateSourceService:
 
         rows = list(
             db.scalars(
-                select(TemplateSourceRecord).where(
-                    TemplateSourceRecord.bundle_id == bundle.id
-                )
+                select(TemplateSourceRecord).where(TemplateSourceRecord.bundle_id == bundle.id)
             )
         )
         if not include_draft:
@@ -186,9 +184,7 @@ class TemplateSourceService:
             region_id=region_id,
             category_id=category_id,
         )
-        official = _find(
-            grouped["official_trade_areas"], current_trdar_cd=official_trade_area_code
-        )
+        official = _find(grouped["official_trade_areas"], current_trdar_cd=official_trade_area_code)
         profile = _find(
             grouped["official_trade_area_profiles"],
             current_trdar_cd=official_trade_area_code,
@@ -238,9 +234,7 @@ def import_provided_template_library(
     )
     imported.extend(editing_result["created"])
     skipped.extend(editing_result["skipped"])
-    trade_area_eligible = _trade_area_service_eligible(
-        payloads[TemplateType.TRADE_AREA]
-    )
+    trade_area_eligible = _trade_area_service_eligible(payloads[TemplateType.TRADE_AREA])
     trade_area_result = _import_trade_area_db(
         db,
         payloads[TemplateType.TRADE_AREA],
@@ -379,7 +373,9 @@ def _import_trade_area_db(
             description=content.description,
             industry_categories=content.industry_categories,
             area_types=content.area_types,
-            analysis_dimensions=[item.model_dump(mode="json") for item in content.analysis_dimensions],
+            analysis_dimensions=[
+                item.model_dump(mode="json") for item in content.analysis_dimensions
+            ],
             inference_rules=[item.model_dump(mode="json") for item in content.inference_rules],
             recommendation_hints=content.recommendation_hints,
             prompt_context=content.prompt_context,
@@ -417,9 +413,7 @@ def _load_source_payload(template_type: TemplateType) -> dict[str, Any]:
 @lru_cache(maxsize=1)
 def _load_shooting_task_intervals() -> dict[str, Any]:
     package = resources.files(_SOURCE_PACKAGE)
-    payload = json.loads(
-        package.joinpath(_SHOOTING_INTERVALS_FILE).read_text(encoding="utf-8")
-    )
+    payload = json.loads(package.joinpath(_SHOOTING_INTERVALS_FILE).read_text(encoding="utf-8"))
     source = payload["source"]
     workbook_name = str(source["bundled_filename"])
     actual_sha = hashlib.sha256(package.joinpath(workbook_name).read_bytes()).hexdigest().upper()
@@ -448,25 +442,18 @@ def _load_shooting_task_intervals() -> dict[str, Any]:
     return {"source": source, "by_challenge": dict(grouped)}
 
 
-def _import_bundle(
-    db: Session, payload: dict[str, Any]
-) -> tuple[TemplateSourceBundle, bool]:
+def _import_bundle(db: Session, payload: dict[str, Any]) -> tuple[TemplateSourceBundle, bool]:
     source = payload["source"]
     source_sha = str(source["sha256"]).upper()
     existing = db.scalar(
-        select(TemplateSourceBundle).where(
-            TemplateSourceBundle.source_sha256 == source_sha
-        )
+        select(TemplateSourceBundle).where(TemplateSourceBundle.source_sha256 == source_sha)
     )
     if existing is not None:
         return existing, False
 
     template_type = TemplateType(payload["template_type"])
     status = TemplateSourceStatus.ACTIVE
-    if (
-        template_type == TemplateType.TRADE_AREA
-        and not _trade_area_service_eligible(payload)
-    ):
+    if template_type == TemplateType.TRADE_AREA and not _trade_area_service_eligible(payload):
         status = TemplateSourceStatus.DRAFT
     if status == TemplateSourceStatus.ACTIVE:
         for current in db.scalars(
@@ -533,9 +520,6 @@ def _import_video_editing_db(
 ) -> dict[str, list[str]]:
     guide_rows = payload["datasets"]["03_GUIDE_TEMPLATES"]["records"]
     challenge_rows = payload["datasets"]["02_INPUT_GUIDES"]["records"]
-    element_rows = payload["datasets"].get("03A_SHOOTING_ELEMENTS", {}).get(
-        "records", []
-    )
     challenge_names = {row["id"]: row["name"] for row in challenge_rows}
     challenges_by_id = {row["id"]: row for row in challenge_rows}
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -568,13 +552,6 @@ def _import_video_editing_db(
                 or _EDITING_SCOPE_ADAPTERS[rows[0]["challenge_id"]]["format_type"]
             ),
             task_intervals=task_intervals,
-            shooting_element_rows=[
-                item
-                for item in element_rows
-                if item.get("guide_template_id") == source_template_id
-                and item.get("validation_status") == "PASS"
-                and item.get("template_status") == "ACTIVE"
-            ],
         )
         errors = validator.validate(
             TemplateType.VIDEO_EDITING,
@@ -596,8 +573,8 @@ def _import_video_editing_db(
             existing.name = content.name
             existing.recommendation_title = content.recommendation_title
             existing.recommendation_concept = content.recommendation_concept
-            existing.recommendation_metadata = (
-                content.recommendation_metadata.model_dump(mode="json")
+            existing.recommendation_metadata = content.recommendation_metadata.model_dump(
+                mode="json"
             )
             existing.shooting_guide = content.shooting_guide.model_dump(mode="json")
             existing.editing_rules = content.editing_rules.model_dump(mode="json")
@@ -659,9 +636,7 @@ def _import_video_editing_db(
                     )
                 )
                 db.commit()
-                created.append(
-                    f"VIDEO_EDITING:{template_id}:v{repaired_version}:CONTRACT_REPAIR"
-                )
+                created.append(f"VIDEO_EDITING:{template_id}:v{repaired_version}:CONTRACT_REPAIR")
                 continue
             skipped.append(marker)
             continue
@@ -715,17 +690,9 @@ def _has_required_editing_contract(
         return False
     actual_guide = record.shooting_guide or {}
     expected_guide = authoritative.shooting_guide.model_dump(mode="json")
-    if expected_format != "정보형":
-        return (
-            actual_guide.get("tasks") == expected_guide.get("tasks")
-            and actual_guide.get("scenes") == expected_guide.get("scenes")
-        )
-    elements = actual_guide.get("shooting_elements") or []
-    return (
-        elements == expected_guide.get("shooting_elements")
-        and 1 <= len(elements) <= 5
-        and all(len(str(item.get("instruction") or "")) <= 50 for item in elements)
-    )
+    return actual_guide.get("tasks") == expected_guide.get("tasks") and actual_guide.get(
+        "scenes"
+    ) == expected_guide.get("scenes")
 
 
 def _editing_content(
@@ -734,7 +701,6 @@ def _editing_content(
     challenge_name: str,
     format_type: str,
     task_intervals: list[dict[str, Any]],
-    shooting_element_rows: list[dict[str, Any]],
 ) -> VideoEditingDBContent:
     challenge_id = str(rows[0]["challenge_id"])
     active_rows = [row for row in rows if row["template_status"] == "ACTIVE"]
@@ -749,94 +715,43 @@ def _editing_content(
     production_minutes = max(int(row["estimated_production_minutes"]) for row in active_rows)
     scenes = []
     tasks = []
-    if adapter["format_type"] == "정보형":
-        for order, row in enumerate(active_rows, start=1):
-            duration = max(
-                0.1,
-                (float(row["end_ms"]) - float(row["start_ms"])) / 1000,
-            )
-            summary = _bounded(str(row["scene_summary"]), 500)
-            scenes.append(
-                {
-                    "scene_order": order,
-                    "scene_role": _bounded(str(row["narrative_role"]), 80),
-                    "scene_description": summary,
-                    "scene_dialogue": None,
-                    "scene_subtitle": None,
-                    "shot_type": _bounded(str(row["action_pattern"]), 80),
-                    "target_duration_sec": min(duration, 30),
-                }
-            )
-            tasks.append(
-                {
-                    "display_order": order,
-                    "task_title": _shooting_guide_title(str(row["narrative_role"])),
-                    "scene_index": order - 1,
-                    "guide": {"instructions": [summary]},
-                }
-            )
-    else:
-        for order, interval in enumerate(task_intervals, start=1):
-            duration = max(
-                0.1,
-                (float(interval["end_ms"]) - float(interval["start_ms"])) / 1000,
-            )
-            instructions = [
-                _bounded(str(item), 500)
-                for item in interval.get("instructions", [])
-                if str(item).strip()
-            ]
-            if not instructions:
-                raise TemplateSourceImportError(
-                    f"Shooting interval {challenge_id}:{order} has no instructions."
-                )
-            description = _bounded(
-                f"{interval['task_title']} — {' '.join(instructions)}",
-                500,
-            )
-            scenes.append(
-                {
-                    "scene_order": order,
-                    "scene_role": _bounded(str(interval["scene_role"]), 80),
-                    "scene_description": description,
-                    "scene_dialogue": None,
-                    "scene_subtitle": None,
-                    "shot_type": "가이드 구간 재현",
-                    "target_duration_sec": min(duration, 30),
-                }
-            )
-            tasks.append(
-                {
-                    "display_order": order,
-                    "task_title": _shooting_guide_title(str(interval["task_title"])),
-                    "scene_index": order - 1,
-                    "guide": {"instructions": instructions},
-                }
-            )
-    shooting_elements = []
-    if adapter["format_type"] == "정보형":
-        if not shooting_element_rows:
+    for order, interval in enumerate(task_intervals, start=1):
+        duration = max(
+            0.1,
+            (float(interval["end_ms"]) - float(interval["start_ms"])) / 1000,
+        )
+        instructions = [
+            _bounded(str(item), 500)
+            for item in interval.get("instructions", [])
+            if str(item).strip()
+        ]
+        if not instructions:
             raise TemplateSourceImportError(
-                f"Information-form shooting elements are missing for {challenge_id}."
+                f"Shooting interval {challenge_id}:{order} has no instructions."
             )
-        for item in sorted(
-            shooting_element_rows, key=lambda value: int(value["display_order"])
-        ):
-            sequences = [
-                int(value.strip())
-                for value in str(item["reference_segment_sequences"]).split(",")
-                if value.strip()
-            ]
-            shooting_elements.append(
-                {
-                    "element_id": str(item["shooting_element_id"]),
-                    "display_order": int(item["display_order"]),
-                    "title": _shooting_guide_title(str(item["title"])),
-                    "instruction": _bounded(str(item["instruction"]), 50),
-                    "minimum_recording_sec": int(item["minimum_recording_sec"]),
-                    "reference_segment_sequences": sequences,
-                }
-            )
+        description = _bounded(
+            f"{interval['task_title']} — {' '.join(instructions)}",
+            500,
+        )
+        scenes.append(
+            {
+                "scene_order": order,
+                "scene_role": _bounded(str(interval["scene_role"]), 80),
+                "scene_description": description,
+                "scene_dialogue": None,
+                "scene_subtitle": None,
+                "shot_type": "가이드 구간 재현",
+                "target_duration_sec": min(duration, 30),
+            }
+        )
+        tasks.append(
+            {
+                "display_order": order,
+                "task_title": _shooting_guide_title(str(interval["task_title"])),
+                "scene_index": order - 1,
+                "guide": {"instructions": instructions},
+            }
+        )
     concept = _bounded(
         " → ".join(str(row["scene_summary"]) for row in active_rows),
         2000,
@@ -862,7 +777,6 @@ def _editing_content(
                 "difficulty": "중" if production_minutes <= 10 else "상",
                 "scenes": scenes,
                 "tasks": tasks,
-                "shooting_elements": shooting_elements,
             },
             "editing_rules": {
                 "source_type": "VIDEO_ONLY",
@@ -902,8 +816,7 @@ def _trade_area_service_eligible(payload: dict[str, Any]) -> bool:
     for dataset_name in _TRADE_AREA_APPROVAL_DATASETS:
         records = datasets.get(dataset_name, {}).get("records", [])
         if not records or any(
-            str(record.get("_record_status") or "").upper() != "APPROVED"
-            for record in records
+            str(record.get("_record_status") or "").upper() != "APPROVED" for record in records
         ):
             return False
     return True

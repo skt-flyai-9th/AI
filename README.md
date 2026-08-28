@@ -126,7 +126,7 @@ X-Internal-API-Key: <INTERNAL_API_KEY>
 
 매장명·업종·홍보 대상·목적·메뉴명·얼굴 노출 여부를 query parameter로 함께 전달할 수 있습니다. 저장된 템플릿의 명시적 placeholder만 치환하며 요청마다 LLM을 호출하지 않습니다. `scene_dialogue`는 공백 포함 9자 이하이고 예상 촬영 시간은 최종 장면 길이에서 다시 계산합니다.
 
-정보형 숏폼은 내부의 23개 편집 컷을 사용자에게 노출하지 않고 `shooting_elements`만 반환합니다. 촬영 요소는 최대 5개이며 `instruction`은 공백 포함 50자 이하입니다. 밈·챌린지는 기존 `scenes`/`tasks` 컷 단위 가이드를 유지합니다.
+정보형을 포함한 모든 숏폼은 `scenes`/`tasks` 컷 단위 촬영 가이드를 반환합니다. 사용자는 안내된 컷을 순서대로 촬영하고, 편집기는 각 촬영본을 `shooting_scene_order`에 맞춰 한 번씩 사용합니다.
 
 ## 영상 편집 파이프라인
 

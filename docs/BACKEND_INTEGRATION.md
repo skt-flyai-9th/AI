@@ -238,24 +238,8 @@ GET /api/v1/editing-templates/{template_id}/versions/{version}/shooting-guide
 `face_exposure` query parameter를 함께 보낸다. 템플릿 placeholder만 치환되며
 `scene_dialogue`는 공백 포함 9자 이하이다.
 
-`format_type=정보형`이면 `scenes`와 `tasks`는 빈 배열이고, 사용자 화면에는 최대 5개의 `shooting_elements`를 표시한다. 각 `instruction`은 공백 포함 50자 이하이다.
-
-```json
-{
-  "format_type": "정보형",
-  "shooting_elements": [
-    {
-      "element_id": "ELEMENT_01",
-      "display_order": 1,
-      "title": "제조 과정",
-      "instruction": "준비와 추출 과정을 손동작이 보이게 길게 촬영하세요.",
-      "minimum_recording_sec": 15
-    }
-  ],
-  "scenes": [],
-  "tasks": []
-}
-```
+`format_type`과 관계없이 촬영 가이드는 `scenes`와 `tasks`로 반환한다. 정보형도
+각 태스크가 하나의 장면에 연결되며, 촬영본은 해당 장면의 순서대로 편집기에 전달한다.
 
 `tasks`는 장면 순서와 촬영 안내만 반환한다. `scene_index`는 `scenes`의 0-based
 인덱스이며, `task_type`과 `guide_type`은 계약에 포함하지 않는다. `guide.start_ms`와

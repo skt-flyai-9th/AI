@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
@@ -114,9 +112,7 @@ class FakeVideoAnalyzer:
                     "transition_out": "HARD_CUT" if index < 4 else None,
                     "evidence": f"{index - 1}.0-{index}.0초 {role}",
                 }
-                for index, role in enumerate(
-                    ["RESULT", "PROCESS", "DETAIL", "CTA"], start=1
-                )
+                for index, role in enumerate(["RESULT", "PROCESS", "DETAIL", "CTA"], start=1)
             ],
             pacing={"median_cut_sec": 1.4, "tempo": "FAST", "opening_hook_sec": 2.0},
             caption_patterns=["짧은 핵심 자막"],
@@ -171,8 +167,7 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
         assert "task_type" not in first_task
         assert "guide_type" not in first_task["guide"]
         assert all(
-            scene["scene_subtitle"] is None
-            for scene in imported_editing.shooting_guide["scenes"]
+            scene["scene_subtitle"] is None for scene in imported_editing.shooting_guide["scenes"]
         )
         task_counts = {
             record.template_id: len(record.shooting_guide["tasks"])
@@ -181,29 +176,19 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
         assert task_counts == {
             "gt_jujutsu_transition": 6,
             "gt_otsukare_summer": 7,
-            "gt_cafe_recommendation": 23,
+            "gt_cafe_recommendation": 6,
             "gt_donggeurio_challenge": 6,
             "gt_donggeurio_store_promotion": 6,
         }
-        store_promotion = db.get(
-            VideoEditingDBRecord, ("gt_donggeurio_store_promotion", 1)
-        )
+        store_promotion = db.get(VideoEditingDBRecord, ("gt_donggeurio_store_promotion", 1))
         assert store_promotion is not None
-        assert len(store_promotion.shooting_guide["shooting_elements"]) == 5
-        assert all(
-            len(item["instruction"]) <= 50
-            for item in store_promotion.shooting_guide["shooting_elements"]
-        )
+        assert len(store_promotion.shooting_guide["scenes"]) == 6
+        assert len(store_promotion.shooting_guide["tasks"]) == 6
         information_record = db.get(VideoEditingDBRecord, ("gt_cafe_recommendation", 2))
         assert information_record is not None
         assert information_record.recommendation_metadata["format_type"] == "정보형"
-        assert len(information_record.shooting_guide["shooting_elements"]) == 4
-        assigned_sequences = sorted(
-            sequence
-            for element in information_record.shooting_guide["shooting_elements"]
-            for sequence in element["reference_segment_sequences"]
-        )
-        assert assigned_sequences == list(range(1, 24))
+        assert len(information_record.shooting_guide["scenes"]) == 6
+        assert len(information_record.shooting_guide["tasks"]) == 6
         assert len(list(db.scalars(select(TemplateSourceBundle)))) == 2
         assert db.scalar(select(TemplateSourceRecord)) is not None
         assert result["trade_area"]["status"] == "ACTIVE"
@@ -219,10 +204,7 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
             **information_record.recommendation_metadata,
             "format_type": "밈",
         }
-        information_record.shooting_guide = {
-            **information_record.shooting_guide,
-            "shooting_elements": [],
-        }
+        information_record.shooting_guide = {"scenes": [], "tasks": []}
         db.commit()
         second = seed_template_library(db, service=service)
         db.refresh(imported_editing)
@@ -231,7 +213,7 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
         assert len(second["skipped"]) == 8
         assert len(imported_editing.shooting_guide["tasks"]) == 6
         assert information_record.recommendation_metadata["format_type"] == "정보형"
-        assert len(information_record.shooting_guide["shooting_elements"]) == 4
+        assert len(information_record.shooting_guide["tasks"]) == 6
 
 
 def test_bootstrap_repairs_a_newer_active_version_with_missing_format_contract():
@@ -263,7 +245,7 @@ def test_bootstrap_repairs_a_newer_active_version_with_missing_format_contract()
         assert repaired is not None
         assert repaired.status == "ACTIVE"
         assert repaired.recommendation_metadata["format_type"] == "정보형"
-        assert len(repaired.shooting_guide["shooting_elements"]) == 4
+        assert len(repaired.shooting_guide["tasks"]) == 6
         assert db.get(VideoEditingDBRecord, ("gt_cafe_recommendation", 3)).status == "ARCHIVED"
         assert any("CONTRACT_REPAIR" in item for item in result["created"])
 
@@ -414,28 +396,6 @@ def test_editing_candidate_rejects_wrong_shooting_task_order_and_scene_index():
     assert "SHOOTING_TASK_SCENE_INDEX_INVALID" in codes
 
 
-def test_information_template_requires_max_five_short_shooting_elements():
-    payload = video_editing_db_payload()
-    payload["recommendation_metadata"]["format_type"] = "정보형"
-    payload["shooting_guide"]["shooting_elements"] = [
-        {
-            "element_id": "ELEMENT_01",
-            "display_order": 1,
-            "title": "대표 메뉴",
-            "instruction": "메뉴 전체와 세부 모습을 여러 각도로 촬영하세요.",
-            "minimum_recording_sec": 10,
-            "reference_segment_sequences": [1],
-        }
-    ]
-
-    content = VideoEditingDBContent.model_validate(payload)
-    assert content.shooting_guide.shooting_elements[0].instruction.endswith("촬영하세요.")
-
-    payload["shooting_guide"]["shooting_elements"][0]["instruction"] = "가" * 51
-    with pytest.raises(ValidationError):
-        VideoEditingDBContent.model_validate(payload)
-
-
 def test_trend_video_analysis_generates_editing_candidate_and_uses_cache():
     service, video = _service()
     with SessionLocal() as db:
@@ -545,9 +505,7 @@ def test_rebuild_from_scratch_ignores_base_and_forces_fresh_video_analysis():
                 lifecycle="RISING",
                 kr_affinity=0.9,
                 confidence=0.9,
-                automatic_representative_youtube_url=(
-                    "https://www.youtube.com/watch?v=rebuild001"
-                ),
+                automatic_representative_youtube_url=("https://www.youtube.com/watch?v=rebuild001"),
                 representative_video_metadata={},
                 raw_details={},
             )
@@ -755,8 +713,5 @@ def test_video_editing_schemas_allow_physical_edit_cuts_beyond_six():
     assert guide_schema["tasks"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
 
     insight_schema = EditingVideoInsight.model_json_schema()
-    assert (
-        insight_schema["properties"]["shot_sequence"]["maxItems"]
-        == MAX_SHOOTING_GUIDE_CUTS
-    )
+    assert insight_schema["properties"]["shot_sequence"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
     assert insight_schema["properties"]["segments"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
