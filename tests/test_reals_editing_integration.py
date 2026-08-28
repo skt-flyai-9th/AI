@@ -55,12 +55,8 @@ def _video_editing_db() -> dict:
 def test_reals_adapter_builds_multicut_assembly_and_engine_recipe():
     recipe = _recipe()
     recipe.timeline[0].effects = [
-        RecipeEffect.model_validate(
-            {"effect_id": "COLOR_TONE", "params": {"tone": "WARM"}}
-        ),
-        RecipeEffect.model_validate(
-            {"effect_id": "PUNCH_ZOOM", "params": {"scale_end": 1.1}}
-        ),
+        RecipeEffect.model_validate({"effect_id": "COLOR_TONE", "params": {"tone": "WARM"}}),
+        RecipeEffect.model_validate({"effect_id": "PUNCH_ZOOM", "params": {"scale_end": 1.1}}),
     ]
     request = RealsRecipeAdapter().build_request(
         run_id="edit_contract_1",
@@ -98,9 +94,7 @@ def test_reals_adapter_builds_multicut_assembly_and_engine_recipe():
         (2000, 4000, "HARD_CUT"),
     ]
     assert final.edit_recipe.segments[0].color_tone == "WARM"
-    assert [effect.effect_id for effect in final.edit_recipe.segments[0].effects] == [
-        "PUNCH_ZOOM"
-    ]
+    assert [effect.effect_id for effect in final.edit_recipe.segments[0].effects] == ["PUNCH_ZOOM"]
     caption, reveal_caption = final.edit_recipe.overlays
     assert (caption.start_ms, caption.end_ms, caption.style_id) == (0, 1500, "HOOK")
     assert caption.motion_id == "TYPEWRITER"
@@ -185,8 +179,7 @@ def test_validator_returns_structured_issues_from_reals_registry():
     )
 
     assert any(
-        issue.code == "TIMELINE_NOT_GAPLESS"
-        and issue.path == "timeline[0].timeline_start_ms"
+        issue.code == "TIMELINE_NOT_GAPLESS" and issue.path == "timeline[0].timeline_start_ms"
         for issue in issues
     )
     by_code = {issue.code: issue for issue in issues}
@@ -249,9 +242,7 @@ def test_validator_rejects_promotional_video_without_regular_captions():
 def test_validator_requires_project_scoped_verbatim_caption_phrase():
     recipe = _recipe().model_copy(deep=True)
     project = _request().project.model_dump(mode="json")
-    project["shortform_context"] = {
-        "copy_directives": {"verbatim_caption_phrases": ["딸기청 톡!"]}
-    }
+    project["shortform_context"] = {"copy_directives": {"verbatim_caption_phrases": ["딸기청 톡!"]}}
     validator = EditRecipeValidator()
 
     missing = validator.validate(
@@ -272,6 +263,54 @@ def test_validator_requires_project_scoped_verbatim_caption_phrase():
         project=project,
     )
     assert not any(issue.code == "PROJECT_CAPTION_PHRASE_MISSING" for issue in included)
+
+
+def test_validator_rejects_stage_directions_as_promotional_captions():
+    recipe = _recipe().model_copy(deep=True)
+    recipe.timeline[1].caption.text = "손바닥 클로즈업으로 전환"
+
+    issues = EditRecipeValidator().validate(
+        recipe,
+        selected_shortform=_request().selected_shortform,
+        video_editing_db=_video_editing_db(),
+        video_contexts=_contexts(),
+        project=_request().project.model_dump(mode="json"),
+    )
+
+    assert any(issue.code == "PROMOTIONAL_CAPTION_IS_STAGE_DIRECTION" for issue in issues)
+
+
+def test_validator_allows_explicit_verbatim_stage_direction_caption():
+    recipe = _recipe().model_copy(deep=True)
+    phrase = "손바닥 클로즈업으로 전환"
+    recipe.timeline[1].caption.text = phrase
+    project = _request().project.model_dump(mode="json")
+    project["shortform_context"] = {"copy_directives": {"verbatim_caption_phrases": [phrase]}}
+
+    issues = EditRecipeValidator().validate(
+        recipe,
+        selected_shortform=_request().selected_shortform,
+        video_editing_db=_video_editing_db(),
+        video_contexts=_contexts(),
+        project=project,
+    )
+
+    assert not any(issue.code == "PROMOTIONAL_CAPTION_IS_STAGE_DIRECTION" for issue in issues)
+
+
+def test_validator_requires_promotion_subject_in_first_hook():
+    recipe = _recipe().model_copy(deep=True)
+    recipe.timeline[0].caption.text = "오늘의 대표 메뉴"
+
+    issues = EditRecipeValidator().validate(
+        recipe,
+        selected_shortform=_request().selected_shortform,
+        video_editing_db=_video_editing_db(),
+        video_contexts=_contexts(),
+        project=_request().project.model_dump(mode="json"),
+    )
+
+    assert any(issue.code == "PROMOTIONAL_HOOK_NOT_PERSONALIZED" for issue in issues)
 
 
 def test_validator_rejects_typewriter_without_animation_hold_time():
@@ -349,15 +388,11 @@ def test_free_tier_profile_limits_duration_and_disables_heavy_effect():
     recipe.timeline[1].source_end_ms = 8000
     recipe.timeline[1].timeline_start_ms = 8000
     recipe.timeline[0].effects = [
-        RecipeEffect.model_validate(
-            {"effect_id": "SMOOTH_ZOOM", "params": {"scale_end": 1.08}}
-        )
+        RecipeEffect.model_validate({"effect_id": "SMOOTH_ZOOM", "params": {"scale_end": 1.08}})
     ]
     video_editing_db = _video_editing_db()
     video_editing_db["editing_rules"]["allowed_effect_ids"].append("SMOOTH_ZOOM")
-    contexts = [
-        context.model_copy(update={"duration_ms": 20_000}) for context in _contexts()
-    ]
+    contexts = [context.model_copy(update={"duration_ms": 20_000}) for context in _contexts()]
     settings = Settings(
         editing_max_output_duration_seconds=15,
         editing_disabled_effect_ids="SMOOTH_ZOOM",
@@ -372,9 +407,7 @@ def test_free_tier_profile_limits_duration_and_disables_heavy_effect():
         video_contexts=contexts,
     )
 
-    assert {"OUTPUT_TOO_LONG", "EFFECT_UNSUPPORTED"} <= {
-        issue.code for issue in issues
-    }
+    assert {"OUTPUT_TOO_LONG", "EFFECT_UNSUPPORTED"} <= {issue.code for issue in issues}
 
 
 def test_llm_capabilities_publish_free_tier_envelope():
@@ -395,9 +428,7 @@ def test_llm_capabilities_publish_free_tier_envelope():
         "allowed_params": {"scale_end": {"min": 1.0, "max": 1.15}},
         "time_basis": "UNTIMED",
     }
-    assert capabilities["effect_contracts"]["FLASH"]["time_basis"] == (
-        "CLIP_RELATIVE_MS"
-    )
+    assert capabilities["effect_contracts"]["FLASH"]["time_basis"] == ("CLIP_RELATIVE_MS")
 
 
 def test_registry_rejects_drift_from_manifest():

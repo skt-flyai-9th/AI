@@ -112,9 +112,7 @@ class EditRecipeValidator:
             runtime_max_duration_ms,
         )
 
-        safe_area_profile_id = str(
-            rules.get("safe_area_profile_id") or "INSTAGRAM_REELS_2026_V1"
-        )
+        safe_area_profile_id = str(rules.get("safe_area_profile_id") or "INSTAGRAM_REELS_2026_V1")
         if not self.registry.has_safe_area_profile(safe_area_profile_id):
             add(
                 "SAFE_AREA_PROFILE_UNKNOWN",
@@ -131,9 +129,7 @@ class EditRecipeValidator:
                 source="REALS_REGISTRY",
                 repairable=False,
             )
-        assembly_profile_id = str(
-            rules.get("assembly_profile_id") or "INTERMEDIATE_VERTICAL_V1"
-        )
+        assembly_profile_id = str(rules.get("assembly_profile_id") or "INTERMEDIATE_VERTICAL_V1")
         if len(recipe.timeline) > 1 and self.registry.render_profile(assembly_profile_id) is None:
             add(
                 "ASSEMBLY_PROFILE_UNKNOWN",
@@ -223,8 +219,7 @@ class EditRecipeValidator:
                 if (
                     clip.transition_in is not None
                     and previous is not None
-                    and _normalize_transition(clip.transition_in)
-                    != _normalize_transition(previous)
+                    and _normalize_transition(clip.transition_in) != _normalize_transition(previous)
                 ):
                     add(
                         "TRANSITION_CONFLICT",
@@ -256,8 +251,7 @@ class EditRecipeValidator:
                     params.get("start_ms") is not None
                     and params.get("end_ms") is not None
                     and (
-                        int(params["start_ms"]) < 0
-                        or int(params["end_ms"]) > int(output_duration)
+                        int(params["start_ms"]) < 0 or int(params["end_ms"]) > int(output_duration)
                     )
                 ):
                     add(
@@ -351,9 +345,7 @@ class EditRecipeValidator:
             )
         for video_id, ranges in source_ranges_by_video.items():
             ordered_ranges = sorted(ranges)
-            for previous, current in zip(
-                ordered_ranges, ordered_ranges[1:], strict=False
-            ):
+            for previous, current in zip(ordered_ranges, ordered_ranges[1:], strict=False):
                 if current[0] < previous[1]:
                     add(
                         "SOURCE_RANGE_OVERLAP",
@@ -377,6 +369,7 @@ class EditRecipeValidator:
                 source="REALS_REGISTRY",
             )
         if _is_promotional_project(project):
+            required_phrases = _required_verbatim_caption_phrases(project)
             regular_caption_count = caption_count - 1
             required_caption_count = min(3, len(recipe.timeline))
             if regular_caption_count < required_caption_count:
@@ -394,9 +387,23 @@ class EditRecipeValidator:
                     "timeline[0].caption",
                     "The first promotional clip requires a HOOK caption grounded in the project.",
                 )
+            elif not _caption_contains_promotion_subject(first_caption.text, project):
+                add(
+                    "PROMOTIONAL_HOOK_NOT_PERSONALIZED",
+                    "timeline[0].caption.text",
+                    "The first promotional HOOK must name the verified promotion subject.",
+                )
+            for index, clip in enumerate(recipe.timeline):
+                if clip.caption is None:
+                    continue
+                if _is_stage_direction_caption(clip.caption.text, required_phrases):
+                    add(
+                        "PROMOTIONAL_CAPTION_IS_STAGE_DIRECTION",
+                        f"timeline[{index}].caption.text",
+                        "Promotional captions must be audience-facing copy, not filming or editing directions.",
+                    )
             if not any(
-                clip.caption is not None
-                and clip.caption.style_id == "CAPTION_EMPHASIS"
+                clip.caption is not None and clip.caption.style_id == "CAPTION_EMPHASIS"
                 for clip in recipe.timeline
             ):
                 add(
@@ -528,6 +535,46 @@ def _required_verbatim_caption_phrases(project: dict[str, Any] | None) -> list[s
     if not isinstance(phrases, list):
         return []
     return [str(phrase).strip() for phrase in phrases if str(phrase).strip()]
+
+
+def _caption_contains_promotion_subject(caption: str, project: dict[str, Any] | None) -> bool:
+    if not isinstance(project, dict):
+        return False
+    subject = project.get("promotion_subject")
+    if not isinstance(subject, dict):
+        return False
+    normalized_caption = _normalize_copy(caption)
+    terms: list[str] = []
+    for key in ("name", "menu_name", "title", "description"):
+        value = subject.get(key)
+        if isinstance(value, str) and value.strip():
+            terms.append(value)
+    elements = subject.get("elements")
+    if isinstance(elements, list):
+        terms.extend(str(value) for value in elements if str(value).strip())
+    return any(_normalize_copy(term) in normalized_caption for term in terms)
+
+
+def _is_stage_direction_caption(text: str, required_phrases: list[str]) -> bool:
+    normalized_text = _normalize_copy(text)
+    if any(_normalize_copy(phrase) in normalized_text for phrase in required_phrases):
+        return False
+    markers = (
+        "클로즈업",
+        "전환",
+        "세팅",
+        "의상변경",
+        "다음장면",
+        "보이기",
+        "손바닥",
+        "양손을펼쳐",
+        "손을펼치면",
+    )
+    return any(marker in normalized_text for marker in markers)
+
+
+def _normalize_copy(value: str) -> str:
+    return "".join(unicodedata.normalize("NFC", value).casefold().split())
 
 
 def _typewriter_unit_count(value: str) -> int:

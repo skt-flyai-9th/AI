@@ -40,21 +40,18 @@ def build_editing_context(
             "face_exposure": project.get("face_exposure"),
         },
         "project_brief": {
-            "promotion_subject": _mapping(project_state.get("promotion_subject"))
-            or _mapping(project.get("promotion_subject")),
-            "promotion_objective": project_state.get("promotion_objective")
-            or project.get("promotion_objective"),
-            "creative_preferences": _string_items(
-                project_state.get("creative_preferences")
-            ),
-            "secondary_information": _string_items(
-                project_state.get("secondary_information")
-            ),
+            # The editing request is the confirmed contract for this run. Session state is
+            # useful fallback context, but may be stale when the user changed the objective
+            # or subject immediately before starting the edit.
+            "promotion_subject": _mapping(project.get("promotion_subject"))
+            or _mapping(project_state.get("promotion_subject")),
+            "promotion_objective": project.get("promotion_objective")
+            or project_state.get("promotion_objective"),
+            "creative_preferences": _string_items(project_state.get("creative_preferences")),
+            "secondary_information": _string_items(project_state.get("secondary_information")),
             "verified_user_facts": _mapping(project_state.get("facts_from_user")),
             "store_context": _mapping(shortform_context.get("store_context")),
-            "selected_recommendation": _mapping(
-                shortform_context.get("recommendation")
-            ),
+            "selected_recommendation": _mapping(shortform_context.get("recommendation")),
             "recent_user_statements": _string_items(
                 shortform_context.get("recent_user_statements")
             ),
