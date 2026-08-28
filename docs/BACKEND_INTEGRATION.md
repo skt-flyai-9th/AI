@@ -367,7 +367,7 @@ Content-Type: application/json
 }
 ```
 
-AI worker는 MP4 자체를 GPT-4.1 mini에 보내지 않는다. 모든 프레임의 타임스탬프와 축소 이미지를 CPU에서 검사해 장면 변화 경계를 우선 선택하고, 시간축 균등 샘플을 함께 GPT-4.1 mini에 전달한다. DB에는 base64 이미지가 아닌 키프레임 시각만 저장한다. Validator를 통과한 `VIDEO_ONLY` 레시피만 `EDITING_RENDERER_URL/renders`에 전달된다.
+AI worker는 MP4 자체를 GPT-5.4 mini에 보내지 않는다. 모든 프레임의 타임스탬프와 축소 이미지를 CPU에서 검사해 장면 변화 경계를 우선 선택하고, 시간축 균등 샘플을 함께 GPT-5.4 mini에 전달한다. DB에는 base64 이미지가 아닌 키프레임 시각만 저장한다. Validator를 통과한 `VIDEO_ONLY` 레시피만 `EDITING_RENDERER_URL/renders`에 전달된다.
 
 Renderer 요청은 `reals-render-job-1.0` 계약을 사용한다. 원격 영상 URL과 메타데이터, 다중 컷의 순서·트림을 담은 `source_assembly`, 엔진 계약과 같은 필드명의 `final_render.edit_recipe`를 함께 보낸다. 단일 컷은 `ONE_TAKE_PASSTHROUGH`, 다중 컷은 정확한 트림 조립 후 `MULTI_CUT_ASSEMBLED`로 처리한다. 성공한 MP4는 `RENDERER_OUTPUT_DIR`에 저장되고 만료 시간이 포함된 서명 URL로 반환된다. 내부 서비스는 기존 `X-Internal-API-Key` 방식으로도 다운로드할 수 있다.
 
