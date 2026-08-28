@@ -658,17 +658,26 @@ def _find_shortform_context(
         .order_by(ShortformSession.updated_at.desc())
         .limit(50)
     ).all()
-    session = next(
-        (
-            item
-            for item in sessions
-            if str((item.current_recommendation or {}).get("recommendation_id") or "")
-            == recommendation_id
-        ),
-        None,
-    )
-    if session is None:
+    matched: tuple[ShortformSession, dict[str, Any]] | None = None
+    for item in sessions:
+        stored = dict(item.current_recommendation or {})
+        batch = stored.get("recommendations")
+        recommendations = batch if isinstance(batch, list) else [stored]
+        selected = next(
+            (
+                value
+                for value in recommendations
+                if isinstance(value, dict)
+                and str(value.get("recommendation_id") or "") == recommendation_id
+            ),
+            None,
+        )
+        if selected is not None:
+            matched = (item, dict(selected))
+            break
+    if matched is None:
         return {}
+    session, selected_recommendation = matched
 
     state = dict(session.project_state or {})
     store_context = dict(session.store_context or {})
@@ -703,7 +712,7 @@ def _find_shortform_context(
             )
         },
         "store_context": safe_store_context,
-        "recommendation": dict(session.current_recommendation or {}),
+        "recommendation": selected_recommendation,
         "recent_user_statements": user_statements,
     }
 

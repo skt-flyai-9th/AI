@@ -290,11 +290,23 @@ def _seed_shortform_session(db) -> None:
             ],
             shown_video_editing_db_ids=["video_editing_db_014"],
             current_recommendation={
-                "recommendation_id": "rec_123",
-                "title": "딸기 포인트 공개",
-                "concept": "수제 딸기청을 빠르게 강조",
-                "editing_template_id": "video_editing_db_014",
-                "editing_template_version": 3,
+                "recommendations": [
+                    {
+                        "recommendation_id": "rec_other_1",
+                        "title": "다른 추천 1",
+                    },
+                    {
+                        "recommendation_id": "rec_other_2",
+                        "title": "다른 추천 2",
+                    },
+                    {
+                        "recommendation_id": "rec_123",
+                        "title": "딸기 포인트 공개",
+                        "concept": "수제 딸기청을 빠르게 강조",
+                        "editing_template_id": "video_editing_db_014",
+                        "editing_template_version": 3,
+                    },
+                ]
             },
         )
     )
@@ -473,6 +485,10 @@ def test_editing_pipeline_repairs_validates_renders_and_revises(monkeypatch):
         _seed_shortform_session(db)
         run = service.create_run(db, _request())
         assert run.request_snapshot["_shortform_context"]["session_id"] == "shortform_123"
+        assert (
+            run.request_snapshot["_shortform_context"]["recommendation"]["recommendation_id"]
+            == "rec_123"
+        )
         assert "store_photos" not in run.request_snapshot["_shortform_context"]["store_context"]["store"]
         completed = service.execute(db, run.id)
 

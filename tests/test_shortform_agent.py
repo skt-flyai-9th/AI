@@ -9,6 +9,7 @@ from app.agents.shortform.types import (
     ShortformTurnDecision,
     VideoEditingDBCandidate,
     VideoEditingDBSelection,
+    VideoEditingDBSelections,
 )
 from app.db.session import SessionLocal
 from app.main import app
@@ -48,19 +49,23 @@ class FakeShortformLLM:
 
     def select_video_editing_db(
         self, *, candidates: list[VideoEditingDBCandidate], **kwargs
-    ) -> VideoEditingDBSelection:
-        candidate = candidates[0]
-        return VideoEditingDBSelection(
-            candidate_key=candidate.candidate_key,
-            project_title=f"{candidate.name} 프로젝트",
-            title=candidate.recommendation_title,
-            concept=candidate.recommendation_concept,
-            internal_reason="fake contextual selection for contract test",
+    ) -> VideoEditingDBSelections:
+        return VideoEditingDBSelections(
+            selections=[
+                VideoEditingDBSelection(
+                    candidate_key=candidate.candidate_key,
+                    project_title=f"{candidate.name} 프로젝트",
+                    title=f"개인화 제목 {index}",
+                    concept=candidate.recommendation_concept,
+                    internal_reason="fake contextual selection for contract test",
+                )
+                for index, candidate in enumerate(candidates[:3], start=1)
+            ]
         )
 
 
 class FailingRecommendationLLM(FakeShortformLLM):
-    def select_video_editing_db(self, **kwargs) -> VideoEditingDBSelection:
+    def select_video_editing_db(self, **kwargs) -> VideoEditingDBSelections:
         raise ShortformLLMError(
             "recommendation selector unavailable",
             status_code=503,
@@ -221,7 +226,7 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
         assert turn.status_code == 200
         assert turn.json()["action"] == "CONFIRM"
         assert turn.json()["project_state"]["ready_for_confirmation"] is True
-        assert turn.json()["recommendation"] is None
+        assert turn.json()["recommendations"] == []
 
         recommend = client.post(
             f"/api/v1/shortform-sessions/{session_id}/turns",
@@ -229,23 +234,26 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
             json={"input": {"type": "CONFIRM", "value": True}},
         )
         assert recommend.status_code == 200
-        first = recommend.json()["recommendation"]
+        recommendations = recommend.json()["recommendations"]
         assert recommend.json()["action"] == "RECOMMEND"
-        assert first["editing_template_id"] == "video_editing_db_014"
-        assert first["editing_template_id"] != "face_only"
+        assert len(recommendations) == 3
+        assert {item["editing_template_id"] for item in recommendations} == {
+            "video_editing_db_014",
+            "video_editing_db_028",
+            "face_only",
+        }
+        assert {item["title"] for item in recommendations} == {
+            "메뉴 한눈에 보여주기",
+            "제조 과정 빠르게 보여주기",
+            "사장님 얼굴 인터뷰",
+        }
 
         next_response = client.post(
             f"/api/v1/shortform-sessions/{session_id}/recommendations/next",
             headers=auth_headers,
             json={},
         )
-        assert next_response.status_code == 200
-        second = next_response.json()["recommendation"]
-        assert second["editing_template_id"] == "video_editing_db_028"
-        assert next_response.json()["shown_template_ids"] == [
-            "video_editing_db_014",
-            "video_editing_db_028",
-        ]
+        assert next_response.status_code == 409
 
         guide = client.get(
             "/api/v1/editing-templates/video_editing_db_028/versions/1/shooting-guide",
@@ -449,6 +457,8 @@ def test_openapi_preserves_live_legacy_backend_contract(client):
 
 def test_next_recommendation_reports_exhaustion_when_no_alternative(client, auth_headers):
     _seed_video_editing_db("only_db_record", title="유일한 호환 DB 버전")
+    _seed_video_editing_db("second_db_record", title="두 번째 호환 DB 버전")
+    _seed_video_editing_db("third_db_record", title="세 번째 호환 DB 버전")
 
     fake_service = ShortformAgentService(llm=FakeShortformLLM())
     app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
@@ -470,7 +480,9 @@ def test_next_recommendation_reports_exhaustion_when_no_alternative(client, auth
             json={"input": {"type": "CONFIRM", "value": True}},
         )
         assert recommend.status_code == 200
-        recommendation_id = recommend.json()["recommendation"]["recommendation_id"]
+        recommendation_ids = {
+            item["recommendation_id"] for item in recommend.json()["recommendations"]
+        }
 
         next_response = client.post(
             f"/api/v1/shortform-sessions/{session_id}/recommendations/next",
@@ -484,8 +496,13 @@ def test_next_recommendation_reports_exhaustion_when_no_alternative(client, auth
             session = db.get(ShortformSession, session_id)
             assert session is not None
             assert session.status == "WAITING_RECOMMENDATION_ACTION"
-            assert session.current_recommendation["recommendation_id"] == recommendation_id
-            assert session.shown_video_editing_db_ids == ["only_db_record"]
+            stored = session.current_recommendation["recommendations"]
+            assert {item["recommendation_id"] for item in stored} == recommendation_ids
+            assert set(session.shown_video_editing_db_ids) == {
+                "only_db_record",
+                "second_db_record",
+                "third_db_record",
+            }
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)
 
@@ -512,8 +529,10 @@ def test_shortform_recommendation_bootstraps_packaged_database(client, auth_head
         )
         assert response.status_code == 200
         assert response.json()["action"] == "RECOMMEND"
-        assert response.json()["recommendation"]["editing_template_id"] in {
-            "gt_cafe_recommendation_reels",
+        recommendations = response.json()["recommendations"]
+        assert len(recommendations) == 3
+        assert {item["editing_template_id"] for item in recommendations} == {
+            "gt_cafe_recommendation",
             "gt_jujutsu_transition",
             "gt_otsukare_summer",
         }
@@ -534,6 +553,8 @@ def test_shortform_recommends_even_when_every_constraint_mismatches(client, auth
             "minimum_filming_time": "30m_plus",
         },
     )
+    _seed_video_editing_db("mismatch_two", title="조건 불일치 영상 2", requires_face=True)
+    _seed_video_editing_db("mismatch_three", title="조건 불일치 영상 3", requires_face=True)
 
     fake_service = ShortformAgentService(llm=FakeShortformLLM())
     app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
@@ -557,16 +578,15 @@ def test_shortform_recommends_even_when_every_constraint_mismatches(client, auth
 
         assert response.status_code == 200
         assert response.json()["action"] == "RECOMMEND"
-        assert (
-            response.json()["recommendation"]["editing_template_id"]
-            == "face_required_long_template"
-        )
+        assert len(response.json()["recommendations"]) == 3
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)
 
 
 def test_shortform_recommendation_uses_stable_fallback_when_selector_fails(client, auth_headers):
     _seed_video_editing_db("fallback_template", title="항상 반환되는 추천")
+    _seed_video_editing_db("fallback_template_two", title="항상 반환되는 추천 2")
+    _seed_video_editing_db("fallback_template_three", title="항상 반환되는 추천 3")
 
     fake_service = ShortformAgentService(llm=FailingRecommendationLLM())
     app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
@@ -589,8 +609,13 @@ def test_shortform_recommendation_uses_stable_fallback_when_selector_fails(clien
         )
 
         assert response.status_code == 200
-        recommendation = response.json()["recommendation"]
-        assert recommendation["editing_template_id"] == "fallback_template"
-        assert recommendation["title"] == "항상 반환되는 추천"
+        recommendations = response.json()["recommendations"]
+        assert len(recommendations) == 3
+        assert len({item["editing_template_id"] for item in recommendations}) == 3
+        assert {item["title"] for item in recommendations} == {
+            "항상 반환되는 추천",
+            "항상 반환되는 추천 2",
+            "항상 반환되는 추천 3",
+        }
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)

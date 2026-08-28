@@ -18,6 +18,7 @@ from app.agents.shortform.types import (
     ShortformTurnDecision,
     VideoEditingDBCandidate,
     VideoEditingDBSelection,
+    VideoEditingDBSelections,
 )
 from app.core.config import get_settings
 from app.models.challenge import Challenge
@@ -245,7 +246,7 @@ class ShortformAgentService:
             assistant_message=assistant_message,
             project_state=ShortformProjectState.model_validate(project_state),
             options=options,
-            recommendation=None,
+            recommendations=[],
         )
 
     def next_recommendation(
@@ -265,10 +266,10 @@ class ShortformAgentService:
             session,
             user_event="[UI_EVENT] 다시 추천 받기",
         )
-        assert response.recommendation is not None
+        assert response.recommendations
         return NextRecommendationResponse(
             session_id=session.id,
-            recommendation=response.recommendation,
+            recommendations=response.recommendations,
             shown_template_ids=list(session.shown_video_editing_db_ids or []),
         )
 
@@ -324,7 +325,7 @@ class ShortformAgentService:
             assistant_message=message,
             project_state=ShortformProjectState.model_validate(project_state),
             options=options,
-            recommendation=None,
+            recommendations=[],
         )
 
     def get_shooting_guide(
@@ -532,7 +533,7 @@ class ShortformAgentService:
             assistant_message=message,
             project_state=ShortformProjectState.model_validate(project_state),
             options=[],
-            recommendation=None,
+            recommendations=[],
         )
 
     def _recommend(
@@ -558,25 +559,34 @@ class ShortformAgentService:
                 retryable=True,
             )
 
-        selection, selected = self._select_video_editing_db(session, candidates)
+        selected_items = self._select_video_editing_dbs(session, candidates)
+        recommendations: list[ShortformRecommendation] = []
+        stored_items: list[dict[str, Any]] = []
+        for selection, selected in selected_items:
+            recommendation = ShortformRecommendation(
+                recommendation_id=f"rec_{uuid.uuid4().hex}",
+                project_title=(
+                    selection.project_title or selected.recommendation_title or selected.name
+                ).strip(),
+                # The recommendation card title is authoritative catalog data.
+                title=selected.name.strip(),
+                concept=(
+                    selection.concept or selected.recommendation_concept or selected.name
+                ).strip(),
+                editing_template_id=selected.video_editing_db_id,
+                editing_template_version=selected.video_editing_db_version,
+            )
+            stored = recommendation.model_dump(mode="json")
+            stored["internal_reason"] = selection.internal_reason
+            recommendations.append(recommendation)
+            stored_items.append(stored)
 
-        recommendation = ShortformRecommendation(
-            recommendation_id=f"rec_{uuid.uuid4().hex}",
-            project_title=(
-                selection.project_title or selected.recommendation_title or selected.name
-            ).strip(),
-            title=(selection.title or selected.recommendation_title or selected.name).strip(),
-            concept=(selection.concept or selected.recommendation_concept or selected.name).strip(),
-            editing_template_id=selected.video_editing_db_id,
-            editing_template_version=selected.video_editing_db_version,
-        )
-        stored = recommendation.model_dump(mode="json")
-        stored["internal_reason"] = selection.internal_reason
-        session.current_recommendation = stored
+        session.current_recommendation = {"recommendations": stored_items}
         session.status = ShortformSessionStatus.WAITING_RECOMMENDATION_ACTION.value
         shown = list(session.shown_video_editing_db_ids or [])
-        if selected.video_editing_db_id not in shown:
-            shown.append(selected.video_editing_db_id)
+        for _, selected in selected_items:
+            if selected.video_editing_db_id not in shown:
+                shown.append(selected.video_editing_db_id)
         session.shown_video_editing_db_ids = shown
         conversation = list(session.conversation or [])
         if user_event:
@@ -584,7 +594,10 @@ class ShortformAgentService:
         conversation.append(
             {
                 "role": "assistant",
-                "content": f"[RECOMMENDATION] {recommendation.title} — {recommendation.concept}",
+                "content": "[RECOMMENDATIONS] "
+                + " | ".join(
+                    f"{item.title} — {item.concept}" for item in recommendations
+                ),
             }
         )
         session.conversation = conversation[-40:]
@@ -595,7 +608,7 @@ class ShortformAgentService:
             assistant_message=None,
             project_state=ShortformProjectState.model_validate(session.project_state),
             options=[],
-            recommendation=recommendation,
+            recommendations=recommendations,
         )
 
     def _recommendation_candidates(
@@ -618,17 +631,17 @@ class ShortformAgentService:
                 constraint_mode=mode,
                 exclude_shown=True,
             )
-            if candidates:
+            if len(candidates) >= 3:
                 return candidates
 
         return []
 
-    def _select_video_editing_db(
+    def _select_video_editing_dbs(
         self,
         session: ShortformSession,
         candidates: list[VideoEditingDBCandidate],
-    ) -> tuple[VideoEditingDBSelection, VideoEditingDBCandidate]:
-        """Use contextual LLM selection, with a deterministic availability fallback."""
+    ) -> list[tuple[VideoEditingDBSelection, VideoEditingDBCandidate]]:
+        """Select three distinct candidates in one LLM call, with a stable fallback."""
 
         try:
             graph_result = self._invoke_graph(
@@ -643,12 +656,17 @@ class ShortformAgentService:
                     ],
                 }
             )
-            selection = VideoEditingDBSelection.model_validate(graph_result["recommendation"])
+            selections = VideoEditingDBSelections.model_validate(
+                graph_result["recommendations"]
+            ).selections
             by_key = {item.candidate_key: item for item in candidates}
-            selected = by_key.get(selection.candidate_key)
-            if selected is None:
-                raise ValueError("selection is outside the candidate pool")
-            return selection, selected
+            result = []
+            for selection in selections:
+                selected = by_key.get(selection.candidate_key)
+                if selected is None:
+                    raise ValueError("selection is outside the candidate pool")
+                result.append((selection, selected))
+            return result
         except (
             ShortformLLMError,
             ShortformDomainError,
@@ -660,25 +678,29 @@ class ShortformAgentService:
             # Conversation still requires the LLM, but once a brief is confirmed a
             # recommendation must not disappear because the contextual selector is
             # temporarily unavailable or returns malformed structured output.
-            selected = candidates[0]
+            selected_candidates = candidates[:3]
             logger.warning(
-                "Shortform recommendation selector failed; using stable fallback candidate %s (%s)",
-                selected.candidate_key,
+                "Shortform recommendation selector failed; using three stable fallback candidates (%s)",
                 type(exc).__name__,
             )
-            return (
-                VideoEditingDBSelection(
-                    candidate_key=selected.candidate_key,
-                    project_title=f"{selected.recommendation_title or selected.name} 프로젝트",
-                    title=selected.recommendation_title or selected.name,
-                    concept=selected.recommendation_concept or selected.name,
-                    internal_reason=(
-                        "Deterministic availability fallback after contextual "
-                        "recommendation selection failed."
+            return [
+                (
+                    VideoEditingDBSelection(
+                        candidate_key=selected.candidate_key,
+                        project_title=(
+                            f"{selected.recommendation_title or selected.name} 프로젝트"
+                        ),
+                        title=selected.name,
+                        concept=selected.recommendation_concept or selected.name,
+                        internal_reason=(
+                            "Deterministic availability fallback after contextual "
+                            "recommendation selection failed."
+                        ),
                     ),
-                ),
-                selected,
-            )
+                    selected,
+                )
+                for selected in selected_candidates
+            ]
 
     def _video_editing_db_candidates(
         self,
