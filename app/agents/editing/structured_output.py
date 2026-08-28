@@ -132,19 +132,26 @@ def request_structured_model(
             return schema_model.model_validate(parsed)
         except (ValidationError, ValueError, TypeError) as exc:
             reason = _structured_output_failure_reason(response_payload, exc)
+            detail = _structured_output_failure_detail(exc)
             error = EditingLLMError(
                 _request_error_message(
                     schema_name=schema_name,
                     attempt=attempt,
                     max_attempts=max_attempts,
                     reason=reason,
+                    detail=detail,
                 ),
                 retryable=attempt < max_attempts,
             )
             if attempt >= max_attempts:
                 raise error from exc
             output_token_limit = min(20_000, output_token_limit + max_output_tokens)
-            request_payload["instructions"] = _retry_instructions(instructions, reason)
+            request_payload["instructions"] = _retry_instructions(
+                instructions,
+                reason,
+                detail=detail,
+                schema_name=schema_name,
+            )
             _wait_before_retry(attempt)
 
     raise EditingLLMError(
@@ -208,12 +215,29 @@ def _rate_limit_error_code(response: httpx.Response) -> str:
     return str(error.get("code") or error.get("type") or "").strip().lower()
 
 
-def _retry_instructions(instructions: str, reason: str) -> str:
+def _retry_instructions(
+    instructions: str,
+    reason: str,
+    *,
+    detail: str = "",
+    schema_name: str = "",
+) -> str:
+    outcome_contract = ""
+    if schema_name in {"editing_plan", "editing_plan_repair"}:
+        outcome_contract = (
+            " For outcome=RECIPE, recipe and publishing are required and "
+            "missing_scene_roles/available_options must both be empty. For "
+            "outcome=SOURCE_GAP, recipe and publishing must be null, "
+            "missing_scene_roles must be non-empty, and available_options must contain "
+            "USE_REDUCED_STRUCTURE and ADD_MORE_VIDEO exactly once each."
+        )
+    feedback = detail or reason
     return (
         f"{instructions}\n\n"
         "The previous response could not be validated against the required JSON schema "
-        f"({reason}). Return one complete JSON object only. Include every required field, "
-        "respect every enum and numeric bound, and do not include commentary outside JSON."
+        f"({reason}). Validation feedback: {feedback}. Return one complete JSON object only. "
+        "Include every required field, respect every enum and numeric bound, and do not "
+        f"include commentary outside JSON.{outcome_contract}"
     )
 
 
@@ -223,11 +247,15 @@ def _request_error_message(
     attempt: int,
     max_attempts: int,
     reason: str,
+    detail: str = "",
 ) -> str:
-    return (
+    message = (
         "Editing GPT request failed: "
         f"schema={schema_name}; reason={reason}; attempt={attempt}/{max_attempts}."
     )
+    if detail:
+        message += f" detail={detail}"
+    return message
 
 
 def _structured_output_failure_reason(payload: dict[str, Any], exc: Exception) -> str:
@@ -253,6 +281,20 @@ def _structured_output_failure_reason(payload: dict[str, Any], exc: Exception) -
     if not _extract_output_text(payload).strip():
         return "empty_output"
     return "invalid_structured_output"
+
+
+def _structured_output_failure_detail(exc: Exception) -> str:
+    """Return actionable validation feedback without echoing model input or URLs."""
+    if isinstance(exc, ValidationError):
+        details: list[str] = []
+        for error in exc.errors(include_url=False, include_input=False)[:5]:
+            location = ".".join(str(item) for item in error.get("loc", [])) or "root"
+            message = " ".join(str(error.get("msg") or "invalid value").split())
+            details.append(f"{location}: {message}"[:300])
+        return "; ".join(details)[:1000]
+    if isinstance(exc, json.JSONDecodeError):
+        return f"invalid JSON at line {exc.lineno}, column {exc.colno}"
+    return " ".join(str(exc).split())[:500]
 
 
 def _response_requires_retry(payload: dict[str, Any]) -> bool:
