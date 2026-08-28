@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 MAX_SHOOTING_GUIDE_CUTS = 60
 MAX_INFORMATIONAL_SHOOTING_ELEMENTS = 5
 MAX_SHOOTING_ELEMENT_INSTRUCTION_CHARS = 50
+MAX_SHOOTING_GUIDE_TITLE_CHARS = 9
 
 
 class TemplateType(StrEnum):
@@ -157,7 +158,7 @@ class ShootingGuideTask(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     display_order: int = Field(ge=1)
-    task_title: str = Field(min_length=1, max_length=200)
+    task_title: str = Field(min_length=1, max_length=MAX_SHOOTING_GUIDE_TITLE_CHARS)
     scene_index: int = Field(ge=0)
     guide: ShootingGuideTaskGuide
 
@@ -186,7 +187,7 @@ class InformationalShootingElement(BaseModel):
 
     element_id: str = Field(pattern=r"^ELEMENT_[0-9]{2}$")
     display_order: int = Field(ge=1, le=MAX_INFORMATIONAL_SHOOTING_ELEMENTS)
-    title: str = Field(min_length=1, max_length=30)
+    title: str = Field(min_length=1, max_length=MAX_SHOOTING_GUIDE_TITLE_CHARS)
     instruction: str = Field(
         min_length=1, max_length=MAX_SHOOTING_ELEMENT_INSTRUCTION_CHARS
     )

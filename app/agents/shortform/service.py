@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.agents.shortform.graph import build_shortform_graph
 from app.agents.shortform.llm import OpenAIShortformLLM, ShortformLLM, ShortformLLMError
 from app.agents.shortform.types import (
+    DecisionOption,
     ShortformTurnDecision,
     VideoEditingDBCandidate,
     VideoEditingDBSelection,
@@ -27,6 +28,7 @@ from app.schemas.shortform import (
     FilmingTime,
     NextRecommendationResponse,
     PromotionCategory,
+    PromotionObjective,
     ShortformAction,
     ShortformEntryMode,
     ShortformOption,
@@ -147,25 +149,38 @@ class ShortformAgentService:
         if entry_response is not None:
             return entry_response
 
+        project_state = _apply_deterministic_turn_input(
+            dict(session.project_state or {}),
+            turn_input,
+            session.store_context or {},
+        )
         selected_category = _promotion_category_from_option(turn_input)
         if selected_category is not None:
-            project_state = dict(session.project_state or {})
             project_state["promotion_category"] = selected_category.value
-            session.project_state = project_state
+        session.project_state = project_state
+
+        user_input = turn_input.model_dump(mode="json", exclude_none=True)
+        if turn_input.type == TurnInputType.OPTION:
+            option_labels = project_state.get("option_labels") or {}
+            option_label = option_labels.get(str(turn_input.option_id or ""))
+            if option_label:
+                user_input["option_label"] = option_label
+        if project_state.get("current_question"):
+            user_input["answering_question"] = project_state["current_question"]
 
         graph_result = self._invoke_graph(
             {
                 "mode": "TURN",
                 "domain_context": self.domain_context,
                 "store_context": session.store_context,
-                "project_state": session.project_state,
+                "project_state": project_state,
                 "conversation": session.conversation,
-                "user_input": turn_input.model_dump(mode="json", exclude_none=True),
+                "user_input": user_input,
                 "photo_urls": self._photo_urls(session.store_context),
             }
         )
         decision = ShortformTurnDecision.model_validate(graph_result["decision"])
-        project_state = self._merge_project_state(session.project_state, decision)
+        project_state = self._merge_project_state(project_state, decision)
 
         # Code, not the LLM, is authoritative for recommendation readiness.
         missing = _missing_required_fields(project_state)
@@ -186,14 +201,22 @@ class ShortformAgentService:
             action = ShortformAction.ASK
 
         assistant_message = _format_assistant_message(decision.assistant_message, action)
+        previous_question = str(session.project_state.get("current_question") or "").strip()
+        next_question_field = _infer_question_field(decision.options, missing)
+        if action in _QUESTION_ACTIONS and previous_question == _extract_question(
+            assistant_message
+        ):
+            assistant_message, fallback_options = _fallback_question(next_question_field)
+            if fallback_options:
+                decision = decision.model_copy(update={"options": fallback_options})
         project_state["current_question"] = (
-            _extract_question(assistant_message)
-            if action in _QUESTION_ACTIONS
-            else None
+            _extract_question(assistant_message) if action in _QUESTION_ACTIONS else None
+        )
+        project_state["current_question_field"] = (
+            next_question_field if action in _QUESTION_ACTIONS else None
         )
         project_state["ready_for_recommendation"] = bool(
-            project_state.get("brief_confirmed")
-            and project_state.get("ready_for_confirmation")
+            project_state.get("brief_confirmed") and project_state.get("ready_for_confirmation")
         )
 
         session.project_state = project_state
@@ -213,6 +236,9 @@ class ShortformAgentService:
             return self._recommend(db, session)
 
         options = _sanitize_options(decision.options, action)
+        project_state["option_labels"] = {item.id: item.label for item in options}
+        session.project_state = project_state
+        db.commit()
         return ShortformTurnResponse(
             session_id=session.id,
             action=action,
@@ -270,8 +296,7 @@ class ShortformAgentService:
         elif option_id == "FREE_INPUT":
             entry_mode = ShortformEntryMode.FREE_INPUT
             message = (
-                "어떤 영상을 만들고 싶은지 편하게 말씀해주세요. "
-                "필요한 정보만 하나씩 확인할게요."
+                "어떤 영상을 만들고 싶은지 편하게 말씀해주세요. 필요한 정보만 하나씩 확인할게요."
             )
             options = []
         else:
@@ -280,6 +305,10 @@ class ShortformAgentService:
         project_state = dict(session.project_state or {})
         project_state["entry_mode"] = entry_mode.value
         project_state["current_question"] = _extract_question(message)
+        project_state["current_question_field"] = (
+            "promotion_subject" if option_id == "PROMOTION_GUIDE" else None
+        )
+        project_state["option_labels"] = {item.id: item.label for item in options}
         project_state["ready_for_recommendation"] = False
         session.project_state = project_state
         session.status = ShortformSessionStatus.COLLECTING.value
@@ -313,11 +342,7 @@ class ShortformAgentService:
                 .order_by(VideoEditingDBRecord.version.desc())
             )
             template = next(
-                (
-                    row
-                    for row in active_templates
-                    if template_id in (row.trend_ids or [])
-                ),
+                (row for row in active_templates if template_id in (row.trend_ids or [])),
                 None,
             )
         if template is None:
@@ -332,13 +357,12 @@ class ShortformAgentService:
             if value is not None and str(value).strip()
         }
         guide = _personalize_guide_value(dict(template.shooting_guide or {}), normalized_context)
-        format_type = str(
-            (template.recommendation_metadata or {}).get("format_type") or "밈"
-        )
+        format_type = str((template.recommendation_metadata or {}).get("format_type") or "밈")
         shooting_elements = []
         if format_type == "정보형":
             for index, item in enumerate(guide.get("shooting_elements") or [], start=1):
                 element = dict(item)
+                title = _bounded_guide_title(element.get("title"), "촬영 요소")
                 instruction = str(element.get("instruction") or "").strip()
                 if not instruction or len(instruction) > 50:
                     raise ShortformDomainError(
@@ -350,7 +374,7 @@ class ShortformAgentService:
                     {
                         "element_id": str(element.get("element_id") or f"ELEMENT_{index:02d}"),
                         "display_order": int(element.get("display_order") or index),
-                        "title": str(element.get("title") or "촬영 요소").strip(),
+                        "title": title,
                         "instruction": instruction,
                         "minimum_recording_sec": max(
                             int(element.get("minimum_recording_sec") or 1), 1
@@ -386,20 +410,19 @@ class ShortformAgentService:
             if scene_index is None:
                 scene_index = display_order - 1
 
-            task_title = str(
+            task_title = _bounded_guide_title(
                 task.get("task_title")
                 or task.get("title")
                 or task.get("description")
-                or "촬영 태스크"
-            ).strip()[:200] or "촬영 태스크"
+                or "촬영 태스크",
+                "촬영 태스크",
+            )
             raw_guide = task.get("guide") if isinstance(task.get("guide"), dict) else {}
             raw_instructions = raw_guide.get("instructions") or []
             if isinstance(raw_instructions, str):
                 raw_instructions = [raw_instructions]
             instructions = [
-                str(value).strip()[:500]
-                for value in raw_instructions
-                if str(value).strip()
+                str(value).strip()[:500] for value in raw_instructions if str(value).strip()
             ]
             legacy_description = str(task.get("description") or "").strip()
             if not instructions and legacy_description:
@@ -426,9 +449,7 @@ class ShortformAgentService:
                 }
             )
 
-        final_duration = sum(
-            max(int(scene.get("target_duration_sec") or 0), 0) for scene in scenes
-        )
+        final_duration = sum(max(int(scene.get("target_duration_sec") or 0), 0) for scene in scenes)
         estimated_shooting_sec = (
             max(final_duration * 10, 60)
             if final_duration
@@ -523,6 +544,13 @@ class ShortformAgentService:
     ) -> ShortformTurnResponse:
         candidates = self._recommendation_candidates(db, session)
         if not candidates:
+            if user_event:
+                raise ShortformDomainError(
+                    "NO_MORE_SHORTFORM_RECOMMENDATIONS",
+                    "All available video-editing DB templates have already been shown.",
+                    status_code=409,
+                    retryable=False,
+                )
             raise ShortformDomainError(
                 "NO_ACTIVE_VIDEO_EDITING_DB",
                 "The packaged video-editing DB could not provide an ACTIVE record.",
@@ -593,17 +621,6 @@ class ShortformAgentService:
             if candidates:
                 return candidates
 
-        if session.shown_video_editing_db_ids:
-            session.shown_video_editing_db_ids = []
-            for mode in ("strict", "safe", "any"):
-                candidates = self._video_editing_db_candidates(
-                    db,
-                    session,
-                    constraint_mode=mode,
-                    exclude_shown=False,
-                )
-                if candidates:
-                    return candidates
         return []
 
     def _select_video_editing_db(
@@ -683,9 +700,7 @@ class ShortformAgentService:
             if exclude_shown and template.template_id in shown:
                 continue
             metadata = dict(template.recommendation_metadata or {})
-            if constraint_mode != "any" and not _passes_hard_constraints(
-                metadata, project_state
-            ):
+            if constraint_mode != "any" and not _passes_hard_constraints(metadata, project_state):
                 continue
             if constraint_mode == "strict" and not _passes_soft_constraints(
                 metadata, project_state
@@ -973,6 +988,153 @@ def _missing_required_fields(state: dict[str, Any]) -> list[str]:
     return missing
 
 
+def _bounded_guide_title(value: Any, fallback: str) -> str:
+    title = str(value or fallback).strip() or fallback
+    return title if len(title) <= 9 else f"{title[:8]}…"
+
+
+def _apply_deterministic_turn_input(
+    state: dict[str, Any],
+    turn_input: ShortformTurnInput,
+    store_context: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist canonical UI answers before asking the LLM to interpret free text.
+
+    The LLM still handles natural conversation, but stable option IDs must never be
+    lost because of a transient structured-output omission. This is also what keeps
+    an already answered question from being asked again.
+    """
+
+    result = dict(state)
+    if turn_input.type == TurnInputType.OPTION:
+        raw_id = str(turn_input.option_id or "").strip()
+        option_id = raw_id.lower()
+        if option_id in {item.value for item in PromotionObjective}:
+            result["promotion_objective"] = option_id
+        elif option_id in {item.value for item in FilmingTime}:
+            result["filming_time"] = option_id
+        elif option_id in {item.value for item in FaceExposure}:
+            result["face_exposure"] = option_id
+        else:
+            for menu in store_context.get("representative_menus") or []:
+                if str(menu.get("menu_id") or "") == raw_id:
+                    result["promotion_subject"] = {
+                        "type": "MENU",
+                        "name": str(menu.get("name") or "").strip(),
+                        "menu_id": raw_id,
+                        "details": {},
+                    }
+                    break
+        return result
+
+    if turn_input.type != TurnInputType.TEXT:
+        return result
+    text = str(turn_input.text or "").strip()
+    field = result.get("current_question_field")
+    if field == "promotion_subject":
+        category = str(result.get("promotion_category") or "").upper() or None
+        result["promotion_subject"] = {
+            "type": category,
+            "name": text,
+            "menu_id": None,
+            "details": {},
+        }
+    elif field == "promotion_objective":
+        objective = _objective_from_text(text)
+        if objective:
+            result["promotion_objective"] = objective
+    elif field == "filming_time":
+        filming_time = _filming_time_from_text(text)
+        if filming_time:
+            result["filming_time"] = filming_time
+    elif field == "face_exposure":
+        face_exposure = _face_exposure_from_text(text)
+        if face_exposure:
+            result["face_exposure"] = face_exposure
+    return result
+
+
+def _objective_from_text(text: str) -> str | None:
+    normalized = text.replace(" ", "")
+    for needles, value in (
+        (("매출", "판매"), PromotionObjective.SALES.value),
+        (("신규고객", "새손님"), PromotionObjective.NEW_CUSTOMER.value),
+        (("예약", "문의"), PromotionObjective.RESERVATION_INQUIRY.value),
+        (("재방문", "단골"), PromotionObjective.REVISIT.value),
+        (("방문", "오게"), PromotionObjective.VISIT.value),
+        (("신뢰",), PromotionObjective.TRUST.value),
+        (("인지", "알리"), PromotionObjective.AWARENESS.value),
+    ):
+        if any(needle in normalized for needle in needles):
+            return value
+    return None
+
+
+def _filming_time_from_text(text: str) -> str | None:
+    match = re.search(r"(\d+)\s*분", text)
+    if not match:
+        return None
+    minutes = int(match.group(1))
+    if minutes <= 5:
+        return FilmingTime.WITHIN_5M.value
+    if minutes <= 10:
+        return FilmingTime.WITHIN_10M.value
+    if minutes <= 20:
+        return FilmingTime.WITHIN_20M.value
+    return FilmingTime.PLUS_30M.value
+
+
+def _face_exposure_from_text(text: str) -> str | None:
+    normalized = text.replace(" ", "")
+    if any(token in normalized for token in ("안돼", "안됨", "싫", "노출없", "얼굴없이")):
+        return FaceExposure.NOT_ALLOWED.value
+    if any(token in normalized for token in ("괜찮", "가능", "나와도", "노출해도")):
+        return FaceExposure.ALLOWED.value
+    return None
+
+
+def _infer_question_field(options: list[Any], missing: list[str]) -> str | None:
+    option_ids = {str(item.id).strip().lower() for item in options}
+    if option_ids and option_ids <= {item.value for item in PromotionObjective}:
+        return "promotion_objective"
+    if option_ids and option_ids <= {item.value for item in FilmingTime}:
+        return "filming_time"
+    if option_ids and option_ids <= {item.value for item in FaceExposure}:
+        return "face_exposure"
+    return missing[0] if missing else None
+
+
+def _fallback_question(field: str | None) -> tuple[str, list[DecisionOption]]:
+    if field == "promotion_objective":
+        return (
+            "이 영상으로 어떤 결과를 가장 원하세요?",
+            [
+                DecisionOption(id="sales", label="매출 늘리기"),
+                DecisionOption(id="visit", label="매장 방문"),
+                DecisionOption(id="awareness", label="가게 알리기"),
+            ],
+        )
+    if field == "filming_time":
+        return (
+            "촬영에 어느 정도 시간을 쓸 수 있으세요?",
+            [
+                DecisionOption(id="within_5m", label="5분 이내"),
+                DecisionOption(id="within_10m", label="10분 이내"),
+                DecisionOption(id="within_20m", label="20분 이내"),
+                DecisionOption(id="30m_plus", label="30분 이상"),
+            ],
+        )
+    if field == "face_exposure":
+        return (
+            "영상에 얼굴이 나와도 괜찮으세요?",
+            [
+                DecisionOption(id="allowed", label="얼굴 노출 가능"),
+                DecisionOption(id="not_allowed", label="얼굴 노출 없이"),
+            ],
+        )
+    return "무엇을 홍보하고 싶으세요?", []
+
+
 def _passes_hard_constraints(metadata: dict[str, Any], state: dict[str, Any]) -> bool:
     if metadata.get("renderer_supported") is False:
         return False
@@ -1111,11 +1273,7 @@ def _single_question_message(message: str) -> str:
 def _extract_question(message: str) -> str | None:
     if not message:
         return None
-    parts = [
-        part.strip()
-        for part in re.split(r"(?<=[?])\s+", message.strip())
-        if part.strip()
-    ]
+    parts = [part.strip() for part in re.split(r"(?<=[?])\s+", message.strip()) if part.strip()]
     return next((part for part in parts if part.endswith("?")), None)
 
 
@@ -1143,10 +1301,7 @@ def _personalize_guide_value(value: Any, context: dict[str, str]) -> Any:
     if isinstance(value, list):
         return [_personalize_guide_value(item, context) for item in value]
     if isinstance(value, dict):
-        return {
-            key: _personalize_guide_value(item, context)
-            for key, item in value.items()
-        }
+        return {key: _personalize_guide_value(item, context) for key, item in value.items()}
     return value
 
 

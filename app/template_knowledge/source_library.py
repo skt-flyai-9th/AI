@@ -735,7 +735,7 @@ def _editing_content(
             tasks.append(
                 {
                     "display_order": order,
-                    "task_title": _bounded(str(row["narrative_role"]), 200),
+                    "task_title": _bounded(str(row["narrative_role"]), 9),
                     "scene_index": order - 1,
                     "guide": {"instructions": [summary]},
                 }
@@ -773,7 +773,7 @@ def _editing_content(
             tasks.append(
                 {
                     "display_order": order,
-                    "task_title": _bounded(str(interval["task_title"]), 200),
+                    "task_title": _bounded(str(interval["task_title"]), 9),
                     "scene_index": order - 1,
                     "guide": {"instructions": instructions},
                 }
@@ -796,7 +796,7 @@ def _editing_content(
                 {
                     "element_id": str(item["shooting_element_id"]),
                     "display_order": int(item["display_order"]),
-                    "title": _bounded(str(item["title"]), 30),
+                    "title": _bounded(str(item["title"]), 9),
                     "instruction": _bounded(str(item["instruction"]), 50),
                     "minimum_recording_sec": int(item["minimum_recording_sec"]),
                     "reference_segment_sequences": sequences,
