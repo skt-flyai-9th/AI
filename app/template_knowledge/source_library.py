@@ -685,11 +685,18 @@ def _has_required_editing_contract(
     actual_format = str((record.recommendation_metadata or {}).get("format_type") or "")
     if actual_format != expected_format:
         return False
+    actual_guide = record.shooting_guide or {}
+    expected_guide = authoritative.shooting_guide.model_dump(mode="json")
     if expected_format != "정보형":
-        return True
-    elements = (record.shooting_guide or {}).get("shooting_elements") or []
-    return 1 <= len(elements) <= 5 and all(
-        len(str(item.get("instruction") or "")) <= 50 for item in elements
+        return (
+            actual_guide.get("tasks") == expected_guide.get("tasks")
+            and actual_guide.get("scenes") == expected_guide.get("scenes")
+        )
+    elements = actual_guide.get("shooting_elements") or []
+    return (
+        elements == expected_guide.get("shooting_elements")
+        and 1 <= len(elements) <= 5
+        and all(len(str(item.get("instruction") or "")) <= 50 for item in elements)
     )
 
 
