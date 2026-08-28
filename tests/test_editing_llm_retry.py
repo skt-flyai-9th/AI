@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 import pytest
 
 from app.agents.editing.llm import EditingLLMError, OpenAIEditingLLM
@@ -282,6 +283,38 @@ def test_rate_limit_response_is_retried(monkeypatch):
     assert result.outcome == "SOURCE_GAP"
     assert len(requests) == 2
     assert requests[1]["max_output_tokens"] == 5000
+
+
+def test_frame_batch_timeout_can_fail_after_one_attempt(monkeypatch):
+    calls = 0
+
+    def fake_post(**_kwargs):
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("frame analysis timed out")
+
+    monkeypatch.setattr(structured_output, "_post_responses_api", fake_post)
+
+    with pytest.raises(EditingLLMError) as captured:
+        structured_output.request_structured_model(
+            schema_model=EditingPlanDecision,
+            schema=EditingPlanDecision.model_json_schema(),
+            base_url="https://example.test",
+            api_key="test-key",
+            model="test-model",
+            instructions="Analyze frames.",
+            content=[{"type": "input_text", "text": "{}"}],
+            schema_name="editing_frame_batch",
+            timeout=120,
+            max_output_tokens=5000,
+            max_attempts=3,
+            rate_limit_retry_base_seconds=20.0,
+            timeout_max_attempts=1,
+        )
+
+    assert calls == 1
+    assert captured.value.reason == "timeout"
+    assert "attempt=1/1" in str(captured.value)
 
 
 def test_rate_limit_uses_long_backoff_and_honors_retry_after(monkeypatch):

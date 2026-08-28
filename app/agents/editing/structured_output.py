@@ -11,9 +11,16 @@ from app.agents.editing.telemetry import record_request, record_response
 
 
 class EditingLLMError(RuntimeError):
-    def __init__(self, message: str, *, retryable: bool = True) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool = True,
+        reason: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.retryable = retryable
+        self.reason = reason
 
 
 def request_structured_model(
@@ -30,6 +37,7 @@ def request_structured_model(
     max_output_tokens: int,
     max_attempts: int,
     rate_limit_retry_base_seconds: float,
+    timeout_max_attempts: int | None = None,
 ) -> _ModelT:
     request_payload: dict[str, Any] = {
         "model": model,
@@ -47,6 +55,12 @@ def request_structured_model(
         "store": False,
     }
     output_token_limit = max_output_tokens
+    timeout_attempt_limit = (
+        max_attempts
+        if timeout_max_attempts is None
+        else max(1, min(timeout_max_attempts, max_attempts))
+    )
+    timeout_attempts = 0
     for attempt in range(1, max_attempts + 1):
         request_payload["max_output_tokens"] = output_token_limit
         try:
@@ -58,15 +72,17 @@ def request_structured_model(
                 request_payload=request_payload,
             )
         except httpx.TimeoutException as exc:
+            timeout_attempts += 1
             error = EditingLLMError(
                 _request_error_message(
                     schema_name=schema_name,
-                    attempt=attempt,
-                    max_attempts=max_attempts,
+                    attempt=timeout_attempts,
+                    max_attempts=timeout_attempt_limit,
                     reason="timeout",
-                )
+                ),
+                reason="timeout",
             )
-            if attempt >= max_attempts:
+            if timeout_attempts >= timeout_attempt_limit:
                 raise error from exc
             _wait_before_retry(attempt)
             continue

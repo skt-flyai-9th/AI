@@ -375,8 +375,8 @@ class OpenAIEditingLLM:
         observations: list[dict[str, Any]] = []
         summaries: list[str] = []
         batch_size = max(1, min(self.analysis_batch_frames, 40))
-        for start in range(0, len(frames), batch_size):
-            batch = frames[start : start + batch_size]
+
+        def request_batch(batch: list[Any]) -> FrameBatchAnalysis:
             payload = {
                 "task": (
                     "Analyze every supplied frame independently and in temporal context. "
@@ -429,7 +429,7 @@ class OpenAIEditingLLM:
                 content.append(
                     {"type": "input_image", "image_url": frame.image_url, "detail": "low"}
                 )
-            result = self._request_model(
+            return self._request_model(
                 schema_model=FrameBatchAnalysis,
                 instructions=(
                     "You are the frame-accurate vision stage of SARILS Editing Agent. "
@@ -442,28 +442,41 @@ class OpenAIEditingLLM:
                 user_payload=None,
                 schema_name="editing_frame_batch",
                 content_override=content,
+                timeout_max_attempts=1,
             )
+
+        for start in range(0, len(frames), batch_size):
+            batch = frames[start : start + batch_size]
+            try:
+                batch_results = [(batch, request_batch(batch))]
+            except EditingLLMError as exc:
+                if exc.reason != "timeout" or len(batch) < 2:
+                    raise
+                midpoint = (len(batch) + 1) // 2
+                split_batches = (batch[:midpoint], batch[midpoint:])
+                batch_results = [(part, request_batch(part)) for part in split_batches if part]
             if on_batch_complete is not None:
                 on_batch_complete()
-            summaries.append(result.summary)
-            by_index = {item.frame_index: item for item in result.observations}
-            for frame in batch:
-                observed = by_index.get(frame.frame_index)
-                if observed is None:
-                    observed = FrameObservation(
-                        video_id=context.video_id,
-                        frame_index=frame.frame_index,
-                        timestamp_ms=frame.timestamp_ms,
-                    )
-                else:
-                    observed = observed.model_copy(
-                        update={
-                            "video_id": context.video_id,
-                            "frame_index": frame.frame_index,
-                            "timestamp_ms": frame.timestamp_ms,
-                        }
-                    )
-                observations.append(observed.model_dump(mode="json"))
+            for analyzed_batch, result in batch_results:
+                summaries.append(result.summary)
+                by_index = {item.frame_index: item for item in result.observations}
+                for frame in analyzed_batch:
+                    observed = by_index.get(frame.frame_index)
+                    if observed is None:
+                        observed = FrameObservation(
+                            video_id=context.video_id,
+                            frame_index=frame.frame_index,
+                            timestamp_ms=frame.timestamp_ms,
+                        )
+                    else:
+                        observed = observed.model_copy(
+                            update={
+                                "video_id": context.video_id,
+                                "frame_index": frame.frame_index,
+                                "timestamp_ms": frame.timestamp_ms,
+                            }
+                        )
+                    observations.append(observed.model_dump(mode="json"))
         return {
             "video_id": context.video_id,
             "shooting_scene_order": context.shooting_scene_order,
@@ -537,6 +550,7 @@ class OpenAIEditingLLM:
         user_payload: dict[str, Any] | None,
         schema_name: str,
         content_override: list[dict[str, Any]] | None = None,
+        timeout_max_attempts: int | None = None,
     ) -> _ModelT:
         if not self.api_key or not self.model:
             raise EditingLLMError(
@@ -565,6 +579,7 @@ class OpenAIEditingLLM:
             max_output_tokens=self.max_output_tokens,
             max_attempts=self.max_request_attempts,
             rate_limit_retry_base_seconds=self.rate_limit_retry_base_seconds,
+            timeout_max_attempts=timeout_max_attempts,
         )
 
 
