@@ -64,6 +64,18 @@ def test_cta_box_uses_opaque_black_rounded_background():
     assert text.startswith("Dialogue: 1,")
 
 
+def test_cta_box_path_uses_local_coordinates_to_match_text_center():
+    ass = build_ass([_placed("CTA_BOX")], StubFontRegistry())
+    background = next(line for line in ass.splitlines() if line.startswith("Dialogue: 0,"))
+
+    # 380px measured text + 24px horizontal padding on each side.
+    # Positive local coordinates let libass apply \\an5 centering exactly once.
+    assert "m 14 0 l 414 0" in background
+    assert "l 428 90" in background
+    assert "l 14 104" in background
+    assert "m -" not in background
+
+
 def test_subtitle_is_unrotated_and_forced_to_horizontal_center():
     ass = build_ass([_placed("HOOK")], StubFontRegistry(), canvas=(1080, 1920))
     dialogues = [line for line in ass.splitlines() if line.startswith("Dialogue:")]
