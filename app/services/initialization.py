@@ -55,5 +55,5 @@ def initialize_service_once(
         "mode": "INITIAL_ONCE",
         "database_library": database_result,
         "ranking": ranking_result,
-        "recurring_updates_enabled": False,
+        "recurring_content_updates_enabled": False,
     }

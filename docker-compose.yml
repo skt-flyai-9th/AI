@@ -93,6 +93,23 @@ services:
       initializer:
         condition: service_completed_successfully
 
+  beat:
+    build: .
+    command: celery -A app.workers.celery_app.celery_app beat --loglevel=INFO
+    env_file: .env
+    environment:
+      RUN_DB_MIGRATIONS: "false"
+    volumes:
+      - ./runtime-data:/app/runtime-data
+      - ./exports:/app/exports
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      initializer:
+        condition: service_completed_successfully
+
 volumes:
   postgres-data:
   redis-data:

@@ -80,8 +80,9 @@ class Settings(BaseSettings):
     editing_analysis_batch_frames: int = Field(default=24, ge=6, le=40)
     editing_analysis_max_frames_per_video: int = Field(default=48, ge=6, le=240)
     editing_analysis_max_total_frames: int = Field(default=120, ge=12, le=720)
-    editing_orphan_recovery_enabled: bool = False
+    editing_orphan_recovery_enabled: bool = True
     editing_orphan_stale_seconds: int = Field(default=2400, ge=60, le=14400)
+    editing_orphan_recovery_interval_seconds: int = Field(default=300, ge=60, le=3600)
     editing_orphan_max_recovery_attempts: int = Field(default=2, ge=0, le=10)
     editing_estimated_seconds_per_run: int = Field(default=900, ge=30, le=7200)
     editing_task_timeout_seconds: int = Field(default=2400, ge=60, le=7200)

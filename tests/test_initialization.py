@@ -44,20 +44,29 @@ def test_initializer_runs_ranking_only_before_the_first_success():
         assert len(list(db.scalars(select(PipelineRun)))) == 1
 
 
-def test_celery_beat_has_no_recurring_schedule():
-    assert celery_app.conf.beat_schedule == {}
+def test_celery_beat_only_schedules_operational_editing_recovery():
+    schedules = celery_app.conf.beat_schedule
+
+    assert set(schedules) == {"recover-orphaned-editing-runs"}
+    assert schedules["recover-orphaned-editing-runs"]["schedule"] == 300
+    assert schedules["recover-orphaned-editing-runs"]["task"] == (
+        "app.workers.tasks.recover_orphaned_editing_runs"
+    )
 
 
-def test_compose_uses_one_shot_initializer_instead_of_beat():
+def test_compose_uses_one_shot_initializer_and_recovery_only_beat():
     compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
     services = compose["services"]
 
-    assert "beat" not in services
+    assert services["beat"]["command"].endswith("beat --loglevel=INFO")
     assert services["initializer"]["command"] == "ai-service initialize-once"
     assert services["initializer"]["restart"] == "no"
     assert services["api"]["depends_on"]["initializer"]["condition"] == (
         "service_completed_successfully"
     )
     assert services["worker"]["depends_on"]["initializer"]["condition"] == (
+        "service_completed_successfully"
+    )
+    assert services["beat"]["depends_on"]["initializer"]["condition"] == (
         "service_completed_successfully"
     )

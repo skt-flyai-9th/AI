@@ -40,7 +40,13 @@ else:
         task_eager_propagates=True,
         timezone="Asia/Seoul",
         enable_utc=True,
-        # Recurring automation is intentionally disabled until its product
-        # policy, approval flow, and failure handling are redesigned.
-        beat_schedule={},
+        # Content/database refresh schedules stay disabled. Orphan recovery is
+        # an operational safety check and does not update product knowledge.
+        beat_schedule={
+            "recover-orphaned-editing-runs": {
+                "task": "app.workers.tasks.recover_orphaned_editing_runs",
+                "schedule": settings.editing_orphan_recovery_interval_seconds,
+                "args": (),
+            }
+        },
     )
