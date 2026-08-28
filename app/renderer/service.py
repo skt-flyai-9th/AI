@@ -106,6 +106,11 @@ class RealsRendererService:
                 request.final_render.edit_recipe,
                 duration_ms=produced.duration_ms,
                 fps=produced.fps,
+                assembly_segment_count=(
+                    len(request.source_assembly.segments)
+                    if request.source_assembly is not None
+                    else None
+                ),
             )
             final_request = self.native.FinalRenderRequest.model_validate(
                 {
@@ -302,11 +307,24 @@ class RealsRendererService:
                 status_code=500,
                 retryable=True,
             ) from exc
-        _verify_media_metadata(expected, produced)
+        _verify_media_metadata(
+            expected,
+            produced,
+            duration_tolerance_ms=_assembly_duration_tolerance_ms(
+                duration_ms=expected.duration_ms,
+                fps=expected.fps,
+                segment_count=len(ordered),
+            ),
+        )
         return produced
 
 
-def _verify_media_metadata(expected: Any, actual: Any) -> None:
+def _verify_media_metadata(
+    expected: Any,
+    actual: Any,
+    *,
+    duration_tolerance_ms: int | None = None,
+) -> None:
     expected_sha256 = str(getattr(expected, "sha256", ""))
     if expected_sha256 and expected_sha256 != actual.sha256:
         raise RendererServiceError(
@@ -314,22 +332,74 @@ def _verify_media_metadata(expected: Any, actual: Any) -> None:
             code="REALS_ASSET_CHECKSUM_MISMATCH",
             status_code=409,
         )
-    duration_tolerance = max(250, int(expected.duration_ms * 0.02))
-    mismatch = (
-        abs(expected.duration_ms - actual.duration_ms) > duration_tolerance
-        or expected.width != actual.width
-        or expected.height != actual.height
-        or abs(expected.fps - actual.fps) > 0.1
+    duration_tolerance = (
+        max(250, int(expected.duration_ms * 0.02))
+        if duration_tolerance_ms is None
+        else duration_tolerance_ms
     )
-    if mismatch:
+    mismatches: list[dict[str, Any]] = []
+    if abs(expected.duration_ms - actual.duration_ms) > duration_tolerance:
+        mismatches.append(
+            {
+                "field": "duration_ms",
+                "expected": expected.duration_ms,
+                "actual": actual.duration_ms,
+                "tolerance": duration_tolerance,
+            }
+        )
+    if expected.width != actual.width:
+        mismatches.append(
+            {"field": "width", "expected": expected.width, "actual": actual.width}
+        )
+    if expected.height != actual.height:
+        mismatches.append(
+            {"field": "height", "expected": expected.height, "actual": actual.height}
+        )
+    if abs(expected.fps - actual.fps) > 0.1:
+        mismatches.append(
+            {
+                "field": "fps",
+                "expected": expected.fps,
+                "actual": actual.fps,
+                "tolerance": 0.1,
+            }
+        )
+    if mismatches:
+        summary = ", ".join(
+            f"{item['field']} expected={item['expected']} actual={item['actual']}"
+            for item in mismatches
+        )
         raise RendererServiceError(
-            f"Source metadata changed for {expected.file_id} after video analysis.",
+            (
+                f"Source metadata changed for {expected.file_id} after video analysis: "
+                f"{summary}."
+            ),
             code="REALS_ASSET_METADATA_MISMATCH",
             status_code=409,
+            details=mismatches,
         )
 
 
-def _fit_recipe_to_produced_duration(recipe: Any, *, duration_ms: int, fps: float) -> Any:
+def _assembly_duration_tolerance_ms(
+    *,
+    duration_ms: int,
+    fps: float,
+    segment_count: int,
+) -> int:
+    """Allow only the frame quantization introduced by CFR source assembly."""
+
+    frame_ms = max(1, math.ceil(1000 / fps))
+    boundary_drift_ms = (max(1, segment_count) * 2 + 2) * frame_ms
+    return max(250, int(duration_ms * 0.02), boundary_drift_ms)
+
+
+def _fit_recipe_to_produced_duration(
+    recipe: Any,
+    *,
+    duration_ms: int,
+    fps: float,
+    assembly_segment_count: int | None = None,
+) -> Any:
     """Clamp frame-sized assembly drift before the native recipe validator runs.
 
     FFmpeg encodes an assembled CFR asset on frame boundaries, so its probed
@@ -337,7 +407,15 @@ def _fit_recipe_to_produced_duration(recipe: Any, *, duration_ms: int, fps: floa
     source trims. Larger overruns remain untouched and are rejected by the
     native validator as genuine recipe errors.
     """
-    tolerance_ms = max(1, math.ceil(1000 / fps))
+    tolerance_ms = (
+        max(1, math.ceil(1000 / fps))
+        if assembly_segment_count is None
+        else _assembly_duration_tolerance_ms(
+            duration_ms=duration_ms,
+            fps=fps,
+            segment_count=assembly_segment_count,
+        )
+    )
     fitted_segments = []
     adjusted_ends: dict[str, int] = {}
 

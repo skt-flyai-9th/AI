@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from pydantic import BaseModel, ConfigDict
 
 from app.agents.editing.reals import RealsRecipeAdapter
@@ -12,7 +13,10 @@ from app.renderer import service as renderer_service_module
 from app.renderer.service import (
     NativeRealsModules,
     RealsRendererService,
+    RendererServiceError,
+    _assembly_duration_tolerance_ms,
     _fit_recipe_to_produced_duration,
+    _verify_media_metadata,
 )
 from tests.test_editing_agent import _recipe, _request
 from tests.test_reals_editing_integration import _contexts, _video_editing_db
@@ -229,6 +233,107 @@ def test_renderer_leaves_large_duration_overrun_for_native_validation():
     )
 
     assert fitted.segments[-1].trim_out_ms == original_end
+
+
+def test_renderer_clamps_accumulated_multi_cut_frame_drift():
+    facade = RealsRecipeAdapter().build_request(
+        run_id="multi-cut-duration-drift-test",
+        recipe=_recipe(),
+        videos=_request().videos,
+        video_contexts=_contexts(),
+        video_editing_db=_video_editing_db(),
+    )
+    recipe = facade.final_render.edit_recipe
+    original_end = recipe.segments[-1].trim_out_ms
+
+    fitted = _fit_recipe_to_produced_duration(
+        recipe,
+        duration_ms=original_end - 300,
+        fps=30,
+        assembly_segment_count=6,
+    )
+
+    assert fitted.segments[-1].trim_out_ms == original_end - 300
+    assert all(
+        overlay.end_ms <= original_end - 300
+        for overlay in fitted.overlays
+        if overlay.produced_segment_id == fitted.segments[-1].produced_segment_id
+    )
+
+
+def test_assembly_metadata_tolerance_scales_with_cut_boundaries():
+    tolerance = _assembly_duration_tolerance_ms(
+        duration_ms=12_000,
+        fps=30,
+        segment_count=6,
+    )
+
+    assert tolerance == 476
+
+    expected = _MediaRef(
+        file_id="assembled",
+        path="expected.mp4",
+        sha256="",
+        duration_ms=12_000,
+        width=1080,
+        height=1920,
+        fps=30,
+    )
+    actual = expected.model_copy(
+        update={"path": "actual.mp4", "sha256": "sha256:actual", "duration_ms": 11_650}
+    )
+
+    _verify_media_metadata(expected, actual, duration_tolerance_ms=tolerance)
+
+
+def test_assembly_metadata_still_rejects_non_frame_metadata_changes():
+    expected = _MediaRef(
+        file_id="assembled",
+        path="expected.mp4",
+        sha256="",
+        duration_ms=12_000,
+        width=1080,
+        height=1920,
+        fps=30,
+    )
+    actual = expected.model_copy(
+        update={"path": "actual.mp4", "sha256": "sha256:actual", "width": 720}
+    )
+
+    with pytest.raises(RendererServiceError) as error:
+        _verify_media_metadata(expected, actual, duration_tolerance_ms=476)
+
+    exc = error.value
+    assert exc.code == "REALS_ASSET_METADATA_MISMATCH"
+    assert exc.details == [{"field": "width", "expected": 1080, "actual": 720}]
+    assert "width expected=1080 actual=720" in str(exc)
+
+
+def test_assembly_metadata_rejects_duration_drift_above_frame_tolerance():
+    expected = _MediaRef(
+        file_id="assembled",
+        path="expected.mp4",
+        sha256="",
+        duration_ms=12_000,
+        width=1080,
+        height=1920,
+        fps=30,
+    )
+    actual = expected.model_copy(
+        update={"path": "actual.mp4", "sha256": "sha256:actual", "duration_ms": 11_500}
+    )
+
+    with pytest.raises(RendererServiceError) as error:
+        _verify_media_metadata(expected, actual, duration_tolerance_ms=476)
+
+    assert error.value.details == [
+        {
+            "field": "duration_ms",
+            "expected": 12_000,
+            "actual": 11_500,
+            "tolerance": 476,
+        }
+    ]
 
 
 def test_renderer_builds_the_native_reals_final_render_contract(tmp_path):
