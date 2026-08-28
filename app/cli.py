@@ -14,6 +14,7 @@ from app.db.session import SessionLocal
 from app.schemas.challenge import OverrideImportItem
 from app.services.challenges import import_override_items
 from app.services.pipeline import create_run, execute_pipeline, export_trendcluster
+from app.services.initialization import initialize_service_once
 from app.services.retention import cleanup_history
 from app.schemas.template_knowledge import (
     CandidateDecision,
@@ -32,6 +33,16 @@ app = typer.Typer(no_args_is_help=True)
 def init_database() -> None:
     init_db()
     typer.echo("Database initialized.")
+
+
+@app.command("initialize-once")
+def initialize_once_command() -> None:
+    """Import provided DBs and run trend research only before the first success."""
+
+    init_db()
+    with SessionLocal() as db:
+        result = initialize_service_once(db)
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
 
 @app.command("run-ranking")

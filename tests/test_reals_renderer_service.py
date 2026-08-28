@@ -163,6 +163,7 @@ def test_renderer_files_require_internal_auth():
     from fastapi.testclient import TestClient
 
     from app.renderer import main as renderer_main
+    from app.core.security import sign_renderer_file
 
     target = renderer_main.output_dir / "protected-test.mp4"
     target.write_bytes(b"video")
@@ -174,6 +175,12 @@ def test_renderer_files_require_internal_auth():
                 headers={"X-Internal-API-Key": "test-token"},
             )
             assert response.status_code == 200
+            expires = 4_102_444_800
+            signature = sign_renderer_file("protected-test.mp4", expires)
+            signed = client.get(
+                f"/files/protected-test.mp4?expires={expires}&signature={signature}"
+            )
+            assert signed.status_code == 200
     finally:
         target.unlink(missing_ok=True)
 

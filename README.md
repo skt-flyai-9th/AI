@@ -269,11 +269,15 @@ Content-Type: application/json
     {
       "video_id": "task_1",
       "footage_url": "https://example.com/task-1.mp4",
-      "shooting_scene_order": 1
+      "shooting_element_id": "ELEMENT_01"
     }
   ]
 }
 ```
+
+정보형 숏폼은 촬영 가이드의 `shooting_element_id`를 전달한다. AI 서버가 요소 표시
+순서를 내부 편집 순서로 변환하며, 한 요소에 여러 영상을 연결할 수 있다. 밈·챌린지는
+기존처럼 `shooting_scene_order`를 사용한다.
 
 생성 응답은 `202 Accepted`입니다. 백엔드는 상태 API를 polling하고 `COMPLETED`가 되면 결과 API를 조회합니다.
 
@@ -295,7 +299,13 @@ docker compose up -d --build
 - PostgreSQL 17
 - Redis 7
 - Celery Worker
-- Celery Beat
+- 최초 1회 데이터 초기화 컨테이너
+- 편집 장애 복구 전용 Celery Beat
+
+콘텐츠 자동 주기 업데이트는 현재 비활성화되어 있다. `initializer`가 완료된 랭킹이 없는
+최초 구성에서만 트렌드 리서치를 실행하며, 이후 배포에서는 재실행하지 않는다. 단,
+멈춘 편집을 복구하는 운영 안전장치는 5분 간격으로 실행한다. 정책 결정은
+[`docs/AUTOMATION_POLICY.md`](docs/AUTOMATION_POLICY.md)에 기록한다.
 
 상태 확인:
 
@@ -360,7 +370,8 @@ AWS EC2
    ├─ api:8000
    ├─ renderer:8080
    ├─ worker
-   ├─ beat
+   ├─ initializer (최초 1회 실행 후 종료)
+   ├─ beat (편집 장애 복구 전용)
    ├─ postgres
    └─ redis
 ```

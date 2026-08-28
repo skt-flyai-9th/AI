@@ -65,7 +65,11 @@ class EditingVideoInput(BaseModel):
 
     video_id: str
     footage_url: str
-    shooting_scene_order: int = Field(ge=1)
+    shooting_scene_order: int | None = Field(default=None, ge=1)
+    shooting_element_id: str | None = Field(
+        default=None,
+        pattern=r"^ELEMENT_[0-9]{2}$",
+    )
 
 
 class EditingRunCreateRequest(BaseModel):
@@ -81,7 +85,11 @@ class EditingRunCreateRequest(BaseModel):
         video_ids = [video.video_id for video in self.videos]
         if len(video_ids) != len(set(video_ids)):
             raise ValueError("video_id must be unique")
-        orders = [video.shooting_scene_order for video in self.videos]
+        orders = [
+            video.shooting_scene_order
+            for video in self.videos
+            if video.shooting_scene_order is not None
+        ]
         if len(orders) != len(set(orders)):
             raise ValueError("shooting_scene_order must be unique")
         return self
@@ -295,7 +303,11 @@ class EditingRevisionRequest(BaseModel):
         video_ids = [video.video_id for video in self.videos]
         if len(video_ids) != len(set(video_ids)):
             raise ValueError("video_id must be unique")
-        orders = [video.shooting_scene_order for video in self.videos]
+        orders = [
+            video.shooting_scene_order
+            for video in self.videos
+            if video.shooting_scene_order is not None
+        ]
         if len(orders) != len(set(orders)):
             raise ValueError("shooting_scene_order must be unique")
         return self

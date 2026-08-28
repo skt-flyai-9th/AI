@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import json
 import math
 from collections.abc import Callable
 from typing import Any, Protocol, TypeVar
 
 from pydantic import BaseModel
+import numpy as np
+from PIL import Image
 
 from app.agents.editing.context_builder import build_editing_context
 from app.agents.editing.effect_planner import EffectPlanner
@@ -570,7 +574,7 @@ def _sample_video_frames(
     max_per_video: int,
     max_total: int,
 ) -> dict[str, list[Any]]:
-    """Uniformly retain temporal coverage while bounding vision-model calls."""
+    """Scan every extracted frame on CPU, then retain changes plus temporal coverage."""
     desired = [min(len(context.keyframes), max_per_video) for context in contexts]
     budgets = desired.copy()
     while sum(budgets) > max_total:
@@ -583,9 +587,57 @@ def _sample_video_frames(
             break
         budgets[candidate] -= 1
     return {
-        context.video_id: _uniform_sample(context.keyframes, budgets[index])
+        context.video_id: _adaptive_sample(context.keyframes, budgets[index])
         for index, context in enumerate(contexts)
     }
+
+
+def _adaptive_sample(frames: list[Any], limit: int) -> list[Any]:
+    if limit <= 0 or not frames:
+        return []
+    if len(frames) <= limit:
+        return list(frames)
+    signatures = [_frame_signature(frame.image_url) for frame in frames]
+    if any(signature is None for signature in signatures):
+        return _uniform_sample(frames, limit)
+
+    changes = [
+        (
+            float(np.mean(np.abs(signatures[index] - signatures[index - 1]))),
+            index,
+        )
+        for index in range(1, len(frames))
+    ]
+    selected = {0, len(frames) - 1}
+    for score, index in sorted(changes, reverse=True):
+        if score <= 0:
+            break
+        for candidate in (index - 1, index):
+            if len(selected) >= limit:
+                break
+            selected.add(candidate)
+        if len(selected) >= max(2, limit // 2):
+            break
+
+    for frame in _uniform_sample(frames, limit):
+        if len(selected) >= limit:
+            break
+        selected.add(frames.index(frame))
+    if len(selected) < limit:
+        selected.update(index for index in range(len(frames)) if len(selected) < limit)
+    return [frames[index] for index in sorted(selected)[:limit]]
+
+
+def _frame_signature(image_url: str) -> np.ndarray | None:
+    try:
+        encoded = image_url.split(",", 1)[1]
+        raw = base64.b64decode(encoded, validate=True)
+        with Image.open(io.BytesIO(raw)) as image:
+            return np.asarray(
+                image.convert("L").resize((16, 16)), dtype=np.float32
+            ) / 255.0
+    except (ValueError, OSError, IndexError):
+        return None
 
 
 def _uniform_sample(frames: list[Any], limit: int) -> list[Any]:

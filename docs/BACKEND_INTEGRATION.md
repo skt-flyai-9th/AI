@@ -308,12 +308,16 @@ Content-Type: application/json
     {
       "video_id": "take_501",
       "footage_url": "https://cdn.example/takes/501.mp4",
-      "shooting_scene_order": 1
+      "shooting_element_id": "ELEMENT_01"
     }
   ],
   "revision": null
 }
 ```
+
+정보형 숏폼은 촬영 가이드에서 받은 `shooting_element_id`를 그대로 보낸다. 같은 요소를
+여러 영상이 참조할 수 있으며 AI 서버가 요소 순서와 업로드 순서를 이용해 고유한 내부
+`shooting_scene_order`를 생성한다. 밈·챌린지는 `shooting_scene_order`가 필수다.
 
 응답은 `202 Accepted`이며 `run_id`, `status=QUEUED`, `task_id`를 반환한다. 이후 다음 상태 API를 polling한다.
 
@@ -334,7 +338,7 @@ GET /api/v1/editing-runs/{run_id}/result
   "run_id": "edit_123",
   "status": "COMPLETED",
   "recipe": {"recipe_version": 1},
-  "render": {"output_video_url": "https://ai.internal/files/edit_123.mp4"},
+  "render": {"output_video_url": "https://ai.example/files/edit_123.mp4?expires=...&signature=..."},
   "publishing": {"caption": "..."},
   "warnings": ["SOURCE_ROLE_MATCH_FALLBACK: ..."],
   "missing_scene_roles": ["RESULT"],
@@ -343,9 +347,9 @@ GET /api/v1/editing-runs/{run_id}/result
 ```
 
 자연어 수정은 기존 run을 변경하지 않고 새 immutable child run을 만든다. 영상 URL은
-서명 만료가 가능하므로 수정 요청마다 같은 `video_id`와 `shooting_scene_order`에 대한
-새 URL을 다시 전달해야 한다. `SOURCE_GAP` run에서는 기존 영상을 보존하면서 새 영상을
-추가할 수 있다.
+입력 영상 서명 만료가 가능하므로 수정 요청마다 같은 `video_id`와 촬영 요소 또는 촬영
+순서에 대한 새 URL을 다시 전달해야 한다. `SOURCE_GAP` run에서는 기존 영상을 보존하면서
+새 영상을 추가할 수 있다.
 
 ```http
 POST /api/v1/editing-runs/{run_id}/revisions
@@ -357,15 +361,15 @@ Content-Type: application/json
     {
       "video_id":"take_501",
       "footage_url":"https://cdn.example/takes/501.mp4?refreshed-signature",
-      "shooting_scene_order":1
+      "shooting_element_id":"ELEMENT_01"
     }
   ]
 }
 ```
 
-AI worker는 MP4 자체를 GPT-4.1 mini에 보내지 않는다. `ffprobe` 메타데이터와 타임스탬프 키프레임을 제한적으로 생성하며, DB에는 base64 이미지가 아닌 키프레임 시각만 저장한다. Validator를 통과한 `VIDEO_ONLY` 레시피만 `EDITING_RENDERER_URL/renders`에 전달된다.
+AI worker는 MP4 자체를 GPT-4.1 mini에 보내지 않는다. 모든 프레임의 타임스탬프와 축소 이미지를 CPU에서 검사해 장면 변화 경계를 우선 선택하고, 시간축 균등 샘플을 함께 GPT-4.1 mini에 전달한다. DB에는 base64 이미지가 아닌 키프레임 시각만 저장한다. Validator를 통과한 `VIDEO_ONLY` 레시피만 `EDITING_RENDERER_URL/renders`에 전달된다.
 
-Renderer 요청은 `reals-render-job-1.0` 계약을 사용한다. 원격 영상 URL과 메타데이터, 다중 컷의 순서·트림을 담은 `source_assembly`, 엔진 계약과 같은 필드명의 `final_render.edit_recipe`를 함께 보낸다. 단일 컷은 `ONE_TAKE_PASSTHROUGH`, 다중 컷은 정확한 트림 조립 후 `MULTI_CUT_ASSEMBLED`로 처리한다. 성공한 MP4는 `RENDERER_OUTPUT_DIR`에 저장되고 `RENDERER_PUBLIC_BASE_URL/files/...` URL로 반환되며, 이 파일 다운로드에도 `X-Internal-API-Key`가 필요하다.
+Renderer 요청은 `reals-render-job-1.0` 계약을 사용한다. 원격 영상 URL과 메타데이터, 다중 컷의 순서·트림을 담은 `source_assembly`, 엔진 계약과 같은 필드명의 `final_render.edit_recipe`를 함께 보낸다. 단일 컷은 `ONE_TAKE_PASSTHROUGH`, 다중 컷은 정확한 트림 조립 후 `MULTI_CUT_ASSEMBLED`로 처리한다. 성공한 MP4는 `RENDERER_OUTPUT_DIR`에 저장되고 만료 시간이 포함된 서명 URL로 반환된다. 내부 서비스는 기존 `X-Internal-API-Key` 방식으로도 다운로드할 수 있다.
 
 AI 측 preflight Validator와 LLM capability는 `EDITING_REALS_REGISTRY_PATH`에 있는 REALS registry bundle을 함께 읽는다. 시작 시 manifest SHA-256을 검증하고, 효과·전환·최소 컷·자막 제한·렌더 프로필을 그 registry에서 가져온다. Renderer 내부의 native Validator는 로컬 파일 범위, 폰트 파일/글리프, 최종 QC를 다시 검증하며 최종 권한을 가진다.
 

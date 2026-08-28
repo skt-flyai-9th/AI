@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
@@ -17,6 +18,7 @@ class ChallengeRead(BaseModel):
     expected_duration_sec: int | None = None
     shooting_difficulty: str | None = None
     requires_face: bool | None = None
+    reference_cut_review: dict[str, Any] | None = None
     editing_template_id: str | None = None
     editing_template_version: int | None = None
     automatic_rank: int | None

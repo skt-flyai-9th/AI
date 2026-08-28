@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import math
 import re
@@ -110,6 +111,11 @@ def get_video_format_metadata(challenge_id: str) -> dict[str, Any]:
     """Return grounded card metadata for a bundled, analysed guide."""
 
     return dict(_video_format_metadata_by_challenge().get(challenge_id, {}))
+
+
+def get_reference_cut_review(challenge_id: str) -> dict[str, Any] | None:
+    review = _REFERENCE_CUT_REVIEWS.get(challenge_id)
+    return copy.deepcopy(review) if review is not None else None
 
 def build_video_editing_db_trendcluster() -> dict[str, Any]:
     """Build the initial trendcluster from the provided video-editing DB."""

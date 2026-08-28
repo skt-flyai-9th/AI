@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from app.agents.editing.reals import RealsRenderJobRequest
 from app.core.config import get_settings
-from app.core.security import require_internal_api_key
+from app.core.security import require_internal_api_key, require_renderer_file_access
 from app.renderer.service import (
     RendererServiceError,
     get_renderer_service,
@@ -48,7 +48,7 @@ def render(request: RealsRenderJobRequest) -> dict:
     return get_renderer_service().render(request)
 
 
-@app.get("/files/{filename:path}", dependencies=[Depends(require_internal_api_key)])
+@app.get("/files/{filename:path}", dependencies=[Depends(require_renderer_file_access)])
 def rendered_file(filename: str) -> FileResponse:
     target = (output_dir / filename).resolve()
     if target.parent != output_dir or not target.is_file():

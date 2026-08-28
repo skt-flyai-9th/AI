@@ -138,13 +138,12 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
     service, _ = _service()
     with SessionLocal() as db:
         result = seed_template_library(db, service=service)
-        assert len(result["created"]) == 5
-        assert (
-            db.scalar(
-                select(TradeAreaDBRecord).where(TradeAreaDBRecord.status == "ACTIVE")
-            )
-            is None
+        assert len(result["created"]) == 6
+        active_trade_area = db.scalar(
+            select(TradeAreaDBRecord).where(TradeAreaDBRecord.status == "ACTIVE")
         )
+        assert active_trade_area is not None
+        assert active_trade_area.template_id == "trade_area_seoul"
         assert len(list(db.scalars(select(VideoEditingDBRecord)))) == 3
         imported_editing = db.scalar(
             select(VideoEditingDBRecord).where(
@@ -215,10 +214,44 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
         db.refresh(imported_editing)
         db.refresh(information_record)
         assert second["created"] == []
-        assert len(second["skipped"]) == 5
+        assert len(second["skipped"]) == 6
         assert len(imported_editing.shooting_guide["tasks"]) == 3
         assert information_record.recommendation_metadata["format_type"] == "정보형"
         assert len(information_record.shooting_guide["shooting_elements"]) == 4
+
+
+def test_bootstrap_repairs_a_newer_active_version_with_missing_format_contract():
+    service, _ = _service()
+    with SessionLocal() as db:
+        seed_template_library(db, service=service)
+        source = db.get(VideoEditingDBRecord, ("gt_cafe_recommendation", 2))
+        assert source is not None
+        source.status = "ARCHIVED"
+        db.add(
+            VideoEditingDBRecord(
+                template_id="gt_cafe_recommendation",
+                version=3,
+                status="ACTIVE",
+                name=source.name,
+                recommendation_title=source.recommendation_title,
+                recommendation_concept=source.recommendation_concept,
+                recommendation_metadata={},
+                shooting_guide={"scenes": [], "tasks": []},
+                editing_rules=source.editing_rules,
+                trend_ids=source.trend_ids,
+            )
+        )
+        db.commit()
+
+        result = seed_template_library(db, service=service)
+
+        repaired = db.get(VideoEditingDBRecord, ("gt_cafe_recommendation", 4))
+        assert repaired is not None
+        assert repaired.status == "ACTIVE"
+        assert repaired.recommendation_metadata["format_type"] == "정보형"
+        assert len(repaired.shooting_guide["shooting_elements"]) == 4
+        assert db.get(VideoEditingDBRecord, ("gt_cafe_recommendation", 3)).status == "ARCHIVED"
+        assert any("CONTRACT_REPAIR" in item for item in result["created"])
 
 
 def test_candidate_lifecycle_creates_new_version_and_archives_base():
@@ -537,7 +570,7 @@ def test_template_knowledge_api_bootstrap_and_async_analysis(client, auth_header
             headers=auth_headers,
         )
         assert versions.status_code == 200
-        assert len(versions.json()) == 3
+        assert len(versions.json()) == 4
         sources = client.get("/api/v1/database-knowledge/sources", headers=auth_headers)
         assert sources.status_code == 200
         assert len(sources.json()) == 2

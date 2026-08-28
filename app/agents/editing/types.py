@@ -22,6 +22,7 @@ class VideoContext(BaseModel):
 
     video_id: str
     shooting_scene_order: int
+    shooting_element_id: str | None = None
     duration_ms: int
     width: int
     height: int
