@@ -8,7 +8,7 @@
 |---|---|---|
 | `exports/*_latest.json` | 운영 백업·디버깅용 최신 결과 | 실행마다 같은 파일을 원자적으로 교체 |
 | PostgreSQL `pipeline_runs`, `ranking_snapshots` | 실행 상태와 실행별 고정 결과 API | 실행마다 누적 |
-| `runtime-data/ranker-history.sqlite3` | 독립 랭커의 직전 순위·점수 비교 호환 | 실행마다 누적되지만 자동 정리 |
+| `runtime-data/ranker-history.sqlite3` | 독립 랭커의 직전 순위·점수 비교 호환 | 실행마다 누적되며 필요할 때 수동 정리 |
 
 `exports`의 JSON은 파일 수가 늘어나지 않는다. PostgreSQL과 레거시 SQLite 이력만 보존 정책의 대상이다.
 
@@ -19,8 +19,6 @@ HISTORY_CLEANUP_ENABLED=true
 RUN_RETENTION_DAYS=90
 FAILED_RUN_RETENTION_DAYS=14
 MIN_SUCCESSFUL_RUNS_TO_KEEP=10
-CLEANUP_SCHEDULE_HOUR_KST=4
-CLEANUP_SCHEDULE_MINUTE_KST=30
 ```
 
 - 성공한 실행과 `ranking_snapshots`: 90일 보존
@@ -32,18 +30,13 @@ CLEANUP_SCHEDULE_MINUTE_KST=30
 
 ## 자동 실행
 
-Celery Beat가 매일 한국시간 04:30에 다음 태스크를 실행한다.
-
-```text
-app.workers.tasks.cleanup_history
-```
-
-랭킹 배치가 기본 06:00이므로 정리 작업은 랭킹 실행 전에 수행된다.
+현재 자동 이력 정리는 비활성화되어 있다. Celery Beat 일정은 등록하지 않으며, 주기
+업데이트와 보존 자동화 정책을 다시 설계하기 전까지 운영자가 필요할 때 수동 실행한다.
 
 ## 수동 실행
 
 ```bash
-python -m app.cli cleanup-history
+ai-service cleanup-history
 ```
 
 응답 예시:

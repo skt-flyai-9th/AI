@@ -299,7 +299,11 @@ docker compose up -d --build
 - PostgreSQL 17
 - Redis 7
 - Celery Worker
-- Celery Beat
+- 최초 1회 데이터 초기화 컨테이너
+
+자동 주기 업데이트는 현재 비활성화되어 있다. `initializer`가 완료된 랭킹이 없는 최초
+구성에서만 트렌드 리서치를 실행하며, 이후 배포에서는 재실행하지 않는다. 정책 결정은
+[`docs/AUTOMATION_POLICY.md`](docs/AUTOMATION_POLICY.md)에 기록한다.
 
 상태 확인:
 
@@ -364,7 +368,7 @@ AWS EC2
    ├─ api:8000
    ├─ renderer:8080
    ├─ worker
-   ├─ beat
+   ├─ initializer (최초 1회 실행 후 종료)
    ├─ postgres
    └─ redis
 ```

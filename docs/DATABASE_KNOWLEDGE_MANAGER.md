@@ -113,15 +113,8 @@ AI 서버 내부 운영 API도 `/api/v1/database-knowledge` 아래에 준비되�
 
 모든 운영 API는 `X-Internal-API-Key`를 요구한다. 메인 백엔드에서 이 API를 호출하는 연결 작업은 별도 범위다.
 
-## 주기 실행
+## 업데이트 실행
 
-Celery Beat에는 `weekly-database-maintenance`가 등록되어 있다. 기본값은 비활성화다.
-
-```dotenv
-DATABASE_MAINTENANCE_ENABLED=false
-DATABASE_MAINTENANCE_WEEKDAY=0
-DATABASE_MAINTENANCE_HOUR_KST=5
-DATABASE_MAINTENANCE_MINUTE_KST=0
-```
-
-활성화하면 ACTIVE 영상편집DB 버전별로 미처리 후보가 없는 경우 새 `trendcluster` 결과를 사용해 검토 후보를 만든다. 자동 승인하지 않는다. 상권 갱신은 새로운 외부 집계 근거가 필요하므로 CLI/API로 근거를 명시해 실행한다.
+현재 주기 실행은 비활성화되어 있으며 Celery Beat 일정도 등록하지 않는다. 최초
+`initializer`가 사용자 제공 DB를 한 번 가져온 뒤, 추가 후보 생성과 유지보수는 CLI/API로
+명시적으로 실행한다. 주기 업데이트와 승인 정책은 추후 별도로 설계한다.

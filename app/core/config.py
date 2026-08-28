@@ -34,15 +34,11 @@ class Settings(BaseSettings):
     ranker_data_dir: Path = Path("runtime-data")
     export_dir: Path = Path("exports")
     pipeline_timeout_seconds: int = Field(default=3600, ge=60, le=14400)
-    ranking_schedule_hour_kst: int = Field(default=6, ge=0, le=23)
-    ranking_schedule_minute_kst: int = Field(default=0, ge=0, le=59)
 
     history_cleanup_enabled: bool = True
     run_retention_days: int = Field(default=90, ge=1, le=3650)
     failed_run_retention_days: int = Field(default=14, ge=1, le=3650)
     min_successful_runs_to_keep: int = Field(default=10, ge=1, le=1000)
-    cleanup_schedule_hour_kst: int = Field(default=4, ge=0, le=23)
-    cleanup_schedule_minute_kst: int = Field(default=30, ge=0, le=59)
 
     apify_api_token: str = ""
     gemini_api_key: str = ""
@@ -68,9 +64,6 @@ class Settings(BaseSettings):
     database_max_reference_videos: int = Field(default=5, ge=1, le=10)
     database_require_human_approval: bool = True
     database_maintenance_enabled: bool = False
-    database_maintenance_weekday: int = Field(default=0, ge=0, le=6)
-    database_maintenance_hour_kst: int = Field(default=5, ge=0, le=23)
-    database_maintenance_minute_kst: int = Field(default=0, ge=0, le=59)
 
     # Editing Agent. Defaults are deliberately CPU-only friendly for the
     # current 2-vCPU / 8-GiB AI host: source frames are retained as compact
@@ -89,7 +82,6 @@ class Settings(BaseSettings):
     editing_analysis_max_total_frames: int = Field(default=120, ge=12, le=720)
     editing_orphan_recovery_enabled: bool = False
     editing_orphan_stale_seconds: int = Field(default=2400, ge=60, le=14400)
-    editing_orphan_recovery_interval_seconds: int = Field(default=300, ge=60, le=3600)
     editing_orphan_max_recovery_attempts: int = Field(default=2, ge=0, le=10)
     editing_estimated_seconds_per_run: int = Field(default=900, ge=30, le=7200)
     editing_task_timeout_seconds: int = Field(default=2400, ge=60, le=7200)

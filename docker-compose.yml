@@ -40,9 +40,25 @@ services:
       timeout: 5s
       retries: 12
 
+  initializer:
+    build: .
+    command: ai-service initialize-once
+    env_file: .env
+    volumes:
+      - ./runtime-data:/app/runtime-data
+      - ./exports:/app/exports
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build: .
     env_file: .env
+    environment:
+      RUN_DB_MIGRATIONS: "false"
     ports:
       - "8000:8000"
     volumes:
@@ -55,11 +71,15 @@ services:
         condition: service_healthy
       renderer:
         condition: service_healthy
+      initializer:
+        condition: service_completed_successfully
 
   worker:
     build: .
     command: celery -A app.workers.celery_app.celery_app worker --loglevel=INFO --concurrency=1
     env_file: .env
+    environment:
+      RUN_DB_MIGRATIONS: "false"
     volumes:
       - ./runtime-data:/app/runtime-data
       - ./exports:/app/exports
@@ -70,19 +90,8 @@ services:
         condition: service_healthy
       renderer:
         condition: service_healthy
-
-  beat:
-    build: .
-    command: celery -A app.workers.celery_app.celery_app beat --loglevel=INFO
-    env_file: .env
-    volumes:
-      - ./runtime-data:/app/runtime-data
-      - ./exports:/app/exports
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      initializer:
+        condition: service_completed_successfully
 
 volumes:
   postgres-data:
