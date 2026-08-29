@@ -339,7 +339,6 @@ class TemplateKnowledgeService:
             requires_human_approval=(
                 request.requires_human_approval or self.settings.database_require_human_approval
             ),
-            allow_structure_reduction=request.rebuild_from_scratch,
         )
 
     def create_candidate_from_payload(
@@ -352,7 +351,6 @@ class TemplateKnowledgeService:
         source_evidence: dict[str, Any],
         generation_model: str,
         requires_human_approval: bool,
-        allow_structure_reduction: bool = False,
     ) -> TemplateUpdateCandidate:
         base = self._latest_version(db, template_type, template_id)
         base_payload = self._version_payload(template_type, base) if base else None
@@ -363,12 +361,7 @@ class TemplateKnowledgeService:
             payload,
             is_initial_version=base is None,
             base_payload=base_payload,
-            allow_structure_reduction=allow_structure_reduction,
         )
-        if _shooting_structure_reduced(template_type, base_payload, payload):
-            # An explicitly requested rebuild may shrink the structure, but never
-            # silently: a human must confirm before the smaller guide goes live.
-            requires_human_approval = True
         candidate = TemplateUpdateCandidate(
             id=f"tuc_{uuid4().hex[:24]}",
             template_type=template_type.value,
@@ -418,10 +411,6 @@ class TemplateKnowledgeService:
             candidate.proposed_payload,
             is_initial_version=candidate.base_version is None,
             base_payload=latest_payload,
-            allow_structure_reduction=(
-                (candidate.source_evidence or {}).get("generation_mode")
-                == "REBUILD_FROM_SCRATCH"
-            ),
         )
         candidate.validation_errors = errors
         candidate.status = (
@@ -913,24 +902,6 @@ def _editing_read(row: VideoEditingDBRecord) -> TemplateVersionRead:
         evidence_summary=row.evidence_summary or {},
         source_candidate_id=row.source_candidate_id,
         activated_at=row.activated_at,
-    )
-
-
-def _shooting_structure_reduced(
-    template_type: TemplateType,
-    base_payload: dict[str, Any] | None,
-    payload: dict[str, Any],
-) -> bool:
-    if template_type != TemplateType.VIDEO_EDITING or not base_payload:
-        return False
-    base_guide = base_payload.get("shooting_guide") or {}
-    new_guide = payload.get("shooting_guide") or {}
-    base_tasks = len(base_guide.get("tasks") or [])
-    base_scenes = len(base_guide.get("scenes") or [])
-    new_tasks = len(new_guide.get("tasks") or [])
-    new_scenes = len(new_guide.get("scenes") or [])
-    return (base_tasks > 0 and new_tasks < base_tasks) or (
-        base_scenes > 0 and new_scenes < base_scenes
     )
 
 

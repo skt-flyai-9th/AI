@@ -766,7 +766,7 @@ def test_editing_candidate_rejects_silent_shooting_structure_reduction():
         assert db.get(VideoEditingDBRecord, ("structure_guard", 2)) is None
 
 
-def test_rebuild_with_reduced_structure_requires_human_approval():
+def test_rebuild_with_reduced_structure_is_rejected_too():
     service, _ = _service()
     with SessionLocal() as db:
         service.create_candidate_from_payload(
@@ -780,6 +780,7 @@ def test_rebuild_with_reduced_structure_requires_human_approval():
         )
         reduced = _multi_scene_editing_payload(2)
         reduced["trend_ids"] = ["trend_test"]
+        # Even an explicit rebuild must never shrink the shooting structure.
         candidate = service.create_candidate_from_payload(
             db,
             template_type=TemplateType.VIDEO_EDITING,
@@ -788,22 +789,28 @@ def test_rebuild_with_reduced_structure_requires_human_approval():
             source_evidence={"generation_mode": "REBUILD_FROM_SCRATCH"},
             generation_model="test",
             requires_human_approval=False,
-            allow_structure_reduction=True,
         )
-        assert candidate.status == "VALIDATED"
-        assert candidate.requires_human_approval is True
+        assert candidate.status == "INVALID"
+        codes = {item["code"] for item in candidate.validation_errors}
+        assert "SHOOTING_STRUCTURE_REGRESSION" in codes
         assert db.get(VideoEditingDBRecord, ("rebuild_guard", 2)) is None
 
         revalidated = service.validate_candidate(db, candidate.id)
-        assert revalidated.status == "VALIDATED"
+        assert revalidated.status == "INVALID"
 
-        applied = service.approve_candidate(
+        # A same-size (or larger) rebuild is still allowed to proceed.
+        same_size = _multi_scene_editing_payload(3)
+        same_size["trend_ids"] = ["trend_test"]
+        ok_candidate = service.create_candidate_from_payload(
             db,
-            candidate.id,
-            CandidateDecision(actor="reviewer", note="intentional rebuild"),
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="rebuild_guard",
+            payload=same_size,
+            source_evidence={"generation_mode": "REBUILD_FROM_SCRATCH"},
+            generation_model="test",
+            requires_human_approval=True,
         )
-        assert applied.status == "APPLIED"
-        assert db.get(VideoEditingDBRecord, ("rebuild_guard", 2)).status == "ACTIVE"
+        assert ok_candidate.status == "VALIDATED"
 
 
 def test_concurrent_approval_conflict_maps_to_candidate_stale(monkeypatch):

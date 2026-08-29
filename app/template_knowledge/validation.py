@@ -24,7 +24,6 @@ class TemplateCandidateValidator:
         *,
         is_initial_version: bool = False,
         base_payload: dict[str, Any] | None = None,
-        allow_structure_reduction: bool = False,
     ) -> list[dict[str, Any]]:
         if TemplateType(template_type) == TemplateType.TRADE_AREA:
             return self._validate_trade_area(payload)
@@ -32,7 +31,6 @@ class TemplateCandidateValidator:
             payload,
             is_initial_version=is_initial_version,
             base_payload=base_payload,
-            allow_structure_reduction=allow_structure_reduction,
         )
 
     @staticmethod
@@ -87,7 +85,6 @@ class TemplateCandidateValidator:
         *,
         is_initial_version: bool,
         base_payload: dict[str, Any] | None = None,
-        allow_structure_reduction: bool = False,
     ) -> list[dict[str, Any]]:
         errors: list[dict[str, Any]] = []
         raw_metadata = payload.get("recommendation_metadata")
@@ -198,7 +195,7 @@ class TemplateCandidateValidator:
                     "Tasks must map one-to-one to scenes using zero-based scene_index order.",
                 )
 
-        if base_payload is not None and not allow_structure_reduction:
+        if base_payload is not None:
             base_guide = base_payload.get("shooting_guide") or {}
             base_task_count = len(base_guide.get("tasks") or [])
             base_scene_count = len(base_guide.get("scenes") or [])
@@ -209,8 +206,8 @@ class TemplateCandidateValidator:
                     "shooting_guide.tasks",
                     (
                         f"Shooting task count dropped from {base_task_count} to {len(tasks)} "
-                        "versus the current version. Reducing the shooting structure requires "
-                        "an explicit rebuild_from_scratch request."
+                        "versus the current version. The shooting structure must never "
+                        "shrink; regenerate the candidate with the full task set."
                     ),
                 )
             if base_scene_count and len(raw_scenes) < base_scene_count:
@@ -220,8 +217,8 @@ class TemplateCandidateValidator:
                     "shooting_guide.scenes",
                     (
                         f"Shooting scene count dropped from {base_scene_count} to {len(raw_scenes)} "
-                        "versus the current version. Reducing the shooting structure requires "
-                        "an explicit rebuild_from_scratch request."
+                        "versus the current version. The shooting structure must never "
+                        "shrink; regenerate the candidate with the full scene set."
                     ),
                 )
 
