@@ -23,10 +23,15 @@ class TemplateCandidateValidator:
         payload: dict[str, Any],
         *,
         is_initial_version: bool = False,
+        base_payload: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         if TemplateType(template_type) == TemplateType.TRADE_AREA:
             return self._validate_trade_area(payload)
-        return self._validate_editing(payload, is_initial_version=is_initial_version)
+        return self._validate_editing(
+            payload,
+            is_initial_version=is_initial_version,
+            base_payload=base_payload,
+        )
 
     @staticmethod
     def _validate_trade_area(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -79,6 +84,7 @@ class TemplateCandidateValidator:
         payload: dict[str, Any],
         *,
         is_initial_version: bool,
+        base_payload: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         errors: list[dict[str, Any]] = []
         raw_metadata = payload.get("recommendation_metadata")
@@ -187,6 +193,33 @@ class TemplateCandidateValidator:
                     "SHOOTING_TASK_SCENE_INDEX_INVALID",
                     "shooting_guide.tasks",
                     "Tasks must map one-to-one to scenes using zero-based scene_index order.",
+                )
+
+        if base_payload is not None:
+            base_guide = base_payload.get("shooting_guide") or {}
+            base_task_count = len(base_guide.get("tasks") or [])
+            base_scene_count = len(base_guide.get("scenes") or [])
+            if base_task_count and len(tasks) < base_task_count:
+                _add(
+                    errors,
+                    "SHOOTING_STRUCTURE_REGRESSION",
+                    "shooting_guide.tasks",
+                    (
+                        f"Shooting task count dropped from {base_task_count} to {len(tasks)} "
+                        "versus the current version. The shooting structure must never "
+                        "shrink; regenerate the candidate with the full task set."
+                    ),
+                )
+            if base_scene_count and len(raw_scenes) < base_scene_count:
+                _add(
+                    errors,
+                    "SHOOTING_STRUCTURE_REGRESSION",
+                    "shooting_guide.scenes",
+                    (
+                        f"Shooting scene count dropped from {base_scene_count} to {len(raw_scenes)} "
+                        "versus the current version. The shooting structure must never "
+                        "shrink; regenerate the candidate with the full scene set."
+                    ),
                 )
 
         rules = content.editing_rules
