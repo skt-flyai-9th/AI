@@ -263,6 +263,16 @@ class ShortformAgentService:
                 "Project brief must be confirmed before requesting recommendations.",
                 status_code=409,
             )
+        if not session.current_recommendation:
+            # The contract guarantees a recommendation, so still serve one, but a
+            # "next" call before any first recommendation means the caller skipped
+            # the confirmation turn's RECOMMEND response — surface that ordering
+            # anomaly instead of masking it.
+            logger.warning(
+                "next_recommendation called for session %s before any current "
+                "recommendation exists; check the backend call ordering.",
+                session.id,
+            )
         response = self._recommend(
             db,
             session,
@@ -587,12 +597,15 @@ class ShortformAgentService:
         db: Session,
         session: ShortformSession,
     ) -> list[VideoEditingDBCandidate]:
-        """Return a non-empty pool whenever at least one DB record can be activated.
+        """Return a pool that can fill one full batch of three recommendations.
 
-        Relevance is a preference, never an availability gate. We first preserve all
-        user and capability constraints, then keep only safety/capability constraints,
-        and finally expose every unseen ACTIVE record. Once every record has been
-        shown, a new recommendation cycle starts so `next` can always return one item.
+        The RECOMMEND response contract requires exactly three distinct templates,
+        so each constraint tier must supply at least three unseen candidates before
+        it can be used. Relevance is a preference, never an availability gate: we
+        first preserve all user and capability constraints, then keep only
+        safety/capability constraints, and finally expose every unseen ACTIVE
+        record. When fewer than three unseen records remain in every tier, the
+        pool is exhausted and `next` reports NO_MORE_SHORTFORM_RECOMMENDATIONS.
         """
 
         for mode in ("strict", "safe", "any"):
@@ -612,8 +625,13 @@ class ShortformAgentService:
         session: ShortformSession,
         candidates: list[VideoEditingDBCandidate],
     ) -> list[tuple[VideoEditingDBSelection, VideoEditingDBCandidate]]:
-        """Select three distinct candidates in one LLM call, with a stable fallback."""
+        """Select up to three distinct candidates in one LLM call, with a stable fallback."""
 
+        if len(candidates) < 3:
+            # The selection schema requires exactly three distinct keys, which a
+            # smaller pool can never satisfy; recommend the remaining records
+            # deterministically instead of burning an LLM call that must fail.
+            return self._fallback_selections(candidates)
         try:
             graph_result = self._invoke_graph(
                 {
@@ -649,29 +667,34 @@ class ShortformAgentService:
             # Conversation still requires the LLM, but once a brief is confirmed a
             # recommendation must not disappear because the contextual selector is
             # temporarily unavailable or returns malformed structured output.
-            selected_candidates = candidates[:3]
             logger.warning(
-                "Shortform recommendation selector failed; using three stable fallback candidates (%s)",
+                "Shortform recommendation selector failed; using stable fallback candidates (%s)",
                 type(exc).__name__,
             )
-            return [
-                (
-                    VideoEditingDBSelection(
-                        candidate_key=selected.candidate_key,
-                        project_title=(
-                            f"{selected.recommendation_title or selected.name} 프로젝트"
-                        ),
-                        title=selected.name,
-                        concept=selected.recommendation_concept or selected.name,
-                        internal_reason=(
-                            "Deterministic availability fallback after contextual "
-                            "recommendation selection failed."
-                        ),
+            return self._fallback_selections(candidates)
+
+    @staticmethod
+    def _fallback_selections(
+        candidates: list[VideoEditingDBCandidate],
+    ) -> list[tuple[VideoEditingDBSelection, VideoEditingDBCandidate]]:
+        return [
+            (
+                VideoEditingDBSelection(
+                    candidate_key=selected.candidate_key,
+                    project_title=(
+                        f"{selected.recommendation_title or selected.name} 프로젝트"
                     ),
-                    selected,
-                )
-                for selected in selected_candidates
-            ]
+                    title=selected.name,
+                    concept=selected.recommendation_concept or selected.name,
+                    internal_reason=(
+                        "Deterministic availability fallback after contextual "
+                        "recommendation selection failed."
+                    ),
+                ),
+                selected,
+            )
+            for selected in candidates[:3]
+        ]
 
     def _video_editing_db_candidates(
         self,
