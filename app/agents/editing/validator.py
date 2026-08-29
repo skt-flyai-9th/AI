@@ -386,7 +386,10 @@ class EditRecipeValidator:
                         f"timeline[{index}].caption.text",
                         "Promotional captions must be audience-facing copy, not filming or editing directions.",
                     )
-            if not any(
+            # A single-clip recipe has exactly one caption slot and the HOOK
+            # rule above already claims it, so the reveal caption can only be
+            # required once a second clip exists.
+            if len(recipe.timeline) >= 2 and not any(
                 clip.caption is not None and clip.caption.style_id == "CAPTION_EMPHASIS"
                 for clip in recipe.timeline
             ):

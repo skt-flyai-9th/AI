@@ -239,6 +239,28 @@ def test_validator_rejects_promotional_video_without_regular_captions():
     assert "PROMOTIONAL_REVEAL_CAPTION_MISSING" in codes
 
 
+def test_validator_allows_single_clip_promotional_recipe_without_reveal_caption():
+    # With one usable clip (e.g. the ordered fallback after SOURCE_GAP) the
+    # only caption slot is claimed by the HOOK, so requiring CAPTION_EMPHASIS
+    # would make every single-clip promotional recipe unsatisfiable.
+    recipe = _recipe().model_copy(deep=True)
+    recipe.timeline = recipe.timeline[:1]
+    validator = EditRecipeValidator()
+
+    issues = validator.validate(
+        recipe,
+        selected_shortform=_request().selected_shortform,
+        video_editing_db=_video_editing_db(),
+        video_contexts=_contexts(),
+        project=_request().project.model_dump(mode="json"),
+    )
+
+    codes = {issue.code for issue in issues}
+    assert "PROMOTIONAL_REVEAL_CAPTION_MISSING" not in codes
+    assert "PROMOTIONAL_CAPTIONS_MISSING" not in codes
+    assert "PROMOTIONAL_HOOK_MISSING" not in codes
+
+
 def test_validator_requires_project_scoped_verbatim_caption_phrase():
     recipe = _recipe().model_copy(deep=True)
     project = _request().project.model_dump(mode="json")
