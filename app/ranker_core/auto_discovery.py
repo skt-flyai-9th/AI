@@ -116,12 +116,15 @@ def discover_live_challenges(
     model = str(config.get("model", os.getenv("GEMINI_MODEL", "auto")))
     chunk_size = max(20, int(config.get("ai_chunk_size", 80)))
 
-    extracted: list[dict[str, Any]] = []
-    for chunk in chunks(evidence.to_dict(orient="records"), chunk_size):
-        parsed = _extract_chunk(gemini_key, model, list(chunk), now)
-        extracted.extend(parsed.get("challenges", []))
+    extracted, chunk_errors, chunk_total = _extract_challenges_resilient(
+        gemini_key, model, evidence.to_dict(orient="records"), chunk_size, now
+    )
 
     if not extracted:
+        if chunk_errors:
+            raise RuntimeError(
+                f"AI 후보 추출이 모든 청크({chunk_total}개)에서 실패했습니다: {chunk_errors[-1]}"
+            )
         raise RuntimeError("AI가 원시 데이터에서 유효한 챌린지 후보를 찾지 못했습니다.")
 
     canonical = _merge_candidates(gemini_key, model, extracted)
@@ -160,6 +163,11 @@ def discover_live_challenges(
         "youtube": yt_status,
         "naver": naver_status,
         "evidence_rows": int(len(evidence)),
+        "ai_extraction": {
+            "chunks": chunk_total,
+            "failed_chunks": len(chunk_errors),
+            "errors": chunk_errors[:5],
+        },
         "raw_ai_candidates": int(len(extracted)),
         "canonical_candidates": int(len(candidates)),
         "supplemental_candidates": int(len(supplemental)) if "supplemental" in locals() else 0,
@@ -167,6 +175,33 @@ def discover_live_challenges(
     }
     return AutoDiscoveryResult(candidates=candidates, evidence=evidence, status=status)
 
+
+
+def _extract_challenges_resilient(
+    gemini_key: str,
+    model: str,
+    evidence_records: list[dict[str, Any]],
+    chunk_size: int,
+    now: pd.Timestamp,
+) -> tuple[list[dict[str, Any]], list[str], int]:
+    """Extract challenge candidates chunk by chunk, surviving per-chunk failures.
+
+    One transient Gemini failure (rate limit, safety block, malformed JSON)
+    must degrade to a partial result, not discard the evidence already
+    collected and the candidates from the other chunks.
+    """
+    extracted: list[dict[str, Any]] = []
+    chunk_errors: list[str] = []
+    chunk_total = 0
+    for chunk in chunks(evidence_records, chunk_size):
+        chunk_total += 1
+        try:
+            parsed = _extract_chunk(gemini_key, model, list(chunk), now)
+        except Exception as exc:
+            chunk_errors.append(str(exc))
+            continue
+        extracted.extend(parsed.get("challenges", []))
+    return extracted, chunk_errors, chunk_total
 
 
 def _collect_instagram_seed_corpus(
@@ -248,6 +283,7 @@ def _collect_youtube_seed_corpus(
 
     video_search_hits: dict[str, set[str]] = {}
     requests_used = 0
+    request_errors: list[str] = []
     for index, seed in enumerate(seeds):
         orders = ["date"]
         if index < viewcount_seed_count:
@@ -255,24 +291,31 @@ def _collect_youtube_seed_corpus(
         for order in orders:
             if requests_used >= max_search_requests:
                 break
-            payload = request_json(
-                session,
-                "GET",
-                search_url,
-                params={
-                    "key": api_key,
-                    "part": "snippet",
-                    "type": "video",
-                    "q": seed,
-                    "order": order,
-                    "publishedAfter": published_after,
-                    "maxResults": max_results,
-                    "videoDuration": "short",
-                    "regionCode": cfg.get("region_code", "KR"),
-                    "relevanceLanguage": cfg.get("relevance_language", "ko"),
-                    "safeSearch": "moderate",
-                },
-            )
+            try:
+                payload = request_json(
+                    session,
+                    "GET",
+                    search_url,
+                    params={
+                        "key": api_key,
+                        "part": "snippet",
+                        "type": "video",
+                        "q": seed,
+                        "order": order,
+                        "publishedAfter": published_after,
+                        "maxResults": max_results,
+                        "videoDuration": "short",
+                        "regionCode": cfg.get("region_code", "KR"),
+                        "relevanceLanguage": cfg.get("relevance_language", "ko"),
+                        "safeSearch": "moderate",
+                    },
+                )
+            except Exception as exc:
+                # A mid-loop quota/network failure degrades this source to the
+                # rows already collected instead of crashing the whole run.
+                requests_used += 1
+                request_errors.append(str(exc))
+                continue
             requests_used += 1
             for item in payload.get("items", []):
                 video_id = str(item.get("id", {}).get("videoId", "")).strip()
@@ -282,21 +325,31 @@ def _collect_youtube_seed_corpus(
             break
 
     if not video_search_hits:
-        return [], {"success": True, "search_requests": requests_used, "rows": 0}
+        return [], {
+            "success": not request_errors,
+            "search_requests": requests_used,
+            "rows": 0,
+            "errors": request_errors[:5],
+        }
 
     details: dict[str, dict[str, Any]] = {}
     detail_requests = 0
     for batch in chunks(list(video_search_hits), 50):
-        payload = request_json(
-            session,
-            "GET",
-            videos_url,
-            params={
-                "key": api_key,
-                "part": "snippet,statistics,contentDetails",
-                "id": ",".join(batch),
-            },
-        )
+        try:
+            payload = request_json(
+                session,
+                "GET",
+                videos_url,
+                params={
+                    "key": api_key,
+                    "part": "snippet,statistics,contentDetails",
+                    "id": ",".join(batch),
+                },
+            )
+        except Exception as exc:
+            detail_requests += 1
+            request_errors.append(str(exc))
+            continue
         detail_requests += 1
         for item in payload.get("items", []):
             details[str(item.get("id", ""))] = item
@@ -330,6 +383,7 @@ def _collect_youtube_seed_corpus(
         "search_requests": requests_used,
         "detail_requests": detail_requests,
         "rows": len(records),
+        "errors": request_errors[:5],
     }
 
 
