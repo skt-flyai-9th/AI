@@ -156,8 +156,14 @@ def apply_ai_adjudication(
     ).clip(0, 100)
     # Obvious semantic false positives remain in detail output but cannot win public ranking.
     result.loc[~result["is_social_challenge"], "final_score"] *= 0.10
-    result["final_rank"] = result["final_score"].rank(method="min", ascending=False).astype(int)
-    result = result.sort_values(["final_rank", "confidence"], ascending=[True, False]).reset_index(drop=True)
+    # Rank accepted challenges strictly ahead of hard-filtered rows: even a
+    # heavily penalized viral false positive must never outrank a genuine
+    # challenge anywhere the stored final_rank is consumed.
+    result = result.sort_values(
+        ["is_social_challenge", "final_score", "confidence"],
+        ascending=[False, False, False],
+    ).reset_index(drop=True)
+    result["final_rank"] = range(1, len(result) + 1)
 
     return result, {
         "enabled": True,
