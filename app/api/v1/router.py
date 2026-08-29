@@ -10,6 +10,7 @@ from app.api.v1 import (
     shortform_sessions,
     database_knowledge,
     editing_templates,
+    trade_area_insights,
 )
 
 api_router = APIRouter()
@@ -22,3 +23,4 @@ api_router.include_router(shortform_sessions.router)
 api_router.include_router(editing_templates.router)
 api_router.include_router(editing_runs.router)
 api_router.include_router(database_knowledge.router)
+api_router.include_router(trade_area_insights.router)
