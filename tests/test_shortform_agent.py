@@ -515,6 +515,47 @@ def test_next_recommendation_reports_exhaustion_when_no_alternative(client, auth
         app.dependency_overrides.pop(get_shortform_agent_service, None)
 
 
+def test_next_recommendation_without_current_recommendation_still_serves(client, auth_headers):
+    _seed_video_editing_db("recovery_db_record", title="복구 가능한 DB 버전")
+    _seed_video_editing_db("recovery_db_record_two", title="복구 가능한 DB 버전 2")
+    _seed_video_editing_db("recovery_db_record_three", title="복구 가능한 DB 버전 3")
+
+    fake_service = ShortformAgentService(llm=FakeShortformLLM())
+    app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
+    try:
+        created = client.post(
+            "/api/v1/shortform-sessions",
+            headers=auth_headers,
+            json=_store_context(),
+        )
+        session_id = created.json()["session_id"]
+        # Simulate a confirmed brief whose first RECOMMEND response was lost
+        # before any recommendation was stored.
+        with SessionLocal() as db:
+            session = db.get(ShortformSession, session_id)
+            state = dict(session.project_state or {})
+            state["brief_confirmed"] = True
+            session.project_state = state
+            session.current_recommendation = None
+            db.commit()
+
+        next_response = client.post(
+            f"/api/v1/shortform-sessions/{session_id}/recommendations/next",
+            headers=auth_headers,
+            json={},
+        )
+        assert next_response.status_code == 200
+        recommendations = next_response.json()["recommendations"]
+        assert len(recommendations) == 3
+        assert {item["editing_template_id"] for item in recommendations} == {
+            "recovery_db_record",
+            "recovery_db_record_two",
+            "recovery_db_record_three",
+        }
+    finally:
+        app.dependency_overrides.pop(get_shortform_agent_service, None)
+
+
 def test_shortform_recommendation_bootstraps_packaged_database(client, auth_headers):
     with SessionLocal() as db:
         seed_template_library(db)
