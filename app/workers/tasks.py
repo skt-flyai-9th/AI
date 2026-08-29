@@ -24,6 +24,45 @@ class _ImmediateResult:
     id: str
 
 
+def _active_task_id_counts() -> dict[str, int] | None:
+    """Count actively executing task instances per id, or None when inspection fails."""
+    control = getattr(celery_app, "control", None)
+    if control is None:
+        return None
+    try:
+        active_by_worker = control.inspect(timeout=2.0).active()
+    except Exception:
+        return None
+    if not active_by_worker:
+        return None
+    counts: dict[str, int] = {}
+    for tasks in active_by_worker.values():
+        for task in tasks or []:
+            key = str(task.get("id") or "")
+            if key:
+                counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _editing_run_execution_alive(run: EditingRun, task_id: str | None) -> bool:
+    """Detect whether another live execution of this run exists.
+
+    A broker redelivery keeps the original task id, so when this redelivered
+    copy is executing, the id it shares with the original counts twice in the
+    active-task inspection. A differing recorded id (e.g. after a beat requeue)
+    is alive when it appears at all. When inspection is unavailable we assume
+    the original is dead, preserving the bounded recovery behaviour.
+    """
+    counts = _active_task_id_counts()
+    if counts is None:
+        return False
+    if run.celery_task_id and run.celery_task_id != task_id:
+        return counts.get(run.celery_task_id, 0) > 0
+    if task_id:
+        return counts.get(task_id, 0) > 1
+    return False
+
+
 @celery_app.task(name="app.workers.tasks.run_ranking_pipeline", bind=True)
 def run_ranking_pipeline(self, run_id: str | None = None) -> dict:
     with SessionLocal() as db:
@@ -83,6 +122,15 @@ def run_editing_pipeline(self, run_id: str) -> dict:
             task_id = getattr(request, "id", None)
             delivery_info = getattr(request, "delivery_info", {}) or {}
             if run.status == "RUNNING" and delivery_info.get("redelivered"):
+                if _editing_run_execution_alive(run, task_id):
+                    # The original execution is still running (e.g. a broker
+                    # visibility-timeout redelivery); executing this copy too
+                    # would double-render and race commits on the same run.
+                    return {
+                        "run_id": run.id,
+                        "status": run.status,
+                        "skipped": "EXECUTION_STILL_ACTIVE",
+                    }
                 run.recovery_attempts = int(run.recovery_attempts or 0) + 1
                 if run.recovery_attempts > get_settings().editing_orphan_max_recovery_attempts:
                     run.status = "FAILED"
@@ -110,22 +158,10 @@ def recover_orphaned_editing_runs() -> dict:
     if not settings.editing_orphan_recovery_enabled:
         return {"status": "disabled", "requeued": []}
 
-    control = getattr(celery_app, "control", None)
-    if control is None:
+    active_counts = _active_task_id_counts()
+    if active_counts is None:
         return {"status": "inspector_unavailable", "requeued": []}
-    try:
-        active_by_worker = control.inspect(timeout=2.0).active()
-    except Exception:
-        return {"status": "inspector_unavailable", "requeued": []}
-    if not active_by_worker:
-        return {"status": "inspector_unavailable", "requeued": []}
-
-    active_task_ids = {
-        str(task["id"])
-        for tasks in active_by_worker.values()
-        for task in (tasks or [])
-        if task.get("id")
-    }
+    active_task_ids = set(active_counts)
     cutoff = datetime.now(timezone.utc) - timedelta(
         seconds=settings.editing_orphan_stale_seconds
     )

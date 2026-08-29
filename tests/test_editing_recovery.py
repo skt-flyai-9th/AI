@@ -138,6 +138,8 @@ def test_redelivered_task_resumes_a_run_left_running(monkeypatch):
             return run
 
     monkeypatch.setattr(tasks, "get_editing_agent_service", lambda: _Service())
+    # The previous execution is gone from every worker.
+    monkeypatch.setattr(tasks.celery_app, "control", _Control({"worker": []}))
     tasks.run_editing_pipeline.push_request(
         id="task-redelivered",
         delivery_info={"redelivered": True},
@@ -152,6 +154,83 @@ def test_redelivered_task_resumes_a_run_left_running(monkeypatch):
     with SessionLocal() as db:
         run = db.get(EditingRun, "edit_redelivered")
         assert run.celery_task_id == "task-redelivered"
+
+
+def test_redelivered_task_skips_when_original_execution_is_still_active(monkeypatch):
+    with SessionLocal() as db:
+        db.add(_running("edit_visible_timeout", "task-dup"))
+        db.commit()
+
+    executed: list[str] = []
+
+    class _Service:
+        def execute(self, db, run_id):
+            executed.append(run_id)
+            return db.get(EditingRun, run_id)
+
+    monkeypatch.setattr(tasks, "get_editing_agent_service", lambda: _Service())
+    # A visibility-timeout redelivery keeps the original task id, so the same
+    # id shows up twice: the still-running original and this redelivered copy.
+    monkeypatch.setattr(
+        tasks.celery_app,
+        "control",
+        _Control({"worker": [{"id": "task-dup"}, {"id": "task-dup"}]}),
+    )
+    tasks.run_editing_pipeline.push_request(
+        id="task-dup",
+        delivery_info={"redelivered": True},
+    )
+    try:
+        result = tasks.run_editing_pipeline.run("edit_visible_timeout")
+    finally:
+        tasks.run_editing_pipeline.pop_request()
+
+    assert result == {
+        "run_id": "edit_visible_timeout",
+        "status": "RUNNING",
+        "skipped": "EXECUTION_STILL_ACTIVE",
+    }
+    assert executed == []
+    with SessionLocal() as db:
+        run = db.get(EditingRun, "edit_visible_timeout")
+        assert run.status == "RUNNING"
+        assert run.celery_task_id == "task-dup"
+        assert int(run.recovery_attempts or 0) == 0
+
+
+def test_redelivered_task_skips_when_a_newer_execution_owns_the_run(monkeypatch):
+    with SessionLocal() as db:
+        db.add(_running("edit_reowned", "task-current-owner"))
+        db.commit()
+
+    executed: list[str] = []
+
+    class _Service:
+        def execute(self, db, run_id):
+            executed.append(run_id)
+            return db.get(EditingRun, run_id)
+
+    monkeypatch.setattr(tasks, "get_editing_agent_service", lambda: _Service())
+    monkeypatch.setattr(
+        tasks.celery_app,
+        "control",
+        _Control({"worker": [{"id": "task-current-owner"}]}),
+    )
+    tasks.run_editing_pipeline.push_request(
+        id="task-stale-redelivery",
+        delivery_info={"redelivered": True},
+    )
+    try:
+        result = tasks.run_editing_pipeline.run("edit_reowned")
+    finally:
+        tasks.run_editing_pipeline.pop_request()
+
+    assert result["skipped"] == "EXECUTION_STILL_ACTIVE"
+    assert executed == []
+    with SessionLocal() as db:
+        run = db.get(EditingRun, "edit_reowned")
+        assert run.status == "RUNNING"
+        assert run.celery_task_id == "task-current-owner"
 
 
 def test_celery_uses_late_ack_and_single_task_prefetch():
