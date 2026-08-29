@@ -290,8 +290,10 @@ def _build_public_ranking(config: dict[str, Any], ranking: pd.DataFrame) -> tupl
             if "entity_confidence" in rejected.columns:
                 rejected = rejected[pd.to_numeric(rejected["entity_confidence"], errors="coerce").fillna(0) >= float(ranking_cfg.get("backfill_min_entity_confidence", 0.15))]
             needed = max(0, top_n - len(accepted))
+            # Backfilled rejected rows go strictly after every accepted row; a
+            # combined score re-sort would let a penalized viral false positive
+            # climb back above weaker genuine challenges.
             ranked = pd.concat([accepted, rejected.head(needed)], ignore_index=False)
-            ranked = ranked.sort_values(["final_score", "confidence"], ascending=[False, False])
         else:
             ranked = accepted
 

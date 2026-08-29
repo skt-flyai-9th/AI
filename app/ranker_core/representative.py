@@ -266,9 +266,10 @@ def select_representative_youtube(
         if not scored:
             continue
 
+        # Never re-admit COMMENTARY as the representative pick: when only
+        # news/reaction coverage exists, the guide fallback below or a null
+        # link is correct — a news explainer on the app card is not.
         rep_candidates = [x for x in scored if x.get("_participation_type") not in {"UNRELATED", "COMMENTARY"}]
-        if not rep_candidates:
-            rep_candidates = [x for x in scored if x.get("_participation_type") != "UNRELATED"]
         representative = max(
             rep_candidates,
             key=lambda x: (safe_float(x.get("_representative_score")), safe_float(x.get("views"))),
