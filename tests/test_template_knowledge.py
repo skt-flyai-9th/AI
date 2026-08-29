@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
@@ -30,6 +31,7 @@ from app.schemas.template_knowledge import (
 )
 from app.template_knowledge.seeds import seed_template_library
 from app.template_knowledge.service import (
+    TemplateKnowledgeDomainError,
     TemplateKnowledgeService,
     get_template_knowledge_service,
 )
@@ -718,6 +720,143 @@ def test_video_editing_schemas_allow_physical_edit_cuts_beyond_six():
     insight_schema = EditingVideoInsight.model_json_schema()
     assert insight_schema["properties"]["shot_sequence"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
     assert insight_schema["properties"]["segments"]["maxItems"] == MAX_SHOOTING_GUIDE_CUTS
+
+
+def _multi_scene_editing_payload(scene_count: int) -> dict:
+    payload = video_editing_db_payload()
+    base_scene = payload["shooting_guide"]["scenes"][0]
+    base_task = payload["shooting_guide"]["tasks"][0]
+    payload["shooting_guide"]["scenes"] = [
+        {**base_scene, "scene_order": index + 1} for index in range(scene_count)
+    ]
+    payload["shooting_guide"]["tasks"] = [
+        {**base_task, "display_order": index + 1, "scene_index": index}
+        for index in range(scene_count)
+    ]
+    return payload
+
+
+def test_editing_candidate_rejects_silent_shooting_structure_reduction():
+    service, _ = _service()
+    with SessionLocal() as db:
+        service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="structure_guard",
+            payload=_multi_scene_editing_payload(3),
+            source_evidence={"bootstrap": True},
+            generation_model="seed",
+            requires_human_approval=False,
+        )
+        reduced = _multi_scene_editing_payload(2)
+        reduced["trend_ids"] = ["trend_test"]
+        candidate = service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="structure_guard",
+            payload=reduced,
+            source_evidence={"generation_mode": "INCREMENTAL_UPDATE"},
+            generation_model="test",
+            requires_human_approval=False,
+        )
+        assert candidate.status == "INVALID"
+        codes = {item["code"] for item in candidate.validation_errors}
+        assert "SHOOTING_STRUCTURE_REGRESSION" in codes
+        assert db.get(VideoEditingDBRecord, ("structure_guard", 1)).status == "ACTIVE"
+        assert db.get(VideoEditingDBRecord, ("structure_guard", 2)) is None
+
+
+def test_rebuild_with_reduced_structure_requires_human_approval():
+    service, _ = _service()
+    with SessionLocal() as db:
+        service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="rebuild_guard",
+            payload=_multi_scene_editing_payload(3),
+            source_evidence={"bootstrap": True},
+            generation_model="seed",
+            requires_human_approval=False,
+        )
+        reduced = _multi_scene_editing_payload(2)
+        reduced["trend_ids"] = ["trend_test"]
+        candidate = service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="rebuild_guard",
+            payload=reduced,
+            source_evidence={"generation_mode": "REBUILD_FROM_SCRATCH"},
+            generation_model="test",
+            requires_human_approval=False,
+            allow_structure_reduction=True,
+        )
+        assert candidate.status == "VALIDATED"
+        assert candidate.requires_human_approval is True
+        assert db.get(VideoEditingDBRecord, ("rebuild_guard", 2)) is None
+
+        revalidated = service.validate_candidate(db, candidate.id)
+        assert revalidated.status == "VALIDATED"
+
+        applied = service.approve_candidate(
+            db,
+            candidate.id,
+            CandidateDecision(actor="reviewer", note="intentional rebuild"),
+        )
+        assert applied.status == "APPLIED"
+        assert db.get(VideoEditingDBRecord, ("rebuild_guard", 2)).status == "ACTIVE"
+
+
+def test_concurrent_approval_conflict_maps_to_candidate_stale(monkeypatch):
+    service, _ = _service()
+    with SessionLocal() as db:
+        service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="race_guard",
+            payload=_multi_scene_editing_payload(3),
+            source_evidence={"bootstrap": True},
+            generation_model="seed",
+            requires_human_approval=False,
+        )
+        payload = _multi_scene_editing_payload(3)
+        payload["trend_ids"] = ["trend_test"]
+        first = service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="race_guard",
+            payload=payload,
+            source_evidence={"generation_mode": "INCREMENTAL_UPDATE"},
+            generation_model="test",
+            requires_human_approval=True,
+        )
+        second = service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="race_guard",
+            payload=payload,
+            source_evidence={"generation_mode": "INCREMENTAL_UPDATE"},
+            generation_model="test",
+            requires_human_approval=True,
+        )
+        service.approve_candidate(
+            db, first.id, CandidateDecision(actor="admin1", note="first wins")
+        )
+
+        # Simulate the race window: the second approver's staleness check ran
+        # before the first activation committed.
+        monkeypatch.setattr(
+            service, "_candidate_staleness_errors", lambda *args, **kwargs: []
+        )
+        with pytest.raises(TemplateKnowledgeDomainError) as exc_info:
+            service.approve_candidate(
+                db, second.id, CandidateDecision(actor="admin2", note="race loser")
+            )
+        assert exc_info.value.code == "CANDIDATE_STALE"
+        assert exc_info.value.status_code == 409
+
+        db.rollback()
+        refreshed = service.get_candidate(db, second.id)
+        assert refreshed.status == "VALIDATED"
 
 
 def test_video_editing_source_contains_no_shooting_element_data():

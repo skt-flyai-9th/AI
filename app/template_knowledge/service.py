@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -338,6 +339,7 @@ class TemplateKnowledgeService:
             requires_human_approval=(
                 request.requires_human_approval or self.settings.database_require_human_approval
             ),
+            allow_structure_reduction=request.rebuild_from_scratch,
         )
 
     def create_candidate_from_payload(
@@ -350,6 +352,7 @@ class TemplateKnowledgeService:
         source_evidence: dict[str, Any],
         generation_model: str,
         requires_human_approval: bool,
+        allow_structure_reduction: bool = False,
     ) -> TemplateUpdateCandidate:
         base = self._latest_version(db, template_type, template_id)
         base_payload = self._version_payload(template_type, base) if base else None
@@ -359,7 +362,13 @@ class TemplateKnowledgeService:
             template_type,
             payload,
             is_initial_version=base is None,
+            base_payload=base_payload,
+            allow_structure_reduction=allow_structure_reduction,
         )
+        if _shooting_structure_reduced(template_type, base_payload, payload):
+            # An explicitly requested rebuild may shrink the structure, but never
+            # silently: a human must confirm before the smaller guide goes live.
+            requires_human_approval = True
         candidate = TemplateUpdateCandidate(
             id=f"tuc_{uuid4().hex[:24]}",
             template_type=template_type.value,
@@ -401,10 +410,18 @@ class TemplateKnowledgeService:
                 status_code=409,
             )
         stale = self._candidate_staleness_errors(db, candidate)
+        template_type = TemplateType(candidate.template_type)
+        latest = self._latest_version(db, template_type, candidate.template_id)
+        latest_payload = self._version_payload(template_type, latest) if latest else None
         errors = stale + self.validator.validate(
             candidate.template_type,
             candidate.proposed_payload,
             is_initial_version=candidate.base_version is None,
+            base_payload=latest_payload,
+            allow_structure_reduction=(
+                (candidate.source_evidence or {}).get("generation_mode")
+                == "REBUILD_FROM_SCRATCH"
+            ),
         )
         candidate.validation_errors = errors
         candidate.status = (
@@ -429,6 +446,11 @@ class TemplateKnowledgeService:
                 "Only a currently VALIDATED candidate can be approved.",
                 status_code=409,
             )
+        # Serialize concurrent approvals for the same template so two admins
+        # cannot both pass the staleness check against the same base version.
+        self._lock_template_versions(
+            db, TemplateType(candidate.template_type), candidate.template_id
+        )
         stale_errors = self._candidate_staleness_errors(db, candidate)
         if stale_errors:
             candidate.validation_errors = stale_errors
@@ -682,9 +704,33 @@ class TemplateKnowledgeService:
             )
         candidate.status = TemplateCandidateStatus.APPLIED.value
         candidate.applied_at = now
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # A concurrent approval activated another version of this template
+            # between our staleness check and this commit.
+            db.rollback()
+            raise TemplateKnowledgeDomainError(
+                "CANDIDATE_STALE",
+                "Another activation for this template won a concurrent approval; "
+                "revalidate and retry with a fresh candidate.",
+                status_code=409,
+            ) from None
         db.refresh(candidate)
         return candidate
+
+    @staticmethod
+    def _lock_template_versions(
+        db: Session, template_type: TemplateType, template_id: str
+    ) -> None:
+        model: type[TradeAreaDBRecord] | type[VideoEditingDBRecord] = (
+            TradeAreaDBRecord
+            if template_type == TemplateType.TRADE_AREA
+            else VideoEditingDBRecord
+        )
+        db.scalars(
+            select(model).where(model.template_id == template_id).with_for_update()
+        ).all()
 
     def _candidate_staleness_errors(
         self, db: Session, candidate: TemplateUpdateCandidate
@@ -867,6 +913,24 @@ def _editing_read(row: VideoEditingDBRecord) -> TemplateVersionRead:
         evidence_summary=row.evidence_summary or {},
         source_candidate_id=row.source_candidate_id,
         activated_at=row.activated_at,
+    )
+
+
+def _shooting_structure_reduced(
+    template_type: TemplateType,
+    base_payload: dict[str, Any] | None,
+    payload: dict[str, Any],
+) -> bool:
+    if template_type != TemplateType.VIDEO_EDITING or not base_payload:
+        return False
+    base_guide = base_payload.get("shooting_guide") or {}
+    new_guide = payload.get("shooting_guide") or {}
+    base_tasks = len(base_guide.get("tasks") or [])
+    base_scenes = len(base_guide.get("scenes") or [])
+    new_tasks = len(new_guide.get("tasks") or [])
+    new_scenes = len(new_guide.get("scenes") or [])
+    return (base_tasks > 0 and new_tasks < base_tasks) or (
+        base_scenes > 0 and new_scenes < base_scenes
     )
 
 
