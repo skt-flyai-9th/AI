@@ -542,6 +542,31 @@ def test_free_tier_profile_limits_duration_and_disables_heavy_effect():
     assert {"OUTPUT_TOO_LONG", "EFFECT_UNSUPPORTED"} <= {issue.code for issue in issues}
 
 
+def test_validator_rejects_cut_that_exceeds_template_scene_slot():
+    recipe = _recipe().model_copy(deep=True)
+    video_editing_db = _video_editing_db()
+    video_editing_db["shooting_guide"] = {
+        "scenes": [
+            {"scene_order": 1, "target_duration_sec": 1.5},
+            {"scene_order": 2, "target_duration_sec": 2.0},
+        ]
+    }
+
+    issues = EditRecipeValidator().validate(
+        recipe,
+        selected_shortform=SelectedShortform.model_validate(
+            _request().selected_shortform.model_dump(mode="json")
+        ),
+        video_editing_db=video_editing_db,
+        video_contexts=_contexts(),
+    )
+
+    matching = [issue for issue in issues if issue.code == "CUT_DURATION_EXCEEDS_SLOT"]
+    assert [(issue.path, issue.source) for issue in matching] == [
+        ("timeline[0]", "DOMAIN")
+    ]
+
+
 def test_llm_capabilities_publish_free_tier_envelope():
     capabilities = _renderer_capabilities(
         Settings(

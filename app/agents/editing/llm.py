@@ -13,7 +13,12 @@ import numpy as np
 from PIL import Image
 
 from app.agents.editing.context_builder import build_editing_context
+from app.agents.editing.duration_contract import (
+    fit_frame_exact_window,
+    template_slot_durations_ms,
+)
 from app.agents.editing.effect_planner import EffectPlanner
+from app.agents.editing.reals import get_reals_registry
 from app.agents.editing.structured_output import (
     EditingLLMError,
     request_structured_model,
@@ -25,7 +30,6 @@ from app.agents.editing.types import (
     SourceCutPlan,
     VideoContext,
 )
-from app.agents.editing.reals import get_reals_registry
 from app.core.config import Settings, get_settings
 
 
@@ -172,6 +176,7 @@ class OpenAIEditingLLM:
             decision,
             prepared["source_preparation"],
             video_contexts,
+            video_editing_db=video_editing_db,
         )
         return self.effect_planner.apply(
             prepared_decision,
@@ -243,6 +248,7 @@ class OpenAIEditingLLM:
             repaired,
             prepared["source_preparation"],
             video_contexts,
+            video_editing_db=video_editing_db,
         )
         return self.effect_planner.apply(
             prepared_decision,
@@ -310,6 +316,7 @@ class OpenAIEditingLLM:
                 video_contexts,
                 analyzed,
                 min_cut_ms=_source_min_cut_ms(video_editing_db),
+                slot_durations_ms=template_slot_durations_ms(video_editing_db),
             )
             produced = _map_cut_analysis_to_produced(analyzed, source_plan)
             return {
@@ -490,6 +497,7 @@ class OpenAIEditingLLM:
         revision_action: str | None,
     ) -> SourceCutPlan:
         min_cut_ms = _source_min_cut_ms(video_editing_db)
+        slot_durations = template_slot_durations_ms(video_editing_db)
         payload = {
             "task": (
                 "Create the MULTI_CUT source-preparation plan before creative editing. "
@@ -502,11 +510,19 @@ class OpenAIEditingLLM:
             "video_editing_db": video_editing_db,
             "revision_action": revision_action,
             "raw_frame_analysis": analyzed,
+            "template_slot_contract": [
+                {
+                    "shooting_scene_order": order,
+                    "max_output_duration_ms": duration_ms,
+                }
+                for order, duration_ms in sorted(slot_durations.items())
+            ],
             "hard_rules": [
                 "Preserve raw capture order and create exactly one source cut per input video.",
                 "Do not invent a reference segment that is not present in reference context/guide.",
                 "trim_in_ms and trim_out_ms must exactly equal observed frame timestamps.",
                 f"Every selected source cut must span at least {min_cut_ms}ms before creative speed changes.",
+                "Each final cut's produced duration must not exceed its template_slot_contract limit.",
                 "Prefer action/state boundaries and transition-candidate frames over arbitrary times.",
                 "Keep the selected user content as similar as possible to the corresponding reference segment.",
             ],
@@ -706,6 +722,7 @@ def _normalize_source_cut_plan(
     analyzed: list[dict[str, Any]],
     *,
     min_cut_ms: int = 300,
+    slot_durations_ms: dict[int, int] | None = None,
 ) -> SourceCutPlan:
     """Snap GPT cuts to real frames, preserve order, and prevent repair deadlocks."""
     analyzed_by_video = {item["video_id"]: item for item in analyzed}
@@ -747,6 +764,15 @@ def _normalize_source_cut_plan(
                 f"{exc} video_id={context.video_id}, min_cut_ms={min_cut_ms}.",
                 retryable=False,
             ) from exc
+        slot_duration_ms = (slot_durations_ms or {}).get(context.shooting_scene_order)
+        if slot_duration_ms is not None:
+            trim_in, trim_out = fit_frame_exact_window(
+                trim_in,
+                trim_out,
+                timestamps,
+                min_duration_ms=min_cut_ms,
+                max_duration_ms=slot_duration_ms,
+            )
         normalized.append(
             cut.model_copy(
                 update={
@@ -765,6 +791,8 @@ def _apply_source_preparation(
     decision: EditingPlanDecision,
     source_preparation: dict[str, Any],
     contexts: list[VideoContext],
+    *,
+    video_editing_db: dict[str, Any] | None = None,
 ) -> EditingPlanDecision:
     """Make source-preparation boundaries deterministic before validation/render."""
     if decision.outcome != "RECIPE" or decision.recipe is None:
@@ -774,6 +802,8 @@ def _apply_source_preparation(
     mode = source_preparation.get("mode")
     if mode == "MULTI_CUT":
         cuts = list(source_preparation.get("cuts") or [])
+        contexts_by_id = {context.video_id: context for context in contexts}
+        slot_durations = template_slot_durations_ms(video_editing_db or {})
         by_video: dict[str, Any] = {}
         for clip in recipe.timeline:
             if clip.video_id in by_video:
@@ -794,12 +824,29 @@ def _apply_source_preparation(
                 )
             trim_in = int(cut["trim_in_ms"])
             trim_out = int(cut["trim_out_ms"])
+            context = contexts_by_id.get(video_id)
+            slot_duration_ms = (
+                slot_durations.get(context.shooting_scene_order) if context is not None else None
+            )
+            speed = float(clip.speed)
+            if slot_duration_ms is not None:
+                required_speed = math.ceil(
+                    ((trim_out - trim_in) / slot_duration_ms) * 1_000_000
+                ) / 1_000_000
+                if required_speed > 2.0:
+                    raise EditingLLMError(
+                        "Prepared source cut cannot fit its template slot within the supported "
+                        f"speed range: video_id={video_id}, slot_duration_ms={slot_duration_ms}.",
+                        retryable=False,
+                    )
+                speed = max(speed, required_speed)
             clip = clip.model_copy(
                 update={
                     "clip_order": index,
                     "source_start_ms": trim_in,
                     "source_end_ms": trim_out,
                     "timeline_start_ms": int(round(cursor)),
+                    "speed": speed,
                 }
             )
             normalized_timeline.append(clip)

@@ -312,6 +312,51 @@ def test_cut_plan_is_snapped_to_real_frames_and_capture_order():
     assert normalized.cuts[0].trim_out_ms in valid_first
 
 
+def test_source_cut_plan_caps_each_cut_to_its_template_slot():
+    context = _context("cut_1", 1, count=18, fps=10.0)
+    analyzed = [
+        {
+            "video_id": context.video_id,
+            "observations": [
+                FrameObservation(
+                    video_id=context.video_id,
+                    frame_index=frame.frame_index,
+                    timestamp_ms=frame.timestamp_ms,
+                ).model_dump(mode="json")
+                for frame in context.keyframes
+            ],
+        }
+    ]
+    plan = SourceCutPlan(
+        cuts=[
+            SourceCutDecision(
+                video_id="cut_1",
+                trim_in_ms=0,
+                trim_out_ms=1700,
+                mapped_reference_segment_id="ref_1",
+                cut_in_reason="start",
+                cut_out_reason="end",
+                decision_reason="test",
+            )
+        ],
+        rationale="test",
+    )
+
+    normalized = _normalize_source_cut_plan(
+        plan,
+        [context],
+        analyzed,
+        min_cut_ms=300,
+        slot_durations_ms={1: 1500},
+    )
+
+    cut = normalized.cuts[0]
+    assert cut.trim_out_ms - cut.trim_in_ms == 1500
+    assert {cut.trim_in_ms, cut.trim_out_ms} <= {
+        frame.timestamp_ms for frame in context.keyframes
+    }
+
+
 def test_multi_cut_analysis_is_reused_on_produced_timeline():
     analyzed = [
         {
@@ -440,6 +485,131 @@ def test_source_preparation_overrides_llm_cut_boundaries():
     ]
     assert result.recipe.timeline[0].timeline_start_ms == 0
     assert result.recipe.timeline[1].timeline_start_ms == 200
+
+
+def test_source_preparation_enforces_template_slot_duration_with_speed_floor():
+    recipe = EditRecipe.model_validate(
+        {
+            "editing_template_id": "db",
+            "editing_template_version": 1,
+            "timeline": [
+                {
+                    "clip_order": 1,
+                    "video_id": "cut_1",
+                    "source_start_ms": 0,
+                    "source_end_ms": 1700,
+                    "timeline_start_ms": 0,
+                    "speed": 1.0,
+                }
+            ],
+            "cta": {"text": "지금 확인해보세요"},
+        }
+    )
+    decision = EditingPlanDecision(
+        outcome="RECIPE",
+        recipe=recipe,
+        publishing=PublishingResult(
+            title="테스트 제목",
+            caption="테스트 본문",
+            hashtags=["#테스트1", "#테스트2", "#테스트3", "#테스트4", "#테스트5"],
+            track={"mode": "SUGGESTED", "search_keyword": "테스트 음원"},
+            post_note="플랫폼에서 ‘테스트 음원’을 검색해 추가해주세요.",
+        ),
+        missing_scene_roles=[],
+        available_options=[],
+        rationale="test",
+    )
+
+    result = _apply_source_preparation(
+        decision,
+        {
+            "mode": "MULTI_CUT",
+            "cuts": [{"video_id": "cut_1", "trim_in_ms": 0, "trim_out_ms": 1700}],
+        },
+        [_context("cut_1", 1)],
+        video_editing_db={
+            "shooting_guide": {
+                "scenes": [{"scene_order": 1, "target_duration_sec": 1.5}]
+            }
+        },
+    )
+
+    clip = result.recipe.timeline[0]
+    assert clip.speed == 1.133334
+    assert (clip.source_end_ms - clip.source_start_ms) / clip.speed <= 1500
+
+
+def test_project_302_cut_lengths_fit_all_eight_template_slots():
+    source_durations = [1700, 1900, 1867, 1900, 1866, 1900, 1800, 1866]
+    slot_durations = [1500, 2000, 1500, 2000, 1500, 2000, 1500, 2000]
+    video_ids = [f"task_{1286 + index}" for index in range(8)]
+    recipe = EditRecipe.model_validate(
+        {
+            "editing_template_id": "gt_jujutsu_transition",
+            "editing_template_version": 10,
+            "timeline": [
+                {
+                    "clip_order": index,
+                    "video_id": video_id,
+                    "source_start_ms": 0,
+                    "source_end_ms": duration,
+                    "timeline_start_ms": sum(source_durations[: index - 1]),
+                    "speed": 1.0,
+                }
+                for index, (video_id, duration) in enumerate(
+                    zip(video_ids, source_durations, strict=True), start=1
+                )
+            ],
+            "cta": {"text": "지금 확인해보세요"},
+        }
+    )
+    decision = EditingPlanDecision(
+        outcome="RECIPE",
+        recipe=recipe,
+        publishing=PublishingResult(
+            title="테스트 제목",
+            caption="테스트 본문",
+            hashtags=["#테스트1", "#테스트2", "#테스트3", "#테스트4", "#테스트5"],
+            track={"mode": "SUGGESTED", "search_keyword": "테스트 음원"},
+            post_note="플랫폼에서 ‘테스트 음원’을 검색해 추가해주세요.",
+        ),
+        missing_scene_roles=[],
+        available_options=[],
+        rationale="test",
+    )
+
+    result = _apply_source_preparation(
+        decision,
+        {
+            "mode": "MULTI_CUT",
+            "cuts": [
+                {"video_id": video_id, "trim_in_ms": 0, "trim_out_ms": duration}
+                for video_id, duration in zip(video_ids, source_durations, strict=True)
+            ],
+        },
+        [_context(video_id, index) for index, video_id in enumerate(video_ids, start=1)],
+        video_editing_db={
+            "shooting_guide": {
+                "scenes": [
+                    {
+                        "scene_order": index,
+                        "target_duration_sec": duration / 1000,
+                    }
+                    for index, duration in enumerate(slot_durations, start=1)
+                ]
+            }
+        },
+    )
+
+    produced_durations = [
+        (clip.source_end_ms - clip.source_start_ms) / clip.speed
+        for clip in result.recipe.timeline
+    ]
+    assert all(
+        produced <= slot
+        for produced, slot in zip(produced_durations, slot_durations, strict=True)
+    )
+    assert sum(produced_durations) <= 14_000
 
 
 def test_one_take_source_preparation_keeps_full_source():
