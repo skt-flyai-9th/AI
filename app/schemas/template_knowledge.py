@@ -141,10 +141,25 @@ class ShootingGuideScene(BaseModel):
 
     scene_order: int = Field(ge=1)
     scene_role: str = Field(min_length=1, max_length=80)
-    scene_description: str = Field(min_length=1, max_length=500)
+    scene_description: str = Field(
+        min_length=1,
+        max_length=500,
+        description=(
+            "촬영 구도·카메라 움직임·피사체 배치·액션을 서술한다. 인물의 의상·헤어·메이크업 등 "
+            "외형은 절대 언급하지 않는다. 음식/음료/제품은 레퍼런스 영상의 특정 메뉴명 대신 "
+            "'메뉴/음료/디저트/제품' 같은 일반 카테고리로만 지칭한다."
+        ),
+    )
     scene_dialogue: str | None = Field(default=None, max_length=9)
     scene_subtitle: str | None = Field(default=None, max_length=200)
-    shot_type: str = Field(min_length=1, max_length=80)
+    shot_type: str = Field(
+        min_length=1,
+        max_length=80,
+        description=(
+            "카메라 앵글과 프레이밍을 자연스러운 한글로 서술하는 구도 필드 "
+            "(예: 정면 미디엄샷, 손 클로즈업, 테이블 위 오버헤드)."
+        ),
+    )
     target_duration_sec: float = Field(gt=0, le=30)
 
 
@@ -226,8 +241,23 @@ class ReferenceVideoSegment(BaseModel):
     start_sec: float = Field(ge=0, le=120)
     end_sec: float = Field(gt=0, le=120)
     scene_role: str = Field(min_length=1, max_length=80)
-    description: str = Field(min_length=1, max_length=500)
-    shot_type: str = Field(min_length=1, max_length=80)
+    description: str = Field(
+        min_length=1,
+        max_length=500,
+        description=(
+            "컷의 구도·카메라 움직임·피사체 배치·액션을 서술한다. 인물의 의상·헤어·메이크업 등 "
+            "외형은 관찰했더라도 기록하지 않는다. 관찰된 음식/음료/제품은 특정 메뉴명 대신 "
+            "'메뉴/음료/디저트/제품' 같은 일반 카테고리로만 서술한다."
+        ),
+    )
+    shot_type: str = Field(
+        min_length=1,
+        max_length=80,
+        description=(
+            "카메라 앵글과 프레이밍을 자연스러운 한글로 서술하는 구도 필드 "
+            "(예: 정면 미디엄샷, 손 클로즈업, 테이블 위 오버헤드)."
+        ),
+    )
     transition_out: str | None = Field(default=None, max_length=120)
     evidence: str = Field(min_length=1, max_length=500)
 

@@ -713,7 +713,7 @@ def _editing_content(
                 "scene_description": description,
                 "scene_dialogue": None,
                 "scene_subtitle": None,
-                "shot_type": "가이드 구간 재현",
+                "shot_type": _bounded(str(interval.get("shot_type") or "가이드 구간 재현"), 80),
                 "target_duration_sec": min(duration, 30),
             }
         )

@@ -155,6 +155,9 @@ class OpenAITemplateCandidateGenerator:
                     "Set recommendation_metadata.format_type from trend_context: 밈, 챌린지, or 정보형.",
                     "For every format, keep the cut-based shooting guide and return one scene-linked task per capture interval.",
                     "Set recommendation_metadata.minimum_filming_time to the most conservative (longest) estimated_shooting_time_bucket across gemini_video_insights, and include that bucket plus every longer bucket in supported_filming_times. Do not independently re-estimate a shorter or longer classification than what Gemini observed.",
+                    "scene_description must never mention clothing, hairstyle, makeup, or physical appearance; describe camera framing, subject blocking, and composition instead.",
+                    "shot_type must state camera framing/angle/composition in natural Korean, grounded in the segment evidence — never a placeholder string.",
+                    "Generalize any specific food/drink/product observed in gemini_video_insights into a category term (매장 메뉴/음료/디저트/제품) in scene_description — never the specific dish name from the reference video, since the guide is reused across many different stores.",
                 ],
                 "renderer_contract": {
                     "source_type": "VIDEO_ONLY",
@@ -325,6 +328,12 @@ class GeminiYouTubeVideoAnalyzer:
                 f"into no more than {MAX_SHOOTING_GUIDE_CUTS} ordered edit cuts. "
                 "Return every cut in segments with explicit sequence, start_sec, end_sec, "
                 "scene_role, description, shot_type, transition_out and timestamped evidence. "
+                "segments[].description must describe composition, camera movement, subject "
+                "placement and action only: never record clothing, hairstyle, makeup or other "
+                "personal-appearance details even when observed (they may still inform cut-boundary "
+                "detection), and refer to any observed food, drink or product with a generic "
+                "category word (메뉴/음료/디저트/제품) instead of the specific dish name. "
+                "segments[].shot_type must state the camera framing and angle of the cut. "
                 "segments is the authoritative cut plan; shot_sequence must contain the same "
                 "number of items in the same order. Also classify estimated_shooting_time_bucket "
                 "using shooting_time_bucket_rules: this is the real-world time a small-business "
@@ -356,6 +365,8 @@ class GeminiYouTubeVideoAnalyzer:
                 "Use timestamps from the supplied video; do not invent evenly spaced cuts.",
                 "Do not overlap segments or reverse their order.",
                 "Record the visual observation that justifies every boundary in segments[].evidence.",
+                "Use appearance changes (clothing, pose, position) to detect boundaries, but keep the appearance details out of segments[].description and shot_type.",
+                "Name observed food/drink/products in output text only as generic categories (메뉴/음료/디저트/제품), never as a specific dish name.",
             ],
             "shooting_time_bucket_rules": [
                 "within_5m: at most 3 segments, one continuous setup, no prop or costume change, no retake likely.",
