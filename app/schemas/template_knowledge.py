@@ -219,16 +219,40 @@ class ShootingGuideScene(BaseModel):
 class ShootingGuideTaskGuide(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    instructions: list[str] = Field(default_factory=list, max_length=20)
+    instructions: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description=(
+            "사용자가 실제 촬영할 행동과 구도를 안내한다. 의상·외형은 언급하지 않고, "
+            "레퍼런스의 특정 메뉴명 대신 일반 카테고리만 사용한다."
+        ),
+    )
+
+    @field_validator("instructions")
+    @classmethod
+    def validate_instructions(cls, values: list[str]) -> list[str]:
+        return [_validate_reusable_guide_text(value) for value in values]
 
 
 class ShootingGuideTask(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     display_order: int = Field(ge=1)
-    task_title: str = Field(min_length=1, max_length=MAX_SHOOTING_GUIDE_TITLE_CHARS)
+    task_title: str = Field(
+        min_length=1,
+        max_length=MAX_SHOOTING_GUIDE_TITLE_CHARS,
+        description=(
+            "촬영 과업을 일반화한 한글 제목. 의상·외형이나 레퍼런스의 특정 메뉴명을 "
+            "포함하지 않는다."
+        ),
+    )
     scene_index: int = Field(ge=0)
     guide: ShootingGuideTaskGuide
+
+    @field_validator("task_title")
+    @classmethod
+    def validate_task_title(cls, value: str) -> str:
+        return _validate_reusable_guide_text(value)
 
 
 class EditingRecommendationMetadata(BaseModel):

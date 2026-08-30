@@ -155,9 +155,9 @@ class OpenAITemplateCandidateGenerator:
                     "Set recommendation_metadata.format_type from trend_context: 밈, 챌린지, or 정보형.",
                     "For every format, keep the cut-based shooting guide and return one scene-linked task per capture interval.",
                     "Set recommendation_metadata.minimum_filming_time to the most conservative (longest) estimated_shooting_time_bucket across gemini_video_insights, and include that bucket plus every longer bucket in supported_filming_times. Do not independently re-estimate a shorter or longer classification than what Gemini observed.",
-                    "scene_description must never mention clothing, hairstyle, makeup, or physical appearance; describe camera framing, subject blocking, and composition instead.",
+                    "scene_description, task_title, and task instructions must never mention clothing, hairstyle, makeup, or physical appearance; describe camera framing, subject blocking, and composition instead.",
                     "shot_type must state camera framing/angle/composition in natural Korean, grounded in the segment evidence — never a placeholder string.",
-                    "Generalize any specific food/drink/product observed in gemini_video_insights into a category term (매장 메뉴/음료/디저트/제품) in scene_description — never the specific dish name from the reference video, since the guide is reused across many different stores.",
+                    "Generalize any specific food/drink/product observed in gemini_video_insights into a category term (매장 메뉴/음료/디저트/제품) in scene_description, task_title, and task instructions — never the specific dish name from the reference video, since the guide is reused across many different stores.",
                 ],
                 "renderer_contract": {
                     "source_type": "VIDEO_ONLY",

@@ -23,6 +23,8 @@ from app.schemas.template_knowledge import (
     MAX_SHOOTING_GUIDE_CUTS,
     ReferenceVideoSegment,
     ShootingGuideScene,
+    ShootingGuideTask,
+    ShootingGuideTaskGuide,
     TemplateCandidateStatus,
     TemplateType,
     TradeAreaAnalysisResult,
@@ -495,6 +497,28 @@ def test_shooting_guide_scene_rejects_non_reusable_description(description):
             shot_type="정면 미디엄샷",
             target_duration_sec=1,
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("task_title", "피자 소환 컷 촬영"),
+        ("instruction", "초록색 상의를 입고 같은 구도에서 촬영하세요."),
+    ],
+)
+def test_shooting_guide_task_rejects_non_reusable_user_facing_text(field, value):
+    if field == "task_title":
+        with pytest.raises(ValueError):
+            ShootingGuideTask(
+                display_order=1,
+                task_title=value,
+                scene_index=0,
+                guide=ShootingGuideTaskGuide(instructions=["정면에서 손을 펼칩니다."]),
+            )
+        return
+
+    with pytest.raises(ValueError):
+        ShootingGuideTaskGuide(instructions=[value])
 
 
 # 이 검증은 LLM 구조화 응답 파싱에 걸리므로, 일상 표현 오탐 하나가 분석 전체를
