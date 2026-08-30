@@ -72,7 +72,9 @@ def _normalize_filter(s, rp: dict) -> str:
     if s.crop_mode.value == "CENTER_9_16":
         return (
             f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
-            f"crop={width}:{height}"
+            f"crop={width}:{height}:"
+            f"x='(in_w-{width})*{s.crop_center_x:.6f}':"
+            f"y='(in_h-{height})*{s.crop_center_y:.6f}'"
         )
     return (
         f"scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,"

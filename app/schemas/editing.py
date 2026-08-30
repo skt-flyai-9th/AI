@@ -181,6 +181,8 @@ class RecipeClip(BaseModel):
     timeline_start_ms: int = Field(ge=0)
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
     crop_mode: Literal["KEEP", "SUBJECT_CENTER", "CENTER_9_16"] = "SUBJECT_CENTER"
+    crop_center_x: float | None = Field(default=None, ge=0.0, le=1.0)
+    crop_center_y: float | None = Field(default=None, ge=0.0, le=1.0)
     transition_in: Literal["CUT", "HARD_CUT", "FLASH_WHITE"] | None = None
     transition_out: Literal["CUT", "HARD_CUT", "FLASH_WHITE"] | None = "CUT"
     caption: RecipeCaption | None = None

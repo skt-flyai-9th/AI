@@ -570,3 +570,41 @@ def test_reals_filter_graph_renders_timed_transforms_and_normalizes_vertical():
     assert "rotate=" in joined
     assert "drawbox=" in joined
     assert "enable='between(t,0.600000,1.200000)'" in joined
+
+
+def test_reals_filter_graph_crop_follows_segment_crop_center():
+    engine_root = Path(__file__).resolve().parents[1] / "reals-video-engine"
+    if str(engine_root) not in sys.path:
+        sys.path.insert(0, str(engine_root))
+
+    import pydantic
+    import pytest
+
+    from reals_edit_engine.contracts import CropMode, RecipeSegment
+    from reals_edit_engine.ffmpeg_graph import _normalize_filter
+
+    rp = {"width": 1080, "height": 1920, "fps": 30, "pix_fmt": "yuv420p"}
+
+    def _segment(**overrides):
+        return RecipeSegment(
+            recipe_segment_id="seg",
+            produced_segment_id="produced",
+            sequence_index=1,
+            trim_in_ms=0,
+            trim_out_ms=2000,
+            crop_mode=CropMode.CENTER_9_16,
+            **overrides,
+        )
+
+    # Non-center crop centers land in the ffmpeg x/y expressions.
+    offset = _normalize_filter(_segment(crop_center_x=0.2, crop_center_y=0.8), rp)
+    assert "crop=1080:1920:x='(in_w-1080)*0.200000':y='(in_h-1920)*0.800000'" in offset
+
+    # Defaults (0.5/0.5) are the exact arithmetic equivalent of the old
+    # implicit center crop: (in_w-out_w)/2 == (in_w-out_w)*0.5.
+    centered = _normalize_filter(_segment(), rp)
+    assert "crop=1080:1920:x='(in_w-1080)*0.500000':y='(in_h-1920)*0.500000'" in centered
+
+    # Out-of-range values are rejected by the contract validator.
+    with pytest.raises(pydantic.ValidationError, match="crop_center_x out of"):
+        _segment(crop_center_x=1.5)
