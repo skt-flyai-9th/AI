@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-08-28T13:32:05+09:00",
-  "count": 5,
+  "generated_at": "2026-08-24T22:00:00",
+  "count": 2,
   "results": [
     {
       "id": "jujutsu_transition",
@@ -24,18 +24,6 @@
       }
     },
     {
-      "id": "cafe_recommendation_reels",
-      "rank": 2,
-      "name": "카페 추천 리뷰 릴스",
-      "category": "food",
-      "representative_youtube_url": "https://www.youtube.com/shorts/OWnLiuJU8Ks",
-      "guide_youtube_url": "https://www.youtube.com/shorts/OWnLiuJU8Ks",
-      "format_type": "정보형",
-      "expected_duration_sec": 13,
-      "shooting_difficulty": "중",
-      "requires_face": false
-    },
-    {
       "id": "otsukare_summer_challenge",
       "rank": 3,
       "name": "오츠카레 썸머 챌린지",
@@ -55,39 +43,6 @@
           "같은 안무 구간이어도 점프컷을 하나의 연속 장면으로 합치지 않음"
         ]
       }
-    },
-    {
-      "id": "donggeurio_challenge",
-      "rank": 4,
-      "name": "동그리오(챌린지)",
-      "category": "meme",
-      "representative_youtube_url": "https://www.youtube.com/shorts/6duJ3WOzeuQ",
-      "guide_youtube_url": "https://www.youtube.com/shorts/6duJ3WOzeuQ",
-      "format_type": "밈",
-      "expected_duration_sec": 45,
-      "shooting_difficulty": "중",
-      "requires_face": false,
-      "reference_cut_review": {
-        "status": "GEMINI_REPORT_REVIEWED",
-        "expected_cut_count": 6,
-        "boundary_basis": [
-          "완성 결과물에서 제조 공정으로 바뀌는 지점마다 Hard Cut",
-          "반죽·접기·토핑·포장·토치의 각 동작 완료점을 컷 경계로 사용",
-          "토치 후 표면 색 변화는 중간 분할 없이 연속 보존"
-        ]
-      }
-    },
-    {
-      "id": "donggeurio_store_promotion",
-      "rank": 5,
-      "name": "동그리오(매장 홍보)",
-      "category": "food",
-      "representative_youtube_url": "https://www.youtube.com/shorts/6duJ3WOzeuQ",
-      "guide_youtube_url": "https://www.youtube.com/shorts/6duJ3WOzeuQ",
-      "format_type": "정보형",
-      "expected_duration_sec": 45,
-      "shooting_difficulty": "중",
-      "requires_face": false
     }
   ]
 }

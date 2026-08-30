@@ -16,6 +16,7 @@ from app.services.challenges import import_override_items
 from app.services.pipeline import create_run, execute_pipeline, export_trendcluster
 from app.services.initialization import initialize_service_once
 from app.services.retention import cleanup_history
+from app.services.removed_shortform_cleanup import purge_removed_shortform_runtime_data
 from app.schemas.template_knowledge import (
     CandidateDecision,
     EditingCandidateCreate,
@@ -82,10 +83,19 @@ def export_trendcluster_command() -> None:
 
 @app.command("sync-trendcluster-from-video-editing-db")
 def sync_trendcluster_from_video_editing_db() -> None:
-    """Replace trendcluster with the three entries in the provided video-editing DB."""
+    """Replace trendcluster with the two retained entries and preserve the rank-2 gap."""
 
     path = sync_video_editing_db_trendcluster(get_settings().export_dir)
     typer.echo(str(path))
+
+
+@app.command("purge-removed-shortforms")
+def purge_removed_shortforms() -> None:
+    """Purge removed shortforms from runtime cache files and refresh the export."""
+
+    result = purge_removed_shortform_runtime_data()
+    result["trendcluster_path"] = str(sync_video_editing_db_trendcluster(get_settings().export_dir))
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 @app.command("import-database-library")

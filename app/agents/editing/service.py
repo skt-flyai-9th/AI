@@ -844,7 +844,9 @@ def _extract_caption_position_request(user_statements: list[str]) -> str | None:
         matches: list[tuple[int, str]] = []
         for position, keywords in _CAPTION_POSITION_KEYWORDS:
             for keyword in keywords:
-                matches.extend((match.start(), position) for match in re.finditer(keyword, statement))
+                matches.extend(
+                    (match.start(), position) for match in re.finditer(keyword, statement)
+                )
         if matches:
             return max(matches, key=lambda item: item[0])[1]
     return None
@@ -1024,7 +1026,6 @@ def _fallback_search_keyword(value: str) -> str:
     known_keywords = {
         "jujutsu": "주술회전",
         "otsukare": "오츠카레 썸머",
-        "cafe_recommendation": "카페 추천 릴스",
     }
     for marker, known in known_keywords.items():
         if marker in lowered:

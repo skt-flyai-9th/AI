@@ -11,22 +11,21 @@ from typing import Any
 
 TRENDCLUSTER_FILENAME = "trendcluster.json"
 
-# 운영 trendcluster는 영상편집 DB에서 검증을 마친 이 다섯 숏폼만 사용한다.
+# 운영 trendcluster는 영상편집 DB에서 검증을 마친 이 두 숏폼만 사용한다.
 # 파이프라인이 더 많은 후보를 찾아도 API/DB에 다시 유입시키지 않는다.
 TRENDCLUSTER_CHALLENGE_IDS = (
     "jujutsu_transition",
-    "cafe_recommendation_reels",
     "otsukare_summer_challenge",
-    "donggeurio_challenge",
-    "donggeurio_store_promotion",
 )
+
+TRENDCLUSTER_CANONICAL_RANKS = {
+    "jujutsu_transition": 1,
+    "otsukare_summer_challenge": 3,
+}
 
 _SEED_CATEGORIES = {
     "jujutsu_transition": "meme",
-    "cafe_recommendation_reels": "food",
     "otsukare_summer_challenge": "challenge",
-    "donggeurio_challenge": "meme",
-    "donggeurio_store_promotion": "food",
 }
 
 _SEED_GUIDE_URL_OVERRIDES = {
@@ -40,9 +39,6 @@ _SEED_GUIDE_URL_OVERRIDES = {
 _GUIDE_CLASSIFICATIONS: dict[str, tuple[str, bool]] = {
     "jujutsu_transition": ("밈", False),
     "otsukare_summer_challenge": ("챌린지", True),
-    "cafe_recommendation_reels": ("정보형", False),
-    "donggeurio_challenge": ("밈", False),
-    "donggeurio_store_promotion": ("정보형", False),
 }
 
 _REFERENCE_CUT_REVIEWS: dict[str, dict[str, Any]] = {
@@ -62,15 +58,6 @@ _REFERENCE_CUT_REVIEWS: dict[str, dict[str, Any]] = {
             "사람이 갑자기 사라지거나 다시 나타나는 프레임 불연속마다 별도 컷으로 분리",
             "인물의 자세나 화면 위치가 연속 동작 없이 뚝 바뀌면 별도 컷으로 분리",
             "같은 안무 구간이어도 점프컷을 하나의 연속 장면으로 합치지 않음",
-        ],
-    },
-    "donggeurio_challenge": {
-        "status": "GEMINI_REPORT_REVIEWED",
-        "expected_cut_count": 6,
-        "boundary_basis": [
-            "완성 결과물에서 제조 공정으로 바뀌는 지점마다 Hard Cut",
-            "반죽·접기·토핑·포장·토치의 각 동작 완료점을 컷 경계로 사용",
-            "토치 후 표면 색 변화는 중간 분할 없이 연속 보존",
         ],
     },
 }
@@ -132,6 +119,7 @@ def get_reference_cut_review(challenge_id: str) -> dict[str, Any] | None:
     review = _REFERENCE_CUT_REVIEWS.get(challenge_id)
     return copy.deepcopy(review) if review is not None else None
 
+
 def build_video_editing_db_trendcluster() -> dict[str, Any]:
     """Build the initial trendcluster from the provided video-editing DB."""
 
@@ -155,21 +143,21 @@ def build_video_editing_db_trendcluster() -> dict[str, Any]:
         if generated:
             generated_at.append(generated)
         result = {
-                "id": challenge_id,
-                "rank": int(rank),
-                "name": str(row["name"]),
-                "category": _SEED_CATEGORIES[challenge_id],
-                "representative_youtube_url": guide_url,
-                "guide_youtube_url": guide_url,
-                **_video_format_metadata(source, str(row["id"])),
-            }
+            "id": challenge_id,
+            "rank": int(rank),
+            "name": str(row["name"]),
+            "category": _SEED_CATEGORIES[challenge_id],
+            "representative_youtube_url": guide_url,
+            "guide_youtube_url": guide_url,
+            **_video_format_metadata(source, str(row["id"])),
+        }
         if challenge_id in _REFERENCE_CUT_REVIEWS:
             result["reference_cut_review"] = _REFERENCE_CUT_REVIEWS[challenge_id]
         results.append(result)
     results.sort(key=lambda item: (item["rank"], item["id"]))
-    if len(results) != 5:
+    if len(results) != 2:
         raise ValueError(
-            f"Expected exactly 5 PASS entries in the provided video-editing DB, got {len(results)}."
+            f"Expected exactly 2 PASS entries in the provided video-editing DB, got {len(results)}."
         )
     return {
         "generated_at": max(generated_at),

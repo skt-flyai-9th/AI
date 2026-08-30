@@ -13,6 +13,7 @@ from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.agents.challenge_ranking.trendcluster import (
+    TRENDCLUSTER_CANONICAL_RANKS,
     TRENDCLUSTER_CHALLENGE_IDS,
     write_trendcluster,
 )
@@ -134,11 +135,9 @@ def persist_result(
     source_metrics: pd.DataFrame,
 ) -> None:
     now = datetime.now(timezone.utc)
-    # 운영 데이터 소스는 검증된 다섯 숏폼으로 고정한다. 과거 자동 발굴 결과는
+    # 운영 데이터 소스는 검증된 두 숏폼과 원래 순위 1·3으로 고정한다. 과거 자동 발굴 결과는
     # 비활성 행으로도 남기지 않아 `/challenges`와 다음 export에 재등장할 수 없게 한다.
-    db.execute(
-        delete(Challenge).where(Challenge.id.not_in(TRENDCLUSTER_CHALLENGE_IDS))
-    )
+    db.execute(delete(Challenge).where(Challenge.id.not_in(TRENDCLUSTER_CHALLENGE_IDS)))
 
     metrics_by_id: dict[str, dict[str, Any]] = {}
     if source_metrics is not None and not source_metrics.empty:
@@ -163,7 +162,8 @@ def persist_result(
         challenge.automatic_name = str(row.get("name") or challenge_id)
         challenge.aliases = list(row.get("alias_list") or [])
         challenge.category = str(row.get("category") or "unknown")
-        challenge.automatic_rank = int(row.get("final_rank") or 0) or None
+        canonical_rank = TRENDCLUSTER_CANONICAL_RANKS[challenge_id]
+        challenge.automatic_rank = canonical_rank
         challenge.automatic_score = float(row.get("final_score") or 0.0)
         challenge.lifecycle = str(row.get("stage") or "UNKNOWN")
         challenge.kr_affinity = float(row.get("kr_affinity") or 0.0)
@@ -198,7 +198,7 @@ def persist_result(
             RankingSnapshot(
                 run_id=run.id,
                 challenge_id=challenge_id,
-                automatic_rank=int(row.get("final_rank") or 0),
+                automatic_rank=canonical_rank,
                 automatic_score=float(row.get("final_score") or 0.0),
                 row_data=row,
                 source_metrics=metrics_by_id.get(challenge_id, {}),
@@ -221,7 +221,9 @@ def export_trendcluster(db: Session) -> Path:
         db.scalars(
             select(Challenge)
             .where(Challenge.active.is_(True))
-            .order_by(effective_rank_expression().asc().nullslast(), Challenge.automatic_score.desc())
+            .order_by(
+                effective_rank_expression().asc().nullslast(), Challenge.automatic_score.desc()
+            )
             .limit(100)
         )
     )
@@ -229,9 +231,6 @@ def export_trendcluster(db: Session) -> Path:
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "count": len(rows),
-        "results": [
-            to_export_record(row, template_refs.get(row.id))
-            for row in rows
-        ],
+        "results": [to_export_record(row, template_refs.get(row.id)) for row in rows],
     }
     return write_trendcluster(payload, settings.export_dir)

@@ -439,9 +439,7 @@ class ShortformAgentService:
         # 값 집합이 같다)을 기존 초 단위 API 계약으로 환산해 내려준다.
         # 버킷이 없는 구버전 템플릿은 예전 근사식으로 초를 계산한 뒤
         # 같은 버킷으로 눌러 담고, 그 버킷의 초 값을 응답한다.
-        shooting_time_bucket = (template.recommendation_metadata or {}).get(
-            "minimum_filming_time"
-        )
+        shooting_time_bucket = (template.recommendation_metadata or {}).get("minimum_filming_time")
         if shooting_time_bucket not in FILMING_TIME_BUCKET_SECONDS:
             final_duration = sum(
                 max(int(scene.get("target_duration_sec") or 0), 0) for scene in scenes
@@ -614,17 +612,15 @@ class ShortformAgentService:
         db: Session,
         session: ShortformSession,
     ) -> list[VideoEditingDBCandidate]:
-        """Return a pool that can fill one full batch of three recommendations.
+        """Return the best non-empty pool, capped to three recommendations later.
 
-        The RECOMMEND response contract requires exactly three distinct templates,
-        so each constraint tier must supply at least three unseen candidates before
-        it can be used. Relevance is a preference, never an availability gate: we
-        first preserve all user and capability constraints, then keep only
-        safety/capability constraints, and finally expose every unseen ACTIVE
-        record. When fewer than three unseen records remain in every tier, the
-        pool is exhausted and `next` reports NO_MORE_SHORTFORM_RECOMMENDATIONS.
+        Relevance is a preference, never an availability gate: prefer a tier that
+        can fill three cards, otherwise use the largest non-empty tier so a catalog
+        with one or two retained templates remains usable. Only a fully empty pool
+        makes `next` report NO_MORE_SHORTFORM_RECOMMENDATIONS.
         """
 
+        largest_pool: list[VideoEditingDBCandidate] = []
         for mode in ("strict", "safe", "any"):
             candidates = self._video_editing_db_candidates(
                 db,
@@ -634,8 +630,10 @@ class ShortformAgentService:
             )
             if len(candidates) >= 3:
                 return candidates
+            if len(candidates) > len(largest_pool):
+                largest_pool = candidates
 
-        return []
+        return largest_pool
 
     def _select_video_editing_dbs(
         self,
@@ -698,9 +696,7 @@ class ShortformAgentService:
             (
                 VideoEditingDBSelection(
                     candidate_key=selected.candidate_key,
-                    project_title=(
-                        f"{selected.recommendation_title or selected.name} 프로젝트"
-                    ),
+                    project_title=(f"{selected.recommendation_title or selected.name} 프로젝트"),
                     title=selected.name,
                     concept=selected.recommendation_concept or selected.name,
                     internal_reason=(
@@ -787,7 +783,7 @@ class ShortformAgentService:
 
         # Production startup can legitimately reach the first recommendation before
         # the explicit bootstrap endpoint is called. Recover from that deployment
-        # ordering by importing the packaged, validated three-record DB idempotently.
+        # ordering by importing the packaged, validated two-record DB idempotently.
         seed_template_library(db)
         return load()
 

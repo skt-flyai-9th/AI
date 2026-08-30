@@ -262,8 +262,8 @@ Content-Type: application/json
   },
   "selected_shortform": {
     "recommendation_id": "rec_123",
-    "editing_template_id": "cafe_recommendation_reels",
-    "editing_template_version": 3
+    "editing_template_id": "gt_jujutsu_transition",
+    "editing_template_version": 4
   },
   "videos": [
     {

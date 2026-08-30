@@ -141,13 +141,13 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
     service, _ = _service()
     with SessionLocal() as db:
         result = seed_template_library(db, service=service)
-        assert len(result["created"]) == 8
+        assert len(result["created"]) == 5
         active_trade_area = db.scalar(
             select(TradeAreaDBRecord).where(TradeAreaDBRecord.status == "ACTIVE")
         )
         assert active_trade_area is not None
         assert active_trade_area.template_id == "trade_area_seoul"
-        assert len(list(db.scalars(select(VideoEditingDBRecord)))) == 5
+        assert len(list(db.scalars(select(VideoEditingDBRecord)))) == 2
         imported_editing = db.scalar(
             select(VideoEditingDBRecord).where(
                 VideoEditingDBRecord.template_id == "gt_jujutsu_transition"
@@ -183,19 +183,7 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
         assert task_counts == {
             "gt_jujutsu_transition": 6,
             "gt_otsukare_summer": 7,
-            "gt_cafe_recommendation": 6,
-            "gt_donggeurio_challenge": 6,
-            "gt_donggeurio_store_promotion": 6,
         }
-        store_promotion = db.get(VideoEditingDBRecord, ("gt_donggeurio_store_promotion", 1))
-        assert store_promotion is not None
-        assert len(store_promotion.shooting_guide["scenes"]) == 6
-        assert len(store_promotion.shooting_guide["tasks"]) == 6
-        information_record = db.get(VideoEditingDBRecord, ("gt_cafe_recommendation", 2))
-        assert information_record is not None
-        assert information_record.recommendation_metadata["format_type"] == "정보형"
-        assert len(information_record.shooting_guide["scenes"]) == 6
-        assert len(information_record.shooting_guide["tasks"]) == 6
         assert len(list(db.scalars(select(TemplateSourceBundle)))) == 2
         assert db.scalar(select(TemplateSourceRecord)) is not None
         assert result["trade_area"]["status"] == "ACTIVE"
@@ -207,33 +195,25 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
         )
 
         imported_editing.shooting_guide = {"scenes": [], "tasks": []}
-        information_record.recommendation_metadata = {
-            **information_record.recommendation_metadata,
-            "format_type": "밈",
-        }
-        information_record.shooting_guide = {"scenes": [], "tasks": []}
         db.commit()
         second = seed_template_library(db, service=service)
         db.refresh(imported_editing)
-        db.refresh(information_record)
         assert second["created"] == []
-        assert len(second["skipped"]) == 8
+        assert len(second["skipped"]) == 5
         assert len(imported_editing.shooting_guide["tasks"]) == 6
-        assert information_record.recommendation_metadata["format_type"] == "정보형"
-        assert len(information_record.shooting_guide["tasks"]) == 6
 
 
 def test_bootstrap_repairs_a_newer_active_version_with_missing_format_contract():
     service, _ = _service()
     with SessionLocal() as db:
         seed_template_library(db, service=service)
-        source = db.get(VideoEditingDBRecord, ("gt_cafe_recommendation", 2))
+        source = db.get(VideoEditingDBRecord, ("gt_otsukare_summer", 3))
         assert source is not None
         source.status = "ARCHIVED"
         db.add(
             VideoEditingDBRecord(
-                template_id="gt_cafe_recommendation",
-                version=3,
+                template_id="gt_otsukare_summer",
+                version=4,
                 status="ACTIVE",
                 name=source.name,
                 recommendation_title=source.recommendation_title,
@@ -248,12 +228,12 @@ def test_bootstrap_repairs_a_newer_active_version_with_missing_format_contract()
 
         result = seed_template_library(db, service=service)
 
-        repaired = db.get(VideoEditingDBRecord, ("gt_cafe_recommendation", 4))
+        repaired = db.get(VideoEditingDBRecord, ("gt_otsukare_summer", 5))
         assert repaired is not None
         assert repaired.status == "ACTIVE"
-        assert repaired.recommendation_metadata["format_type"] == "정보형"
-        assert len(repaired.shooting_guide["tasks"]) == 6
-        assert db.get(VideoEditingDBRecord, ("gt_cafe_recommendation", 3)).status == "ARCHIVED"
+        assert repaired.recommendation_metadata["format_type"] == "챌린지"
+        assert len(repaired.shooting_guide["tasks"]) == 7
+        assert db.get(VideoEditingDBRecord, ("gt_otsukare_summer", 4)).status == "ARCHIVED"
         assert any("CONTRACT_REPAIR" in item for item in result["created"])
 
 
@@ -639,7 +619,7 @@ def test_template_knowledge_api_bootstrap_and_async_analysis(client, auth_header
             headers=auth_headers,
         )
         assert versions.status_code == 200
-        assert len(versions.json()) == 6
+        assert len(versions.json()) == 3
         sources = client.get("/api/v1/database-knowledge/sources", headers=auth_headers)
         assert sources.status_code == 200
         assert len(sources.json()) == 2
@@ -902,9 +882,7 @@ def test_concurrent_approval_conflict_maps_to_candidate_stale(monkeypatch):
 
         # Simulate the race window: the second approver's staleness check ran
         # before the first activation committed.
-        monkeypatch.setattr(
-            service, "_candidate_staleness_errors", lambda *args, **kwargs: []
-        )
+        monkeypatch.setattr(service, "_candidate_staleness_errors", lambda *args, **kwargs: [])
         with pytest.raises(TemplateKnowledgeDomainError) as exc_info:
             service.approve_candidate(
                 db, second.id, CandidateDecision(actor="admin2", note="race loser")
@@ -919,11 +897,7 @@ def test_concurrent_approval_conflict_maps_to_candidate_stale(monkeypatch):
 
 def test_video_editing_source_contains_no_shooting_element_data():
     source_path = (
-        Path(__file__).parents[1]
-        / "app"
-        / "template_knowledge"
-        / "sources"
-        / "video_editing.json"
+        Path(__file__).parents[1] / "app" / "template_knowledge" / "sources" / "video_editing.json"
     )
     payload = json.loads(source_path.read_text(encoding="utf-8"))
     serialized = json.dumps(payload, ensure_ascii=False)

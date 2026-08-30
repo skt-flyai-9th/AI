@@ -68,7 +68,7 @@ def initialize_service_once(
 
 
 def _sync_bundled_challenges(db: Session) -> dict[str, list[str]]:
-    """Upsert the authoritative five-item trendcluster without rerunning research."""
+    """Upsert the authoritative two-item trendcluster without rerunning research."""
 
     created: list[str] = []
     updated: list[str] = []
@@ -90,9 +90,7 @@ def _sync_bundled_challenges(db: Session) -> dict[str, list[str]]:
         challenge.automatic_name = str(item["name"])
         challenge.category = str(item["category"])
         challenge.automatic_rank = int(item["rank"])
-        challenge.automatic_representative_youtube_url = item.get(
-            "representative_youtube_url"
-        )
+        challenge.automatic_representative_youtube_url = item.get("representative_youtube_url")
         challenge.automatic_guide_youtube_url = item.get("guide_youtube_url")
         challenge.lifecycle = "ACTIVE"
         challenge.confidence = 1.0

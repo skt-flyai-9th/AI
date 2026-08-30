@@ -76,25 +76,25 @@ def test_scheduled_export_preserves_card_metadata_and_template_reference():
     with SessionLocal() as db:
         db.add(
             Challenge(
-                id="cafe_recommendation_reels",
-                automatic_name="카페 추천 리뷰 릴스",
+                id="jujutsu_transition",
+                automatic_name="주술회전 트랜지션",
                 automatic_rank=1,
                 automatic_score=90,
-                category="food",
-                automatic_representative_youtube_url="https://example.com/cafe.mp4",
-                automatic_guide_youtube_url="https://example.com/cafe.mp4",
+                category="meme",
+                automatic_representative_youtube_url="https://example.com/transition.mp4",
+                automatic_guide_youtube_url="https://example.com/transition.mp4",
                 active=True,
             )
         )
         db.add(
             VideoEditingDBRecord(
-                template_id="gt_cafe_recommendation",
+                template_id="gt_jujutsu_transition",
                 version=4,
                 status="ACTIVE",
-                name="카페 추천",
-                recommendation_metadata={"format_type": "정보형"},
+                name="주술회전 트랜지션",
+                recommendation_metadata={"format_type": "밈"},
                 shooting_guide={"scenes": [], "tasks": []},
-                trend_ids=["cafe_recommendation_reels"],
+                trend_ids=["jujutsu_transition"],
             )
         )
         db.commit()
@@ -102,11 +102,11 @@ def test_scheduled_export_preserves_card_metadata_and_template_reference():
         path = export_trendcluster(db)
         item = json.loads(path.read_text(encoding="utf-8"))["results"][0]
 
-    assert item["category"] == "food"
-    assert item["format_type"] == "정보형"
+    assert item["category"] == "meme"
+    assert item["format_type"] == "밈"
     assert item["requires_face"] is False
-    assert item["reference_cut_review"] is None
-    assert item["editing_template_id"] == "gt_cafe_recommendation"
+    assert item["reference_cut_review"]["expected_cut_count"] == 6
+    assert item["editing_template_id"] == "gt_jujutsu_transition"
     assert item["editing_template_version"] == 4
 
 

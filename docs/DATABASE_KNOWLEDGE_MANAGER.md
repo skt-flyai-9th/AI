@@ -69,11 +69,10 @@ Gemini 분석은 공개 `https` YouTube URL만 허용하며, 같은 trend/url/mo
 
 `python -m app.cli import-database-library`는 파일 SHA-256을 검증하고 모든 시트와 원본 행을 `template_source_bundles`·`template_source_records`에 idempotent하게 적재한다. 합성 seed는 만들지 않는다.
 
-영상편집 파일의 `03_GUIDE_TEMPLATES`에서 `validation_status=PASS`, `template_status=ACTIVE`인 세 가이드는 REALS 제약 검증 후 활성 버전으로 가져온다.
+영상편집 파일의 `03_GUIDE_TEMPLATES`에서 `validation_status=PASS`, `template_status=ACTIVE`인 두 가이드는 REALS 제약 검증 후 활성 버전으로 가져온다.
 
-- 주술회전 트랜지션 v2
-- 오츠카레 썸머 챌린지 v2
-- 카페 추천 리뷰 릴스 v1
+- 주술회전 트랜지션 v4
+- 오츠카레 썸머 챌린지 v3
 
 상권 파일은 `regions`, `categories`, 매핑·공식 상권 프로필을 모두 보존한다. 현재 임시 승인본은 핵심 데이터셋의 모든 행이 `approved`라 source bundle을 ACTIVE 처리하고 기본 서비스 조회에 노출한다. `manual_review_required`, 정량 데이터 미적재, 최신 좌표 재수집 경고는 그대로 유지하며 다음 리서치에서 새 source bundle로 교체한다.
 
@@ -90,7 +89,7 @@ python -m app.cli approve-database-candidate <candidate_id> <reviewer>
 python -m app.cli analyze-trade-area-db evidence.json --database-id trade_area_office
 ```
 
-초기 `exports/trendcluster.json`은 영상편집DB의 다섯 숏폼과 원본 순위 1~5를 그대로 사용한다. 대표영상과 가이드영상은 같은 DB URL로 맞췄으며, 동그리오 2종은 `https://www.youtube.com/shorts/6duJ3WOzeuQ`를 공유하되 챌린지(밈)와 매장 홍보(정보형) 템플릿을 분리한다.
+초기 `exports/trendcluster.json`은 영상편집DB에서 유지하는 두 숏폼의 원본 순위 1·3을 그대로 사용한다. 랭킹 2위는 공란이며 다른 항목을 당겨 채우지 않는다.
 
 AI 서버 내부 운영 API도 `/api/v1/database-knowledge` 아래에 준비되어 있다. Gemini/GPT-5.4 mini를 호출하는 생성·분석 요청은 `202 Accepted`와 `run_id`를 반환하고 Celery worker가 실행한다. `/runs/{run_id}`를 polling한 뒤 `/runs/{run_id}/result`에서 결과를 조회한다.
 

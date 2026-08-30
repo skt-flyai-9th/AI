@@ -413,37 +413,40 @@ def test_shortform_session_requires_internal_api_key(client):
 
 def test_shooting_guide_accepts_challenge_id_alias(client, auth_headers):
     _seed_video_editing_db(
-        "gt_cafe_recommendation",
-        title="카페 추천 리뷰 릴스",
-        version=2,
-        trend_ids=["cafe_recommendation_reels"],
+        "gt_jujutsu_transition",
+        title="주술회전 트랜지션",
+        version=4,
+        trend_ids=["jujutsu_transition"],
     )
 
     response = client.get(
-        "/api/v1/editing-templates/cafe_recommendation_reels/versions/1/shooting-guide",
+        "/api/v1/editing-templates/jujutsu_transition/versions/1/shooting-guide",
         headers=auth_headers,
     )
 
     assert response.status_code == 200
-    assert response.json()["template_id"] == "gt_cafe_recommendation"
-    assert response.json()["version"] == 2
+    assert response.json()["template_id"] == "gt_jujutsu_transition"
+    assert response.json()["version"] == 4
 
 
 def test_information_shooting_guide_returns_scene_linked_capture_cuts(client, auth_headers):
-    with SessionLocal() as db:
-        seed_template_library(db)
+    _seed_video_editing_db(
+        "information_template",
+        title="정보형 촬영 가이드",
+        metadata_overrides={"format_type": "정보형"},
+    )
 
     response = client.get(
-        "/api/v1/editing-templates/gt_cafe_recommendation/versions/2/shooting-guide",
+        "/api/v1/editing-templates/information_template/versions/1/shooting-guide",
         headers=auth_headers,
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["format_type"] == "정보형"
-    assert len(payload["scenes"]) == 6
-    assert len(payload["tasks"]) == 6
-    assert [item["scene_index"] for item in payload["tasks"]] == list(range(6))
+    assert len(payload["scenes"]) == 1
+    assert len(payload["tasks"]) == 1
+    assert [item["scene_index"] for item in payload["tasks"]] == [0]
 
 
 def test_openapi_preserves_live_legacy_backend_contract(client):
@@ -562,7 +565,6 @@ def test_shortform_recommendation_bootstraps_packaged_database(client, auth_head
     with SessionLocal() as db:
         seed_template_library(db)
         for trend_id, title in (
-            ("cafe_recommendation_reels", "카페 추천 리뷰 릴스"),
             ("jujutsu_transition", "주술회전 트랜지션"),
             ("otsukare_summer_challenge", "오츠카레 썸머 챌린지"),
         ):
@@ -597,9 +599,8 @@ def test_shortform_recommendation_bootstraps_packaged_database(client, auth_head
         assert response.status_code == 200
         assert response.json()["action"] == "RECOMMEND"
         recommendations = response.json()["recommendations"]
-        assert len(recommendations) == 3
+        assert len(recommendations) == 2
         assert {item["editing_template_id"] for item in recommendations} == {
-            "gt_cafe_recommendation",
             "gt_jujutsu_transition",
             "gt_otsukare_summer",
         }

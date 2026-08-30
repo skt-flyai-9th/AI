@@ -215,14 +215,14 @@ class ShortformTurnResponse(BaseModel):
     def validate_recommendation_batch(self) -> ShortformTurnResponse:
         if self.action == ShortformAction.RECOMMEND:
             template_ids = [item.editing_template_id for item in self.recommendations]
-            if len(template_ids) != 3 or len(set(template_ids)) != 3:
-                raise ValueError("RECOMMEND responses require three distinct templates")
+            if not 1 <= len(template_ids) <= 3 or len(set(template_ids)) != len(template_ids):
+                raise ValueError("RECOMMEND responses require one to three distinct templates")
         return self
 
 
 class NextRecommendationResponse(BaseModel):
     session_id: str
-    recommendations: list[ShortformRecommendation] = Field(min_length=3, max_length=3)
+    recommendations: list[ShortformRecommendation] = Field(min_length=1, max_length=3)
     shown_template_ids: list[str]
 
 

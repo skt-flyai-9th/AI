@@ -46,11 +46,9 @@ def test_initializer_runs_ranking_only_before_the_first_success():
         bundled = list(db.scalars(select(Challenge).order_by(Challenge.automatic_rank)))
         assert [item.id for item in bundled if item.active] == [
             "jujutsu_transition",
-            "cafe_recommendation_reels",
             "otsukare_summer_challenge",
-            "donggeurio_challenge",
-            "donggeurio_store_promotion",
         ]
+        assert [item.automatic_rank for item in bundled if item.active] == [1, 3]
         assert second["bundled_challenges"]["created"] == []
 
 

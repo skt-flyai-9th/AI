@@ -22,12 +22,11 @@ def _ranking_row(challenge_id: str, rank: int) -> dict:
     }
 
 
-def test_persist_result_deletes_everything_except_approved_three() -> None:
+def test_persist_result_keeps_only_approved_two_and_preserves_rank_gap() -> None:
     with SessionLocal() as db:
         now = datetime.now(timezone.utc)
         approved_ids = (
             "jujutsu_transition",
-            "cafe_recommendation_reels",
             "otsukare_summer_challenge",
         )
         db.add_all(
@@ -59,10 +58,17 @@ def test_persist_result_deletes_everything_except_approved_three() -> None:
 
         ranking = pd.DataFrame(
             [
-                *[_ranking_row(challenge_id, rank) for rank, challenge_id in enumerate(approved_ids, 1)],
+                *[
+                    _ranking_row(challenge_id, rank)
+                    for rank, challenge_id in enumerate(approved_ids, 1)
+                ],
                 _ranking_row("new_unapproved_trend", 4),
             ]
         )
         persist_result(db, run, ranking, pd.DataFrame())
 
         assert {row.id for row in db.query(Challenge).all()} == set(approved_ids)
+        assert {row.id: row.automatic_rank for row in db.query(Challenge).all()} == {
+            "jujutsu_transition": 1,
+            "otsukare_summer_challenge": 3,
+        }
