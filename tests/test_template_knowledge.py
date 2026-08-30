@@ -119,6 +119,7 @@ class FakeVideoAnalyzer:
                 }
                 for index, role in enumerate(["RESULT", "PROCESS", "DETAIL", "CTA"], start=1)
             ],
+            estimated_shooting_time_bucket="within_10m",
             pacing={"median_cut_sec": 1.4, "tempo": "FAST", "opening_hook_sec": 2.0},
             caption_patterns=["짧은 핵심 자막"],
             camera_patterns=["클로즈업", "고정 구도"],

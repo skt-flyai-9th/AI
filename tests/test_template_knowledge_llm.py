@@ -124,6 +124,7 @@ def test_editing_generator_preserves_physical_edit_cut_boundaries(monkeypatch):
                 "evidence": "1.0-2.0초 완성 결과",
             },
         ],
+        estimated_shooting_time_bucket="within_10m",
         pacing={"tempo": "FAST", "median_cut_sec": 1.0, "opening_hook_sec": 1.0},
         caption_patterns=[],
         camera_patterns=[],
@@ -184,6 +185,7 @@ def test_gemini_analysis_requires_frame_discontinuity_cut_boundaries(monkeypatch
                     "evidence": "1.0-2.0초 완성 결과",
                 },
             ],
+            "estimated_shooting_time_bucket": "within_10m",
             "pacing": {
                 "tempo": "FAST",
                 "median_cut_sec": 1.0,
@@ -247,6 +249,7 @@ def test_gemini_retries_until_human_reviewed_cut_count_is_reproduced(monkeypatch
                 }
                 for index in range(1, count + 1)
             ],
+            "estimated_shooting_time_bucket": "within_10m",
             "pacing": {"tempo": "FAST", "median_cut_sec": 1.0, "opening_hook_sec": 1.0},
             "caption_patterns": [],
             "camera_patterns": [],

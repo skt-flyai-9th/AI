@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
+from app.schemas.shortform import FilmingTime
+
 
 # A guide cut is an actual edit boundary, not a broad semantic chapter.
 # Short references can contain more than six jump cuts while retaining the
@@ -245,6 +247,12 @@ class EditingVideoInsight(BaseModel):
     hook_patterns: list[str] = Field(min_length=1, max_length=20)
     shot_sequence: list[str] = Field(min_length=1, max_length=MAX_SHOOTING_GUIDE_CUTS)
     segments: list[ReferenceVideoSegment] = Field(min_length=1, max_length=MAX_SHOOTING_GUIDE_CUTS)
+    # 2026-08-30 추가 — 완성 영상 길이가 아니라 이 영상을 촬영하는 데 걸릴 실제
+    # 시간을 컷 개수·복잡도 근거로 분류한다(`app/template_knowledge/llm.py`의
+    # shooting_time_bucket_rules). `generate_editing()`이 이 값을 그대로
+    # `recommendation_metadata.minimum_filming_time`에 반영하며, GPT가 별도로
+    # 재추정하지 않는다.
+    estimated_shooting_time_bucket: FilmingTime
     pacing: VideoPacing
     caption_patterns: list[str] = Field(max_length=20)
     camera_patterns: list[str] = Field(max_length=20)

@@ -27,6 +27,7 @@ from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.models.shortform_session import ShortformSession
 from app.schemas.shortform import (
     FaceExposure,
+    FILMING_TIME_BUCKET_SECONDS,
     FilmingTime,
     NextRecommendationResponse,
     PromotionCategory,
@@ -431,17 +432,31 @@ class ShortformAgentService:
                 }
             )
 
-        final_duration = sum(max(int(scene.get("target_duration_sec") or 0), 0) for scene in scenes)
-        estimated_shooting_sec = (
-            max(final_duration * 10, 60)
-            if final_duration
-            else max(int(guide.get("estimated_shooting_sec") or 60), 60)
-        )
+        # 2026-08-30 이전에는 컷 개수·복잡도와 무관하게 "완성 길이×10"으로만
+        # 근사했다 — 같은 완성 길이라도 컷이 4개인 영상과 20개인 영상의 실제
+        # 촬영 시간이 같을 리 없다는 문제가 있었다. 지금은 Gemini가 최초 분석
+        # 시점에 분류한 촬영 시간 버킷(`minimum_filming_time`, `filming_time`과
+        # 값 집합이 같다)을 그대로 초로 환산한다. 그 버킷이 없는 구버전 템플릿만
+        # 예전 근사식으로 되돌아간다(하위호환).
+        shooting_time_bucket = template.recommendation_metadata.get("minimum_filming_time")
+        if shooting_time_bucket in FILMING_TIME_BUCKET_SECONDS:
+            estimated_shooting_sec = FILMING_TIME_BUCKET_SECONDS[shooting_time_bucket]
+        else:
+            shooting_time_bucket = None
+            final_duration = sum(
+                max(int(scene.get("target_duration_sec") or 0), 0) for scene in scenes
+            )
+            estimated_shooting_sec = (
+                max(final_duration * 10, 60)
+                if final_duration
+                else max(int(guide.get("estimated_shooting_sec") or 60), 60)
+            )
 
         return ShootingGuideResponse(
             template_id=template.template_id,
             version=template.version,
             estimated_shooting_sec=int(estimated_shooting_sec),
+            estimated_shooting_time_bucket=shooting_time_bucket,
             required_people=max(int(guide.get("required_people") or 1), 1),
             props=[str(item) for item in (guide.get("props") or []) if str(item).strip()],
             difficulty=str(
