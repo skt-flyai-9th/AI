@@ -439,7 +439,9 @@ class ShortformAgentService:
         # 값 집합이 같다)을 기존 초 단위 API 계약으로 환산해 내려준다.
         # 버킷이 없는 구버전 템플릿은 예전 근사식으로 초를 계산한 뒤
         # 같은 버킷으로 눌러 담고, 그 버킷의 초 값을 응답한다.
-        shooting_time_bucket = template.recommendation_metadata.get("minimum_filming_time")
+        shooting_time_bucket = (template.recommendation_metadata or {}).get(
+            "minimum_filming_time"
+        )
         if shooting_time_bucket not in FILMING_TIME_BUCKET_SECONDS:
             final_duration = sum(
                 max(int(scene.get("target_duration_sec") or 0), 0) for scene in scenes
@@ -1115,35 +1117,33 @@ def _objective_from_text(text: str) -> str | None:
     return None
 
 
+def _filming_time_bucket_from_minutes(minutes: float) -> str:
+    """분 단위 촬영 시간을 표준 버킷으로 분류한다.
+
+    사용자 응답 해석(`_filming_time_from_text`)과 구버전 템플릿의 초 단위 근사치
+    변환(`_filming_time_bucket_from_seconds`)이 이 경계를 공유한다 — 두 곳이
+    따로 하드코딩되어 어긋나면, 같은 시간이 사용자 응답에서는 within_10m으로,
+    템플릿에서는 within_20m으로 분류되어 추천 필터가 어긋난다.
+    """
+    if minutes <= 5:
+        return FilmingTime.WITHIN_5M.value
+    if minutes <= 10:
+        return FilmingTime.WITHIN_10M.value
+    if minutes <= 20:
+        return FilmingTime.WITHIN_20M.value
+    return FilmingTime.PLUS_30M.value
+
+
 def _filming_time_from_text(text: str) -> str | None:
     match = re.search(r"(\d+)\s*분", text)
     if not match:
         return None
-    minutes = int(match.group(1))
-    if minutes <= 5:
-        return FilmingTime.WITHIN_5M.value
-    if minutes <= 10:
-        return FilmingTime.WITHIN_10M.value
-    if minutes <= 20:
-        return FilmingTime.WITHIN_20M.value
-    return FilmingTime.PLUS_30M.value
+    return _filming_time_bucket_from_minutes(int(match.group(1)))
 
 
 def _filming_time_bucket_from_seconds(seconds: int) -> str:
-    """구버전 템플릿(버킷 미분류)의 초 단위 근사치를 표준 버킷으로 눌러 담는다.
-
-    경계는 `_filming_time_from_text`(사용자 답변 해석)와 동일하다 — 같은 시간을
-    사용자 응답에서는 within_10m으로, 템플릿에서는 within_20m으로 분류하면
-    추천 필터가 어긋난다.
-    """
-    minutes = max(seconds, 1) / 60
-    if minutes <= 5:
-        return FilmingTime.WITHIN_5M.value
-    if minutes <= 10:
-        return FilmingTime.WITHIN_10M.value
-    if minutes <= 20:
-        return FilmingTime.WITHIN_20M.value
-    return FilmingTime.PLUS_30M.value
+    """구버전 템플릿(버킷 미분류)의 초 단위 근사치를 표준 버킷으로 눌러 담는다."""
+    return _filming_time_bucket_from_minutes(max(seconds, 1) / 60)
 
 
 def _face_exposure_from_text(text: str) -> str | None:
