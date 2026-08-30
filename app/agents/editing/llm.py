@@ -178,6 +178,10 @@ class OpenAIEditingLLM:
             video_contexts,
             video_editing_db=video_editing_db,
         )
+        prepared_decision = _enforce_caption_budget(
+            prepared_decision,
+            project=project,
+        )
         return self.effect_planner.apply(
             prepared_decision,
             produced_frame_context=prepared["produced_frame_context"],
@@ -249,6 +253,10 @@ class OpenAIEditingLLM:
             prepared["source_preparation"],
             video_contexts,
             video_editing_db=video_editing_db,
+        )
+        prepared_decision = _enforce_caption_budget(
+            prepared_decision,
+            project=project,
         )
         return self.effect_planner.apply(
             prepared_decision,
@@ -878,6 +886,58 @@ def _apply_source_preparation(
     return decision.model_copy(update={"recipe": recipe})
 
 
+def _enforce_caption_budget(
+    decision: EditingPlanDecision,
+    *,
+    project: dict[str, Any] | None,
+    max_captions: int | None = None,
+) -> EditingPlanDecision:
+    """Reserve one REALS text-overlay slot for the always-rendered CTA."""
+
+    if decision.outcome != "RECIPE" or decision.recipe is None:
+        return decision
+    if max_captions is None:
+        max_captions = int(
+            get_reals_registry().edit_policies.get("max_captions_per_video", 8)
+        )
+    regular_limit = max(0, max_captions - 1)
+    timeline = list(decision.recipe.timeline)
+    caption_indices = [index for index, clip in enumerate(timeline) if clip.caption is not None]
+    if len(caption_indices) <= regular_limit:
+        return decision
+
+    protected: set[int] = {caption_indices[0]}
+    shortform_context = project.get("shortform_context") if isinstance(project, dict) else None
+    copy_directives = (
+        shortform_context.get("copy_directives")
+        if isinstance(shortform_context, dict)
+        else None
+    )
+    required_phrases = (
+        [str(value).strip() for value in copy_directives.get("verbatim_caption_phrases", [])]
+        if isinstance(copy_directives, dict)
+        and isinstance(copy_directives.get("verbatim_caption_phrases"), list)
+        else []
+    )
+    for index in caption_indices:
+        caption = timeline[index].caption
+        if caption is not None and any(
+            phrase and phrase in caption.text for phrase in required_phrases
+        ):
+            protected.add(index)
+
+    remove_count = len(caption_indices) - regular_limit
+    for index in reversed(caption_indices):
+        if remove_count <= 0:
+            break
+        if index in protected:
+            continue
+        timeline[index] = timeline[index].model_copy(update={"caption": None})
+        remove_count -= 1
+    recipe = decision.recipe.model_copy(update={"timeline": timeline})
+    return decision.model_copy(update={"recipe": recipe})
+
+
 def _map_cut_analysis_to_produced(
     analyzed: list[dict[str, Any]],
     source_plan: SourceCutPlan,
@@ -972,7 +1032,8 @@ def _requirements(
         "extend them to a readability minimum unless the project explicitly requests one.",
         "Caption scale must remain 1.0; use an approved style_id for visual emphasis.",
         "Use only renderer capabilities and the video-editing DB editing_rules.",
-        "Keep captions at most 40 characters each and at most 8 captions total.",
+        "Keep captions at most 40 characters each. The rendered CTA counts toward the REALS "
+        "maximum of 8 text overlays, so return at most 7 regular in-video captions.",
         "This is promotional video: regular in-video captions are required, not optional. "
         "Create at least 3 regular captions when the timeline has 3 or more clips; otherwise "
         "create one regular caption per clip. The rendered CTA does not count toward this minimum.",

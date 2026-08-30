@@ -12,6 +12,7 @@ from app.agents.editing.llm import (
     EditingLLMError,
     OpenAIEditingLLM,
     _apply_source_preparation,
+    _enforce_caption_budget,
     _map_cut_analysis_to_produced,
     _normalize_source_cut_plan,
     _resolve_shoot_mode,
@@ -610,6 +611,61 @@ def test_project_302_cut_lengths_fit_all_eight_template_slots():
         for produced, slot in zip(produced_durations, slot_durations, strict=True)
     )
     assert sum(produced_durations) <= 14_000
+
+
+def test_caption_budget_reserves_cta_and_preserves_required_copy():
+    recipe = EditRecipe.model_validate(
+        {
+            "editing_template_id": "gt_jujutsu_transition",
+            "editing_template_version": 10,
+            "timeline": [
+                {
+                    "clip_order": index,
+                    "video_id": f"task_{index}",
+                    "source_start_ms": 0,
+                    "source_end_ms": 1000,
+                    "timeline_start_ms": (index - 1) * 1000,
+                    "caption": {
+                        "text": "필수 문구" if index == 8 else f"자막 {index}",
+                        "start_ms": (index - 1) * 1000,
+                        "end_ms": index * 1000,
+                    },
+                }
+                for index in range(1, 9)
+            ],
+            "cta": {"text": "지금 확인해보세요"},
+        }
+    )
+    decision = EditingPlanDecision(
+        outcome="RECIPE",
+        recipe=recipe,
+        publishing=PublishingResult(
+            title="테스트 제목",
+            caption="테스트 본문",
+            hashtags=["#테스트1", "#테스트2", "#테스트3", "#테스트4", "#테스트5"],
+            track={"mode": "SUGGESTED", "search_keyword": "테스트 음원"},
+            post_note="플랫폼에서 ‘테스트 음원’을 검색해 추가해주세요.",
+        ),
+        missing_scene_roles=[],
+        available_options=[],
+        rationale="test",
+    )
+
+    result = _enforce_caption_budget(
+        decision,
+        project={
+            "shortform_context": {
+                "copy_directives": {"verbatim_caption_phrases": ["필수 문구"]}
+            }
+        },
+        max_captions=8,
+    )
+
+    captions = [clip.caption for clip in result.recipe.timeline]
+    assert sum(caption is not None for caption in captions) == 7
+    assert captions[0] is not None
+    assert captions[-1] is not None and captions[-1].text == "필수 문구"
+    assert captions[-2] is None
 
 
 def test_one_take_source_preparation_keeps_full_source():
