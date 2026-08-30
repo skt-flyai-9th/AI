@@ -38,14 +38,18 @@ def test_runtime_cleanup_removes_deleted_ids_without_touching_retained_rows(tmp_
     result = purge_removed_shortform_runtime_data(SimpleNamespace(ranker_data_dir=tmp_path))
 
     assert result["removed_rows"] == {
-        "ranker-history.sqlite3": 9,
-        "candidates.auto.csv": 3,
-        "observations.csv": 3,
+        "ranker-history.sqlite3": 6,
+        "candidates.auto.csv": 2,
+        "observations.csv": 2,
     }
     with sqlite3.connect(sqlite_path) as connection:
         for table in ("rankings", "features", "source_metrics"):
             assert connection.execute(f"SELECT challenge_id FROM {table}").fetchall() == [
-                ("jujutsu_transition",)
+                ("jujutsu_transition",),
+                ("donggeurio_challenge",),
             ]
     for filename in ("candidates.auto.csv", "observations.csv"):
-        assert pd.read_csv(tmp_path / filename)["challenge_id"].tolist() == ["jujutsu_transition"]
+        assert pd.read_csv(tmp_path / filename)["challenge_id"].tolist() == [
+            "jujutsu_transition",
+            "donggeurio_challenge",
+        ]

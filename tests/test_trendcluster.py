@@ -15,14 +15,16 @@ def test_checked_in_trendcluster_matches_provided_video_editing_db():
     checked_in = json.loads(Path("exports/trendcluster.json").read_text(encoding="utf-8"))
 
     assert checked_in == expected
-    assert checked_in["count"] == 2
-    assert [item["rank"] for item in checked_in["results"]] == [1, 3]
+    assert checked_in["count"] == 3
+    assert [item["rank"] for item in checked_in["results"]] == [1, 2, 3]
     assert [item["name"] for item in checked_in["results"]] == [
         "주술회전 트랜지션",
+        "동그리오 챌린지",
         "오츠카레 썸머 챌린지",
     ]
     assert [item["category"] for item in checked_in["results"]] == [
         "meme",
+        "food",
         "challenge",
     ]
     assert all(
@@ -30,13 +32,17 @@ def test_checked_in_trendcluster_matches_provided_video_editing_db():
         for item in checked_in["results"]
     )
     assert checked_in["results"][0]["representative_youtube_url"] == (
-        "https://www.youtube.com/shorts/02afQgwCDSc"
+        "https://www.youtube.com/shorts/Aa-CGr9-c8E"
     )
     assert checked_in["results"][0]["guide_youtube_url"] == (
-        "https://www.youtube.com/shorts/02afQgwCDSc"
+        "https://www.youtube.com/shorts/Aa-CGr9-c8E"
     )
-    assert checked_in["results"][0]["reference_cut_review"]["expected_cut_count"] == 6
+    assert checked_in["results"][1]["guide_youtube_url"] == (
+        "https://www.youtube.com/shorts/iWyRoIJheV4"
+    )
+    assert checked_in["results"][0]["reference_cut_review"]["expected_cut_count"] == 8
     assert checked_in["results"][1]["reference_cut_review"]["expected_cut_count"] == 7
+    assert checked_in["results"][2]["reference_cut_review"]["expected_cut_count"] == 7
     assert [
         (
             item["format_type"],
@@ -46,7 +52,8 @@ def test_checked_in_trendcluster_matches_provided_video_editing_db():
         )
         for item in checked_in["results"]
     ] == [
-        ("밈", 13, "중", False),
+        ("밈", 14, "중", False),
+        ("정보형", 13, "중", False),
         ("챌린지", 13, "중", True),
     ]
     assert not Path("exports/ranking_latest.json").exists()
@@ -63,10 +70,9 @@ def test_sync_video_editing_db_trendcluster_is_atomic_and_deterministic(tmp_path
 def test_packaged_sources_do_not_contain_removed_shortforms():
     markers = (
         "cafe_recommendation_reels",
-        "donggeurio_challenge",
         "donggeurio_store_promotion",
         "gt_cafe_recommendation",
-        "gt_donggeurio",
+        "gt_donggeurio_store_promotion",
     )
     for path in (
         Path("app/template_knowledge/sources/video_editing.json"),

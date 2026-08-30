@@ -22,11 +22,12 @@ def _ranking_row(challenge_id: str, rank: int) -> dict:
     }
 
 
-def test_persist_result_keeps_only_approved_two_and_preserves_rank_gap() -> None:
+def test_persist_result_keeps_only_approved_three() -> None:
     with SessionLocal() as db:
         now = datetime.now(timezone.utc)
         approved_ids = (
             "jujutsu_transition",
+            "donggeurio_challenge",
             "otsukare_summer_challenge",
         )
         db.add_all(
@@ -70,5 +71,6 @@ def test_persist_result_keeps_only_approved_two_and_preserves_rank_gap() -> None
         assert {row.id for row in db.query(Challenge).all()} == set(approved_ids)
         assert {row.id: row.automatic_rank for row in db.query(Challenge).all()} == {
             "jujutsu_transition": 1,
+            "donggeurio_challenge": 2,
             "otsukare_summer_challenge": 3,
         }

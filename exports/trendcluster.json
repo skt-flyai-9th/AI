@@ -1,25 +1,46 @@
 {
-  "generated_at": "2026-08-24T22:00:00",
-  "count": 2,
+  "generated_at": "2026-08-30T18:30:00+09:00",
+  "count": 3,
   "results": [
     {
       "id": "jujutsu_transition",
       "rank": 1,
       "name": "주술회전 트랜지션",
       "category": "meme",
-      "representative_youtube_url": "https://www.youtube.com/shorts/02afQgwCDSc",
-      "guide_youtube_url": "https://www.youtube.com/shorts/02afQgwCDSc",
+      "representative_youtube_url": "https://www.youtube.com/shorts/Aa-CGr9-c8E",
+      "guide_youtube_url": "https://www.youtube.com/shorts/Aa-CGr9-c8E",
       "format_type": "밈",
-      "expected_duration_sec": 13,
+      "expected_duration_sec": 14,
       "shooting_difficulty": "중",
       "requires_face": false,
       "reference_cut_review": {
         "status": "HUMAN_REVIEWED",
-        "expected_cut_count": 6,
+        "expected_cut_count": 8,
         "boundary_basis": [
           "음식이나 음료가 이전 프레임에 없다가 갑자기 등장하면 별도 컷으로 분리",
           "손동작, 화면 가림, 의상·구도 변경 전후의 프레임 불연속을 각각 컷으로 분리",
           "의미가 같은 변신 장면이어도 물체·인물·구도가 연속되지 않으면 합치지 않음"
+        ]
+      }
+    },
+    {
+      "id": "donggeurio_challenge",
+      "rank": 2,
+      "name": "동그리오 챌린지",
+      "category": "food",
+      "representative_youtube_url": "https://www.youtube.com/shorts/iWyRoIJheV4",
+      "guide_youtube_url": "https://www.youtube.com/shorts/iWyRoIJheV4",
+      "format_type": "정보형",
+      "expected_duration_sec": 13,
+      "shooting_difficulty": "중",
+      "requires_face": false,
+      "reference_cut_review": {
+        "status": "UPLOADED_JSON_REVIEWED",
+        "expected_cut_count": 7,
+        "boundary_basis": [
+          "업로드 MP4 실측 경계 0·1033·3767·4700·7000·8333·9633·12067ms를 사용",
+          "훅·메뉴 공개·공간 팬·메뉴 액션·액션 하이라이트·외관·아웃트로를 각각 분리",
+          "의미 앵커를 보존한 뒤 인접 강한 오디오 onset에만 컷을 스냅"
         ]
       }
     },

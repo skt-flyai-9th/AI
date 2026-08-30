@@ -83,7 +83,7 @@ def export_trendcluster_command() -> None:
 
 @app.command("sync-trendcluster-from-video-editing-db")
 def sync_trendcluster_from_video_editing_db() -> None:
-    """Replace trendcluster with the two retained entries and preserve the rank-2 gap."""
+    """Replace trendcluster with the three retained entries in canonical rank order."""
 
     path = sync_video_editing_db_trendcluster(get_settings().export_dir)
     typer.echo(str(path))

@@ -145,30 +145,32 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
     service, _ = _service()
     with SessionLocal() as db:
         result = seed_template_library(db, service=service)
-        assert len(result["created"]) == 5
+        assert len(result["created"]) == 6
         active_trade_area = db.scalar(
             select(TradeAreaDBRecord).where(TradeAreaDBRecord.status == "ACTIVE")
         )
         assert active_trade_area is not None
         assert active_trade_area.template_id == "trade_area_seoul"
-        assert len(list(db.scalars(select(VideoEditingDBRecord)))) == 2
+        assert len(list(db.scalars(select(VideoEditingDBRecord)))) == 3
         imported_editing = db.scalar(
             select(VideoEditingDBRecord).where(
                 VideoEditingDBRecord.template_id == "gt_jujutsu_transition"
             )
         )
         assert imported_editing is not None
-        assert imported_editing.version == 4
-        assert len(imported_editing.shooting_guide["tasks"]) == 6
-        assert len(imported_editing.shooting_guide["scenes"]) == 6
-        assert len(imported_editing.evidence_summary["reference_segments"]) == 17
+        assert imported_editing.version == 5
+        assert len(imported_editing.shooting_guide["tasks"]) == 8
+        assert len(imported_editing.shooting_guide["scenes"]) == 8
+        assert len(imported_editing.evidence_summary["reference_segments"]) == 8
         assert imported_editing.evidence_summary["shooting_task_intervals"]["source_rows"] == [
-            5,
-            5,
-            6,
-            6,
-            7,
-            7,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
         ]
         first_task = imported_editing.shooting_guide["tasks"][0]
         assert first_task["display_order"] == 1
@@ -185,7 +187,8 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
             for record in db.scalars(select(VideoEditingDBRecord))
         }
         assert task_counts == {
-            "gt_jujutsu_transition": 6,
+            "gt_jujutsu_transition": 8,
+            "gt_donggeurio_challenge": 7,
             "gt_otsukare_summer": 7,
         }
         assert len(list(db.scalars(select(TemplateSourceBundle)))) == 2
@@ -203,8 +206,8 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
         second = seed_template_library(db, service=service)
         db.refresh(imported_editing)
         assert second["created"] == []
-        assert len(second["skipped"]) == 5
-        assert len(imported_editing.shooting_guide["tasks"]) == 6
+        assert len(second["skipped"]) == 6
+        assert len(imported_editing.shooting_guide["tasks"]) == 8
 
 
 def test_bootstrap_repairs_a_newer_active_version_with_missing_format_contract():
@@ -245,7 +248,7 @@ def test_bootstrap_repairs_newer_active_version_with_stale_shooting_cuts():
     service, _ = _service()
     with SessionLocal() as db:
         seed_template_library(db, service=service)
-        source = db.get(VideoEditingDBRecord, ("gt_jujutsu_transition", 4))
+        source = db.get(VideoEditingDBRecord, ("gt_jujutsu_transition", 5))
         assert source is not None
         source.status = "ARCHIVED"
         stale_guide = dict(source.shooting_guide)
@@ -254,7 +257,7 @@ def test_bootstrap_repairs_newer_active_version_with_stale_shooting_cuts():
         db.add(
             VideoEditingDBRecord(
                 template_id="gt_jujutsu_transition",
-                version=5,
+                version=6,
                 status="ACTIVE",
                 name=source.name,
                 recommendation_title=source.recommendation_title,
@@ -269,17 +272,17 @@ def test_bootstrap_repairs_newer_active_version_with_stale_shooting_cuts():
 
         result = seed_template_library(db, service=service)
 
-        repaired = db.get(VideoEditingDBRecord, ("gt_jujutsu_transition", 6))
+        repaired = db.get(VideoEditingDBRecord, ("gt_jujutsu_transition", 7))
         assert repaired is not None
         assert repaired.status == "ACTIVE"
-        assert len(repaired.shooting_guide["tasks"]) == 6
-        assert len(repaired.shooting_guide["scenes"]) == 6
-        assert db.get(VideoEditingDBRecord, ("gt_jujutsu_transition", 5)).status == "ARCHIVED"
+        assert len(repaired.shooting_guide["tasks"]) == 8
+        assert len(repaired.shooting_guide["scenes"]) == 8
+        assert db.get(VideoEditingDBRecord, ("gt_jujutsu_transition", 6)).status == "ARCHIVED"
         assert any("CONTRACT_REPAIR" in item for item in result["created"])
 
         second = seed_template_library(db, service=service)
         assert second["created"] == []
-        assert db.get(VideoEditingDBRecord, ("gt_jujutsu_transition", 7)) is None
+        assert db.get(VideoEditingDBRecord, ("gt_jujutsu_transition", 8)) is None
 
 
 def test_candidate_lifecycle_creates_new_version_and_archives_base():
@@ -718,7 +721,7 @@ def test_template_knowledge_api_bootstrap_and_async_analysis(client, auth_header
             headers=auth_headers,
         )
         assert versions.status_code == 200
-        assert len(versions.json()) == 3
+        assert len(versions.json()) == 4
         sources = client.get("/api/v1/database-knowledge/sources", headers=auth_headers)
         assert sources.status_code == 200
         assert len(sources.json()) == 2

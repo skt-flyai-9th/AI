@@ -11,25 +11,28 @@ from typing import Any
 
 TRENDCLUSTER_FILENAME = "trendcluster.json"
 
-# 운영 trendcluster는 영상편집 DB에서 검증을 마친 이 두 숏폼만 사용한다.
+# 운영 trendcluster는 영상편집 DB에서 검증을 마친 이 세 숏폼만 사용한다.
 # 파이프라인이 더 많은 후보를 찾아도 API/DB에 다시 유입시키지 않는다.
 TRENDCLUSTER_CHALLENGE_IDS = (
     "jujutsu_transition",
+    "donggeurio_challenge",
     "otsukare_summer_challenge",
 )
 
 TRENDCLUSTER_CANONICAL_RANKS = {
     "jujutsu_transition": 1,
+    "donggeurio_challenge": 2,
     "otsukare_summer_challenge": 3,
 }
 
 _SEED_CATEGORIES = {
     "jujutsu_transition": "meme",
+    "donggeurio_challenge": "food",
     "otsukare_summer_challenge": "challenge",
 }
 
 _SEED_GUIDE_URL_OVERRIDES = {
-    "jujutsu_transition": "https://www.youtube.com/shorts/02afQgwCDSc",
+    "jujutsu_transition": "https://www.youtube.com/shorts/Aa-CGr9-c8E",
 }
 
 # These labels describe the guide videos that were actually analysed in
@@ -38,17 +41,27 @@ _SEED_GUIDE_URL_OVERRIDES = {
 # results that are stable for each analysed guide.
 _GUIDE_CLASSIFICATIONS: dict[str, tuple[str, bool]] = {
     "jujutsu_transition": ("밈", False),
+    "donggeurio_challenge": ("정보형", False),
     "otsukare_summer_challenge": ("챌린지", True),
 }
 
 _REFERENCE_CUT_REVIEWS: dict[str, dict[str, Any]] = {
     "jujutsu_transition": {
         "status": "HUMAN_REVIEWED",
-        "expected_cut_count": 6,
+        "expected_cut_count": 8,
         "boundary_basis": [
             "음식이나 음료가 이전 프레임에 없다가 갑자기 등장하면 별도 컷으로 분리",
             "손동작, 화면 가림, 의상·구도 변경 전후의 프레임 불연속을 각각 컷으로 분리",
             "의미가 같은 변신 장면이어도 물체·인물·구도가 연속되지 않으면 합치지 않음",
+        ],
+    },
+    "donggeurio_challenge": {
+        "status": "UPLOADED_JSON_REVIEWED",
+        "expected_cut_count": 7,
+        "boundary_basis": [
+            "업로드 MP4 실측 경계 0·1033·3767·4700·7000·8333·9633·12067ms를 사용",
+            "훅·메뉴 공개·공간 팬·메뉴 액션·액션 하이라이트·외관·아웃트로를 각각 분리",
+            "의미 앵커를 보존한 뒤 인접 강한 오디오 onset에만 컷을 스냅",
         ],
     },
     "otsukare_summer_challenge": {
@@ -155,9 +168,9 @@ def build_video_editing_db_trendcluster() -> dict[str, Any]:
             result["reference_cut_review"] = _REFERENCE_CUT_REVIEWS[challenge_id]
         results.append(result)
     results.sort(key=lambda item: (item["rank"], item["id"]))
-    if len(results) != 2:
+    if len(results) != 3:
         raise ValueError(
-            f"Expected exactly 2 PASS entries in the provided video-editing DB, got {len(results)}."
+            f"Expected exactly 3 PASS entries in the provided video-editing DB, got {len(results)}."
         )
     return {
         "generated_at": max(generated_at),
