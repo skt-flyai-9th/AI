@@ -570,3 +570,68 @@ def test_reals_filter_graph_renders_timed_transforms_and_normalizes_vertical():
     assert "rotate=" in joined
     assert "drawbox=" in joined
     assert "enable='between(t,0.600000,1.200000)'" in joined
+
+
+def test_reals_filter_graph_crop_follows_segment_crop_center(tmp_path):
+    engine_root = Path(__file__).resolve().parents[1] / "reals-video-engine"
+    if str(engine_root) not in sys.path:
+        sys.path.insert(0, str(engine_root))
+
+    import pydantic
+    import pytest
+
+    from reals_edit_engine.contracts import CropMode, RecipeSegment
+    from reals_edit_engine.ffmpeg_graph import (
+        _normalize_filter,
+        _subject_center_crop_filter,
+        build_concat_plan,
+    )
+
+    rp = {"width": 1080, "height": 1920, "fps": 30, "pix_fmt": "yuv420p"}
+
+    def _segment(**overrides):
+        return RecipeSegment(
+            recipe_segment_id="seg",
+            produced_segment_id="produced",
+            sequence_index=1,
+            trim_in_ms=0,
+            trim_out_ms=2000,
+            crop_mode=CropMode.CENTER_9_16,
+            **overrides,
+        )
+
+    # A normalized subject position is converted into a crop origin that puts
+    # the subject in the center, rather than treating the position as an offset ratio.
+    offset = _normalize_filter(_segment(crop_center_x=0.2, crop_center_y=0.8), rp)
+    assert (
+        "crop=1080:1920:"
+        "x='min(max(in_w*0.200000-1080/2,0),in_w-1080)':"
+        "y='min(max(in_h*0.800000-1920/2,0),in_h-1920)'"
+    ) in offset
+
+    # Defaults (0.5/0.5) are the exact arithmetic equivalent of the old
+    # implicit center crop: (in_w-out_w)/2 == (in_w-out_w)*0.5.
+    centered = _normalize_filter(_segment(), rp)
+    assert (
+        "crop=1080:1920:"
+        "x='min(max(in_w*0.500000-1080/2,0),in_w-1080)':"
+        "y='min(max(in_h*0.500000-1920/2,0),in_h-1920)'"
+    ) in centered
+
+    # The same expression is shared by the multi-cut source assembly path.
+    assert _subject_center_crop_filter(1080, 1920, 0.2, 0.8) in offset
+    profile = RealsRegistry().render_profile("INTERMEDIATE_VERTICAL_V1")
+    assert profile is not None
+    commands, _ = build_concat_plan(
+        [("source.mp4", 0.0, 1.0, 0.2, 0.8)],
+        str(tmp_path / "assembled.mp4"),
+        profile,
+        str(tmp_path),
+        key="subject-center",
+    )
+    first_vf = commands[0][commands[0].index("-vf") + 1]
+    assert _subject_center_crop_filter(1080, 1920, 0.2, 0.8) in first_vf
+
+    # Out-of-range values are rejected by the contract validator.
+    with pytest.raises(pydantic.ValidationError, match="crop_center_x out of"):
+        _segment(crop_center_x=1.5)

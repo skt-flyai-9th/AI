@@ -123,6 +123,8 @@ class RecipeSegment(BaseModel):
     trim_out_ms: int
     speed_multiplier: float = 1.0
     crop_mode: CropMode = CropMode.KEEP
+    crop_center_x: float = 0.5
+    crop_center_y: float = 0.5
     color_tone: ColorTone = ColorTone.NATURAL
     transition_id: TransitionId = TransitionId.NONE
     effects: list[EffectApplication] = Field(default_factory=list)
@@ -133,6 +135,10 @@ class RecipeSegment(BaseModel):
     def _order(self):
         if self.trim_in_ms >= self.trim_out_ms:
             raise ValueError(f"{self.recipe_segment_id}: trim_in >= trim_out")
+        for name in ("crop_center_x", "crop_center_y"):
+            value = getattr(self, name)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{self.recipe_segment_id}: {name} out of [0,1]")
         return self
 
 

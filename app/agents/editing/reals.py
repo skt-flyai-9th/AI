@@ -182,6 +182,8 @@ class RealsAssemblySegment(BaseModel):
     sequence_index: int = Field(ge=1)
     trim_in_ms: int = Field(ge=0)
     trim_out_ms: int = Field(gt=0)
+    crop_center_x: float = Field(default=0.5, ge=0.0, le=1.0)
+    crop_center_y: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
 class RealsSourceAssemblyPlan(BaseModel):
@@ -211,6 +213,8 @@ class RealsRecipeSegment(BaseModel):
     trim_out_ms: int = Field(gt=0)
     speed_multiplier: float = Field(ge=0.5, le=2.0)
     crop_mode: Literal["KEEP", "CENTER_9_16"]
+    crop_center_x: float = Field(default=0.5, ge=0.0, le=1.0)
+    crop_center_y: float = Field(default=0.5, ge=0.0, le=1.0)
     color_tone: Literal["NATURAL", "WARM", "COOL", "VIVID"] = "NATURAL"
     transition_id: Literal["NONE", "HARD_CUT", "FLASH_WHITE"] = "NONE"
     effects: list[RealsEffectApplication] = Field(default_factory=list)
@@ -361,6 +365,18 @@ class RealsRecipeAdapter:
                         sequence_index=clip.clip_order,
                         trim_in_ms=clip.source_start_ms,
                         trim_out_ms=clip.source_end_ms,
+                        crop_center_x=(
+                            clip.crop_center_x
+                            if clip.crop_mode == "SUBJECT_CENTER"
+                            and clip.crop_center_x is not None
+                            else 0.5
+                        ),
+                        crop_center_y=(
+                            clip.crop_center_y
+                            if clip.crop_mode == "SUBJECT_CENTER"
+                            and clip.crop_center_y is not None
+                            else 0.5
+                        ),
                     )
                 )
                 produced_cursor += source_duration
@@ -413,6 +429,8 @@ class RealsRecipeAdapter:
                     trim_out_ms=produced_range[1],
                     speed_multiplier=clip.speed,
                     crop_mode=_to_reals_crop(clip.crop_mode),
+                    crop_center_x=clip.crop_center_x if clip.crop_center_x is not None else 0.5,
+                    crop_center_y=clip.crop_center_y if clip.crop_center_y is not None else 0.5,
                     color_tone=color_tone,
                     transition_id=transition_id,
                     effects=effects,

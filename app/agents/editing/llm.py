@@ -967,6 +967,10 @@ def _requirements(
         "Publishing post_note must tell the user how to add music in the platform and, for SUGGESTED audio, include track.search_keyword verbatim.",
         "Match reference-original composition/effect grammar using the frame-exact user evidence; do not copy unsupported content.",
         "Timed effect params start_ms/end_ms are relative to the host clip after speed and must align to analyzed semantic events.",
+        "When crop_mode is SUBJECT_CENTER, set crop_center_x/crop_center_y (0.0-1.0, top-left "
+        "origin) from that clip's own produced_frame_context observations' subject_x/subject_y "
+        "so the crop follows the subject. If the clip has no reliable subject-position evidence, "
+        "return null for both fields so the render falls back to a plain center crop.",
     ]
     if source_preparation.get("mode") == "MULTI_CUT":
         requirements.append(
