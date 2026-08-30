@@ -88,11 +88,22 @@ _EDITING_SCOPE_ADAPTERS: dict[str, dict[str, Any]] = {
         "minimum_filming_time": "within_10m",
         "requires_face": True,
     },
+    "doma_bad_challenge": {
+        "format_type": "챌린지",
+        "supported_subject_types": ["STORE", "SERVICE", "PRODUCT"],
+        "supported_objectives": ["awareness", "new_customer", "visit", "trust"],
+        "supported_filming_times": ["within_10m", "within_20m", "30m_plus"],
+        "supported_face_modes": ["allowed"],
+        "minimum_filming_time": "within_10m",
+        "requires_face": True,
+    },
 }
 
 _SHOOTING_REQUIRED_PEOPLE = {
     "jujutsu_transition": 2,
     "donggeurio_challenge": 1,
+    # 레퍼런스는 2인이지만 업로드 인사이트는 인원 수를 soft 조건으로 명시한다.
+    "doma_bad_challenge": 1,
 }
 
 

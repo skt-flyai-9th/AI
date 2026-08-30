@@ -135,7 +135,7 @@ def persist_result(
     source_metrics: pd.DataFrame,
 ) -> None:
     now = datetime.now(timezone.utc)
-    # 운영 데이터 소스는 검증된 세 숏폼과 원래 순위 1·2·3으로 고정한다. 과거 자동 발굴 결과는
+    # 운영 데이터 소스는 검증된 네 숏폼과 원래 순위 1·2·3·4로 고정한다. 과거 자동 발굴 결과는
     # 비활성 행으로도 남기지 않아 `/challenges`와 다음 export에 재등장할 수 없게 한다.
     db.execute(delete(Challenge).where(Challenge.id.not_in(TRENDCLUSTER_CHALLENGE_IDS)))
 

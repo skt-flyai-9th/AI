@@ -145,13 +145,13 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
     service, _ = _service()
     with SessionLocal() as db:
         result = seed_template_library(db, service=service)
-        assert len(result["created"]) == 6
+        assert len(result["created"]) == 7
         active_trade_area = db.scalar(
             select(TradeAreaDBRecord).where(TradeAreaDBRecord.status == "ACTIVE")
         )
         assert active_trade_area is not None
         assert active_trade_area.template_id == "trade_area_seoul"
-        assert len(list(db.scalars(select(VideoEditingDBRecord)))) == 3
+        assert len(list(db.scalars(select(VideoEditingDBRecord)))) == 4
         imported_editing = db.scalar(
             select(VideoEditingDBRecord).where(
                 VideoEditingDBRecord.template_id == "gt_jujutsu_transition"
@@ -190,6 +190,7 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
             "gt_jujutsu_transition": 8,
             "gt_donggeurio_challenge": 7,
             "gt_otsukare_summer": 7,
+            "gt_doma_bad_challenge": 1,
         }
         assert len(list(db.scalars(select(TemplateSourceBundle)))) == 2
         assert db.scalar(select(TemplateSourceRecord)) is not None
@@ -206,7 +207,7 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
         second = seed_template_library(db, service=service)
         db.refresh(imported_editing)
         assert second["created"] == []
-        assert len(second["skipped"]) == 6
+        assert len(second["skipped"]) == 7
         assert len(imported_editing.shooting_guide["tasks"]) == 8
 
 
@@ -721,7 +722,7 @@ def test_template_knowledge_api_bootstrap_and_async_analysis(client, auth_header
             headers=auth_headers,
         )
         assert versions.status_code == 200
-        assert len(versions.json()) == 4
+        assert len(versions.json()) == 5
         sources = client.get("/api/v1/database-knowledge/sources", headers=auth_headers)
         assert sources.status_code == 200
         assert len(sources.json()) == 2

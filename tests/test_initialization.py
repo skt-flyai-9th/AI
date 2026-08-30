@@ -48,8 +48,9 @@ def test_initializer_runs_ranking_only_before_the_first_success():
             "jujutsu_transition",
             "donggeurio_challenge",
             "otsukare_summer_challenge",
+            "doma_bad_challenge",
         ]
-        assert [item.automatic_rank for item in bundled if item.active] == [1, 2, 3]
+        assert [item.automatic_rank for item in bundled if item.active] == [1, 2, 3, 4]
         assert second["bundled_challenges"]["created"] == []
 
 
