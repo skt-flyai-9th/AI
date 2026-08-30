@@ -796,18 +796,31 @@ def _scope_user_statements_to_subject(
     return statements[anchor_index:]
 
 
-def _build_copy_directives(
-    *,
-    request: EditingRunCreateRequest,
-    user_statements: list[str],
-    project_state: dict[str, Any],
-) -> dict[str, Any]:
+_CAPTION_MARKERS = ("자막", "문구", "띄우", "표시", "카피", "대사")
+
+_UNQUOTED_CAPTION_PHRASE_PATTERN = re.compile(
+    r"([\w가-힣0-9!?~.,]{1,40}?)\s*(?:이라고|라고)\s*(?:" + "|".join(_CAPTION_MARKERS) + r")"
+)
+
+_CAPTION_POSITION_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("TOP", ("상단", "맨 위", "위쪽", "화면 위")),
+    ("MIDDLE", ("가운데", "중앙", "화면 중간")),
+    ("BOTTOM", ("하단", "맨 아래", "아래쪽", "화면 아래")),
+)
+
+_CAPTION_SECONDS_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*초")
+
+
+def _extract_caption_phrases(user_statements: list[str]) -> list[str]:
     phrases: list[str] = []
-    copy_markers = ("자막", "문구", "띄우", "표시", "카피", "대사")
     for statement in user_statements:
-        if any(marker in statement for marker in copy_markers):
+        if any(marker in statement for marker in _CAPTION_MARKERS):
             for phrase in re.findall(r"[\"“‘]([^\"”’]{1,40})[\"”’]", statement):
                 normalized = " ".join(phrase.split())
+                if normalized and normalized not in phrases:
+                    phrases.append(normalized)
+            for match in _UNQUOTED_CAPTION_PHRASE_PATTERN.finditer(statement):
+                normalized = " ".join(match.group(1).strip(" `\"'“”").split())
                 if normalized and normalized not in phrases:
                     phrases.append(normalized)
         for line in statement.splitlines():
@@ -816,7 +829,39 @@ def _build_copy_directives(
                 normalized = " ".join(arrow.group(1).strip(" `\"'“”").split())
                 if normalized and normalized not in phrases:
                     phrases.append(normalized)
+    return phrases
 
+
+def _extract_caption_position_request(user_statements: list[str]) -> str | None:
+    for statement in user_statements:
+        if not any(marker in statement for marker in _CAPTION_MARKERS):
+            continue
+        for position, keywords in _CAPTION_POSITION_KEYWORDS:
+            if any(keyword in statement for keyword in keywords):
+                return position
+    return None
+
+
+def _extract_requested_caption_duration_ms(user_statements: list[str]) -> int | None:
+    for statement in user_statements:
+        if not any(marker in statement for marker in _CAPTION_MARKERS):
+            continue
+        match = _CAPTION_SECONDS_PATTERN.search(statement)
+        if match is None:
+            continue
+        seconds = float(match.group(1))
+        if seconds <= 0:
+            continue
+        return max(500, min(int(seconds * 1000), 8000))
+    return None
+
+
+def _build_copy_directives(
+    *,
+    request: EditingRunCreateRequest,
+    user_statements: list[str],
+    project_state: dict[str, Any],
+) -> dict[str, Any]:
     state_subject = project_state.get("promotion_subject")
     subject_terms = sorted(
         _promotion_subject_terms(state_subject)
@@ -829,7 +874,9 @@ def _build_copy_directives(
             "editing_template_id": request.selected_shortform.editing_template_id,
             "editing_template_version": request.selected_shortform.editing_template_version,
         },
-        "verbatim_caption_phrases": phrases,
+        "verbatim_caption_phrases": _extract_caption_phrases(user_statements),
+        "caption_position_request": _extract_caption_position_request(user_statements),
+        "requested_min_caption_ms": _extract_requested_caption_duration_ms(user_statements),
         "verified_subject_terms": subject_terms,
         "user_wording": user_statements,
         "instruction": (

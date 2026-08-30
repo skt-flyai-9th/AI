@@ -304,6 +304,7 @@ class EditRecipeValidator:
                         f"Unknown REALS caption motion: {caption.motion_id}.",
                         source="REALS_REGISTRY",
                     )
+                caption_duration_ms = caption.end_ms - caption.start_ms
                 if caption.motion_id == "TYPEWRITER":
                     typewriter_count += 1
                     unit_count = _typewriter_unit_count(caption.text)
@@ -315,7 +316,7 @@ class EditRecipeValidator:
                             source="REALS_REGISTRY",
                         )
                     required_ms = max(0, unit_count - 1) * 80 + 600
-                    if caption.end_ms - caption.start_ms < required_ms:
+                    if caption_duration_ms < required_ms:
                         add(
                             "TYPEWRITER_CAPTION_TOO_SHORT",
                             caption_path,
@@ -323,6 +324,32 @@ class EditRecipeValidator:
                             f"600ms hold time ({required_ms}ms required).",
                             source="REALS_REGISTRY",
                         )
+                else:
+                    readable_ms = max(900, _typewriter_unit_count(caption.text) * 60 + 400)
+                    if caption_duration_ms < readable_ms:
+                        add(
+                            "CAPTION_DURATION_TOO_SHORT",
+                            caption_path,
+                            "Caption must stay on screen long enough to read "
+                            f"({readable_ms}ms required for this text length).",
+                            source="REALS_REGISTRY",
+                        )
+                requested_min_ms = _requested_min_caption_display_ms(project)
+                if requested_min_ms is not None and caption_duration_ms < requested_min_ms:
+                    add(
+                        "PROJECT_CAPTION_DURATION_TOO_SHORT",
+                        caption_path,
+                        "The project requested captions stay visible for at least "
+                        f"{requested_min_ms}ms; this caption is {caption_duration_ms}ms.",
+                    )
+                requested_position = _requested_caption_position(project)
+                if requested_position is not None and caption.position != requested_position:
+                    add(
+                        "PROJECT_CAPTION_POSITION_MISMATCH",
+                        f"{caption_path}.position",
+                        f"The project requested captions positioned at {requested_position}; "
+                        f"received {caption.position}.",
+                    )
                 if caption.scale != 1.0:
                     add(
                         "CAPTION_SCALE_UNSUPPORTED",
@@ -509,19 +536,33 @@ def _is_promotional_project(project: dict[str, Any] | None) -> bool:
     return bool(objective and isinstance(subject, dict) and subject)
 
 
-def _required_verbatim_caption_phrases(project: dict[str, Any] | None) -> list[str]:
+def _copy_directives(project: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(project, dict):
-        return []
+        return {}
     shortform_context = project.get("shortform_context")
     if not isinstance(shortform_context, dict):
-        return []
+        return {}
     directives = shortform_context.get("copy_directives")
-    if not isinstance(directives, dict):
-        return []
-    phrases = directives.get("verbatim_caption_phrases")
+    return directives if isinstance(directives, dict) else {}
+
+
+def _required_verbatim_caption_phrases(project: dict[str, Any] | None) -> list[str]:
+    phrases = _copy_directives(project).get("verbatim_caption_phrases")
     if not isinstance(phrases, list):
         return []
     return [str(phrase).strip() for phrase in phrases if str(phrase).strip()]
+
+
+def _requested_caption_position(project: dict[str, Any] | None) -> str | None:
+    value = _copy_directives(project).get("caption_position_request")
+    return value if value in {"TOP", "MIDDLE", "BOTTOM"} else None
+
+
+def _requested_min_caption_display_ms(project: dict[str, Any] | None) -> int | None:
+    value = _copy_directives(project).get("requested_min_caption_ms")
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return int(value)
 
 
 def _caption_contains_promotion_subject(caption: str, project: dict[str, Any] | None) -> bool:
