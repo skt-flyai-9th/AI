@@ -4,7 +4,7 @@ import json
 from typing import Any, Protocol, TypeVar
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.core.config import get_settings
 from app.ranker_core.gemini_json import call_gemini_structured, resolve_gemini_model
@@ -155,6 +155,9 @@ class OpenAITemplateCandidateGenerator:
                     "Set recommendation_metadata.format_type from trend_context: 밈, 챌린지, or 정보형.",
                     "For every format, keep the cut-based shooting guide and return one scene-linked task per capture interval.",
                     "Set recommendation_metadata.minimum_filming_time to the most conservative (longest) estimated_shooting_time_bucket across gemini_video_insights, and include that bucket plus every longer bucket in supported_filming_times. Do not independently re-estimate a shorter or longer classification than what Gemini observed.",
+                    "scene_description, task_title, and task instructions must never mention clothing, hairstyle, makeup, or physical appearance; describe camera framing, subject blocking, and composition instead.",
+                    "shot_type must state camera framing/angle/composition in natural Korean, grounded in the segment evidence — never a placeholder string.",
+                    "Generalize any specific food/drink/product observed in gemini_video_insights into a category term (매장 메뉴/음료/디저트/제품) in scene_description, task_title, and task instructions — never the specific dish name from the reference video, since the guide is reused across many different stores.",
                 ],
                 "renderer_contract": {
                     "source_type": "VIDEO_ONLY",
@@ -325,6 +328,12 @@ class GeminiYouTubeVideoAnalyzer:
                 f"into no more than {MAX_SHOOTING_GUIDE_CUTS} ordered edit cuts. "
                 "Return every cut in segments with explicit sequence, start_sec, end_sec, "
                 "scene_role, description, shot_type, transition_out and timestamped evidence. "
+                "segments[].description must describe composition, camera movement, subject "
+                "placement and action only: never record clothing, hairstyle, makeup or other "
+                "personal-appearance details even when observed (they may still inform cut-boundary "
+                "detection), and refer to any observed food, drink or product with a generic "
+                "category word (메뉴/음료/디저트/제품) instead of the specific dish name. "
+                "segments[].shot_type must state the camera framing and angle of the cut. "
                 "segments is the authoritative cut plan; shot_sequence must contain the same "
                 "number of items in the same order. Also classify estimated_shooting_time_bucket "
                 "using shooting_time_bucket_rules: this is the real-world time a small-business "
@@ -356,6 +365,8 @@ class GeminiYouTubeVideoAnalyzer:
                 "Use timestamps from the supplied video; do not invent evenly spaced cuts.",
                 "Do not overlap segments or reverse their order.",
                 "Record the visual observation that justifies every boundary in segments[].evidence.",
+                "Use appearance changes (clothing, pose, position) to detect boundaries, but keep the appearance details out of segments[].description and shot_type.",
+                "Name observed food/drink/products in output text only as generic categories (메뉴/음료/디저트/제품), never as a specific dish name.",
             ],
             "shooting_time_bucket_rules": [
                 "within_5m: at most 3 segments, one continuous setup, no prop or costume change, no retake likely.",
@@ -374,7 +385,13 @@ class GeminiYouTubeVideoAnalyzer:
                 "subtle discontinuities; do not create arbitrary evenly spaced cuts."
             )
         previous_insight: EditingVideoInsight | None = None
-        for attempt in range(3 if expected_cut_count is not None else 1):
+        # 스키마 필드 검증(외형 금지어, 한글 shot_type 등)에 걸린 응답은 60개 세그먼트
+        # 중 한 필드짜리 문제라 전체 분석을 버릴 이유가 없다 — 검증 오류를 그대로
+        # 돌려주고 한 번 고쳐 쓰게 한다. 컷 수 보정 루프와는 별도 예산이다.
+        validation_repair_budget = 1
+        attempt = 0
+        max_attempts = 3 if expected_cut_count is not None else 1
+        while attempt < max_attempts:
             if attempt:
                 assert previous_insight is not None
                 previous_count = len(previous_insight.segments)
@@ -407,14 +424,42 @@ class GeminiYouTubeVideoAnalyzer:
                 )
                 parsed["trend_id"] = trend_id
                 parsed["youtube_url"] = youtube_url
-                insight = EditingVideoInsight.model_validate(parsed)
-                if expected_cut_count is None or len(insight.segments) == expected_cut_count:
-                    return insight
-                previous_insight = insight
             except TemplateKnowledgeLLMError:
                 raise
             except Exception as exc:
                 raise TemplateKnowledgeLLMError("Gemini video analysis failed.") from exc
+            try:
+                insight = EditingVideoInsight.model_validate(parsed)
+            except ValidationError as exc:
+                if validation_repair_budget <= 0:
+                    raise TemplateKnowledgeLLMError(
+                        "Gemini video analysis failed schema validation after a repair attempt."
+                    ) from exc
+                validation_repair_budget -= 1
+                prompt_payload["previous_invalid_output"] = parsed
+                prompt_payload["field_validation_errors"] = [
+                    {
+                        "path": ".".join(str(part) for part in error["loc"]),
+                        "message": error["msg"],
+                    }
+                    for error in exc.errors()
+                ]
+                prompt_payload["field_correction"] = (
+                    "The previous output in previous_invalid_output failed the listed "
+                    "field_validation_errors. Rewrite only the offending fields to satisfy "
+                    "each constraint (keep every timestamp and boundary unchanged) and "
+                    "return the full corrected object."
+                )
+                continue
+            except Exception as exc:
+                raise TemplateKnowledgeLLMError("Gemini video analysis failed.") from exc
+            prompt_payload.pop("previous_invalid_output", None)
+            prompt_payload.pop("field_validation_errors", None)
+            prompt_payload.pop("field_correction", None)
+            if expected_cut_count is None or len(insight.segments) == expected_cut_count:
+                return insight
+            previous_insight = insight
+            attempt += 1
         raise TemplateKnowledgeLLMError(
             f"Gemini did not reproduce the human-reviewed {expected_cut_count}-cut boundary plan.",
             retryable=True,

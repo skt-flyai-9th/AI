@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from app.schemas.shortform import FilmingTime
 
@@ -14,6 +15,47 @@ from app.schemas.shortform import FilmingTime
 # same subject or action, so the schema must not force those cuts to merge.
 MAX_SHOOTING_GUIDE_CUTS = 60
 MAX_SHOOTING_GUIDE_TITLE_CHARS = 20
+_KOREAN_TEXT_PATTERN = r".*[가-힣].*"
+_SHOT_TYPE_PLACEHOLDERS = {"가이드 구간 재현"}
+# 이 검증은 Gemini/GPT 구조화 응답 파싱에 그대로 걸리므로, 오탐 한 번이 분석·생성
+# 전체를 실패시킨다. 재현율보다 정밀도가 우선이다 — 명백한 의류·외형 용법만 잡는다.
+# - 상의/하의: 앞이 한글이 아니고(어절 시작) 조사가 바로 붙는 의류 용법만 매칭.
+#   "이상의/이하의/책상의/일상의/지하의"처럼 명사+의 결합은 앞 글자가 한글이라
+#   제외되고, "화면 상의 자막"처럼 조사가 없는 경우도 제외된다.
+# - 옷(?=[을이]): "옷을 입고"는 잡고 "옷걸이"는 통과. 화장(?!실), 헤어\s*스타일도
+#   같은 원칙("화장실", "헤어지다" 오탐 방지).
+_FORBIDDEN_APPEARANCE_PATTERN = re.compile(
+    r"(?<![가-힣])상의(?=[를을이가는도로와과만])"
+    r"|(?<![가-힣])하의(?=[를을이가는도로와과만])"
+    r"|의상|복장|옷차림|(?<![가-힣])옷(?=[을이])"
+    r"|헤어\s*스타일|머리\s*색|머리\s*스타일|메이크업|화장(?!실)"
+    r"|남성|여성|남자|여자"
+)
+# 빵(?!집): "소보로빵"은 특정 메뉴라 잡고, 장소를 가리키는 "빵집"은 통과.
+_REFERENCE_SPECIFIC_PRODUCT_PATTERN = re.compile(
+    r"피자|케이크|빵(?!집)|페이스트리|말차|티라미수|아이스\s*커피|크레페"
+)
+
+
+def _validate_reusable_guide_text(value: str) -> str:
+    appearance = _FORBIDDEN_APPEARANCE_PATTERN.search(value)
+    if appearance is not None:
+        raise ValueError(
+            f"appearance detail '{appearance.group(0)}' is forbidden in reusable guide text"
+        )
+    product = _REFERENCE_SPECIFIC_PRODUCT_PATTERN.search(value)
+    if product is not None:
+        raise ValueError(
+            f"reference-specific product '{product.group(0)}' must use a generic category"
+        )
+    return value
+
+
+def _validate_shot_type(value: str) -> str:
+    _validate_reusable_guide_text(value)
+    if value.strip() in _SHOT_TYPE_PLACEHOLDERS:
+        raise ValueError("shot_type must describe a concrete camera framing or angle")
+    return value
 
 
 class TemplateType(StrEnum):
@@ -141,26 +183,76 @@ class ShootingGuideScene(BaseModel):
 
     scene_order: int = Field(ge=1)
     scene_role: str = Field(min_length=1, max_length=80)
-    scene_description: str = Field(min_length=1, max_length=500)
+    scene_description: str = Field(
+        min_length=1,
+        max_length=500,
+        description=(
+            "촬영 구도·카메라 움직임·피사체 배치·액션을 서술한다. 인물의 의상·헤어·메이크업 등 "
+            "외형은 절대 언급하지 않는다. 음식/음료/제품은 레퍼런스 영상의 특정 메뉴명 대신 "
+            "'메뉴/음료/디저트/제품' 같은 일반 카테고리로만 지칭한다."
+        ),
+    )
     scene_dialogue: str | None = Field(default=None, max_length=9)
     scene_subtitle: str | None = Field(default=None, max_length=200)
-    shot_type: str = Field(min_length=1, max_length=80)
+    shot_type: str = Field(
+        min_length=1,
+        max_length=80,
+        pattern=_KOREAN_TEXT_PATTERN,
+        description=(
+            "카메라 앵글과 프레이밍을 자연스러운 한글로 서술하는 구도 필드 "
+            "(예: 정면 미디엄샷, 손 클로즈업, 테이블 위 오버헤드)."
+        ),
+    )
     target_duration_sec: float = Field(gt=0, le=30)
+
+    @field_validator("scene_description")
+    @classmethod
+    def validate_scene_description(cls, value: str) -> str:
+        return _validate_reusable_guide_text(value)
+
+    @field_validator("shot_type")
+    @classmethod
+    def validate_shot_type(cls, value: str) -> str:
+        return _validate_shot_type(value)
 
 
 class ShootingGuideTaskGuide(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    instructions: list[str] = Field(default_factory=list, max_length=20)
+    instructions: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description=(
+            "사용자가 실제 촬영할 행동과 구도를 안내한다. 의상·외형은 언급하지 않고, "
+            "레퍼런스의 특정 메뉴명 대신 일반 카테고리만 사용한다."
+        ),
+    )
+
+    @field_validator("instructions")
+    @classmethod
+    def validate_instructions(cls, values: list[str]) -> list[str]:
+        return [_validate_reusable_guide_text(value) for value in values]
 
 
 class ShootingGuideTask(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     display_order: int = Field(ge=1)
-    task_title: str = Field(min_length=1, max_length=MAX_SHOOTING_GUIDE_TITLE_CHARS)
+    task_title: str = Field(
+        min_length=1,
+        max_length=MAX_SHOOTING_GUIDE_TITLE_CHARS,
+        description=(
+            "촬영 과업을 일반화한 한글 제목. 의상·외형이나 레퍼런스의 특정 메뉴명을 "
+            "포함하지 않는다."
+        ),
+    )
     scene_index: int = Field(ge=0)
     guide: ShootingGuideTaskGuide
+
+    @field_validator("task_title")
+    @classmethod
+    def validate_task_title(cls, value: str) -> str:
+        return _validate_reusable_guide_text(value)
 
 
 class EditingRecommendationMetadata(BaseModel):
@@ -226,10 +318,36 @@ class ReferenceVideoSegment(BaseModel):
     start_sec: float = Field(ge=0, le=120)
     end_sec: float = Field(gt=0, le=120)
     scene_role: str = Field(min_length=1, max_length=80)
-    description: str = Field(min_length=1, max_length=500)
-    shot_type: str = Field(min_length=1, max_length=80)
+    description: str = Field(
+        min_length=1,
+        max_length=500,
+        description=(
+            "컷의 구도·카메라 움직임·피사체 배치·액션을 서술한다. 인물의 의상·헤어·메이크업 등 "
+            "외형은 관찰했더라도 기록하지 않는다. 관찰된 음식/음료/제품은 특정 메뉴명 대신 "
+            "'메뉴/음료/디저트/제품' 같은 일반 카테고리로만 서술한다."
+        ),
+    )
+    shot_type: str = Field(
+        min_length=1,
+        max_length=80,
+        pattern=_KOREAN_TEXT_PATTERN,
+        description=(
+            "카메라 앵글과 프레이밍을 자연스러운 한글로 서술하는 구도 필드 "
+            "(예: 정면 미디엄샷, 손 클로즈업, 테이블 위 오버헤드)."
+        ),
+    )
     transition_out: str | None = Field(default=None, max_length=120)
     evidence: str = Field(min_length=1, max_length=500)
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, value: str) -> str:
+        return _validate_reusable_guide_text(value)
+
+    @field_validator("shot_type")
+    @classmethod
+    def validate_shot_type(cls, value: str) -> str:
+        return _validate_shot_type(value)
 
     @model_validator(mode="after")
     def validate_time_range(self) -> ReferenceVideoSegment:

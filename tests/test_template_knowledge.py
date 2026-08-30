@@ -19,9 +19,12 @@ from app.models.trade_area_db_record import TradeAreaDBRecord
 from app.schemas.template_knowledge import (
     CandidateDecision,
     EditingCandidateCreate,
-    VideoEditingDBContent,
     EditingVideoInsight,
     MAX_SHOOTING_GUIDE_CUTS,
+    ReferenceVideoSegment,
+    ShootingGuideScene,
+    ShootingGuideTask,
+    ShootingGuideTaskGuide,
     TemplateCandidateStatus,
     TemplateType,
     TradeAreaAnalysisResult,
@@ -29,6 +32,7 @@ from app.schemas.template_knowledge import (
     TradeAreaCandidateCreate,
     TradeAreaEvidence,
     TradeAreaDBContent,
+    VideoEditingDBContent,
 )
 from app.template_knowledge.seeds import seed_template_library
 from app.template_knowledge.service import (
@@ -114,7 +118,7 @@ class FakeVideoAnalyzer:
                     "end_sec": float(index),
                     "scene_role": role,
                     "description": f"{role} 장면",
-                    "shot_type": "CLOSE_UP",
+                    "shot_type": "클로즈업",
                     "transition_out": "HARD_CUT" if index < 4 else None,
                     "evidence": f"{index - 1}.0-{index}.0초 {role}",
                 }
@@ -433,7 +437,7 @@ def test_trend_video_analysis_generates_editing_candidate_and_uses_cache():
         assert video.calls == 1
 
 
-def test_video_analysis_schema_version_invalidates_legacy_cached_insight():
+def test_video_analysis_schema_version_invalidates_previous_cached_insight():
     service, video = _service()
     trend_id = "trend_legacy_cache"
     youtube_url = "https://www.youtube.com/watch?v=legacy-cache"
@@ -442,10 +446,9 @@ def test_video_analysis_schema_version_invalidates_legacy_cached_insight():
         youtube_url=youtube_url,
         trend_context={"trend_id": trend_id},
     ).model_dump(mode="json")
-    legacy_payload.pop("estimated_shooting_time_bucket")
     video.calls = 0
-    legacy_fingerprint = hashlib.sha256(
-        f"{trend_id}\n{youtube_url}\n{video.model_name}".encode()
+    previous_fingerprint = hashlib.sha256(
+        f"{trend_id}\n{youtube_url}\n{video.model_name}\nschema=2".encode()
     ).hexdigest()
 
     with SessionLocal() as db:
@@ -454,7 +457,7 @@ def test_video_analysis_schema_version_invalidates_legacy_cached_insight():
                 id="tva_legacy_cache",
                 trend_id=trend_id,
                 youtube_url=youtube_url,
-                source_fingerprint=legacy_fingerprint,
+                source_fingerprint=previous_fingerprint,
                 model=video.model_name,
                 status="COMPLETED",
                 insights=legacy_payload,
@@ -472,6 +475,102 @@ def test_video_analysis_schema_version_invalidates_legacy_cached_insight():
     assert video.calls == 1
     assert refreshed.id != "tva_legacy_cache"
     assert refreshed.insights["estimated_shooting_time_bucket"] == "within_10m"
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "초록색 상의를 입고 손을 펼칩니다.",
+        "흰색 상의로 바꾸고 같은 자리에 섭니다.",
+        "옷을 갈아입은 뒤 정면을 바라봅니다.",
+        "여성이 손바닥을 펼쳐 보입니다.",
+        "피자가 나타나도록 같은 구도에서 촬영합니다.",
+        "소보로빵을 전경에 배치합니다.",
+    ],
+)
+def test_shooting_guide_scene_rejects_non_reusable_description(description):
+    with pytest.raises(ValueError):
+        ShootingGuideScene(
+            scene_order=1,
+            scene_role="HOOK",
+            scene_description=description,
+            shot_type="정면 미디엄샷",
+            target_duration_sec=1,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("task_title", "피자 소환 컷 촬영"),
+        ("instruction", "초록색 상의를 입고 같은 구도에서 촬영하세요."),
+    ],
+)
+def test_shooting_guide_task_rejects_non_reusable_user_facing_text(field, value):
+    if field == "task_title":
+        with pytest.raises(ValueError):
+            ShootingGuideTask(
+                display_order=1,
+                task_title=value,
+                scene_index=0,
+                guide=ShootingGuideTaskGuide(instructions=["정면에서 손을 펼칩니다."]),
+            )
+        return
+
+    with pytest.raises(ValueError):
+        ShootingGuideTaskGuide(instructions=[value])
+
+
+# 이 검증은 LLM 구조화 응답 파싱에 걸리므로, 일상 표현 오탐 하나가 분석 전체를
+# 실패시킨다. 명사+의 결합(이상의/책상의)과 금지어를 부분문자열로 포함하는 단어
+# (옷걸이/빵집/화장실)는 반드시 통과해야 한다.
+@pytest.mark.parametrize(
+    "description",
+    [
+        "참고 영상의 마지막 장면은 반복하지 않습니다.",
+        "2명 이상의 인물이 나란히 서서 손을 흔듭니다.",
+        "화면 상의 자막 위치를 확인하며 촬영합니다.",
+        "책상의 소품을 정면에 배치합니다.",
+        "일상의 한 장면처럼 자연스럽게 이동합니다.",
+        "지하의 매장 입구에서 시작합니다.",
+        "10초 이하의 짧은 컷으로 마무리합니다.",
+        "옷걸이 앞에서 포즈를 취합니다.",
+        "빵집 간판이 보이는 입구에서 촬영합니다.",
+        "화장실 표지판 옆 통로를 지나갑니다.",
+    ],
+)
+def test_shooting_guide_scene_allows_common_korean_phrases(description):
+    scene = ShootingGuideScene(
+        scene_order=1,
+        scene_role="OUTRO",
+        scene_description=description,
+        shot_type="여백 있는 공간 와이드샷",
+        target_duration_sec=1,
+    )
+
+    assert scene.scene_role == "OUTRO"
+
+
+@pytest.mark.parametrize("shot_type", ["가이드 구간 재현", "CLOSE_UP"])
+def test_guide_models_reject_placeholder_or_non_korean_shot_type(shot_type):
+    with pytest.raises(ValueError):
+        ShootingGuideScene(
+            scene_order=1,
+            scene_role="HOOK",
+            scene_description="인물이 손을 펼치는 장면입니다.",
+            shot_type=shot_type,
+            target_duration_sec=1,
+        )
+    with pytest.raises(ValueError):
+        ReferenceVideoSegment(
+            sequence=1,
+            start_sec=0,
+            end_sec=1,
+            scene_role="HOOK",
+            description="인물이 손을 펼치는 장면입니다.",
+            shot_type=shot_type,
+            evidence="0초부터 1초까지 손동작이 관찰됩니다.",
+        )
 
 
 def test_generated_editing_tasks_are_normalized_to_zero_based_scene_indexes():
@@ -842,6 +941,46 @@ def test_rebuild_with_reduced_structure_is_rejected_too():
             requires_human_approval=True,
         )
         assert ok_candidate.status == "VALIDATED"
+
+
+def test_approve_revalidates_candidate_against_current_rules():
+    service, _ = _service()
+    with SessionLocal() as db:
+        candidate = service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="legacy_rules_guard",
+            payload=_multi_scene_editing_payload(3),
+            source_evidence={"bootstrap": True},
+            generation_model="seed",
+            requires_human_approval=True,
+        )
+        assert candidate.status == "VALIDATED"
+
+        # 검증 규칙이 강화되기 전에 VALIDATED로 저장된 후보를 흉내낸다: 지금
+        # 규칙이 금지하는 문구가 페이로드에 남아 있다. 승인은 500이 아니라
+        # INVALID 전환 + 도메인 에러로 답해야 한다.
+        stale_payload = dict(candidate.proposed_payload)
+        guide = dict(stale_payload["shooting_guide"])
+        scenes = [dict(scene) for scene in guide["scenes"]]
+        scenes[0]["scene_description"] = "초록색 상의를 입고 손을 펼칩니다."
+        guide["scenes"] = scenes
+        stale_payload["shooting_guide"] = guide
+        candidate.proposed_payload = stale_payload
+        db.commit()
+
+        with pytest.raises(TemplateKnowledgeDomainError) as exc_info:
+            service.approve_candidate(
+                db,
+                candidate.id,
+                CandidateDecision(actor="admin", note="approve legacy candidate"),
+            )
+        assert exc_info.value.code == "CANDIDATE_INVALID"
+        assert exc_info.value.status_code == 409
+
+        refreshed = service.get_candidate(db, candidate.id)
+        assert refreshed.status == "INVALID"
+        assert refreshed.validation_errors
 
 
 def test_concurrent_approval_conflict_maps_to_candidate_stale(monkeypatch):
