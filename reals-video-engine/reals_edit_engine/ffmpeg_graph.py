@@ -437,6 +437,7 @@ def build_concat_plan(
             f"format={rp['pix_fmt']},setsar=1"
         ),
         *video_encode_args(rp),
+        "-r", str(rp["fps"]),
         "-fps_mode", "cfr",
         "-c:a", rp["audio_codec"], "-b:a", rp["audio_bitrate"],
         "-ar", str(rp["audio_sample_rate"]), "-ac", "2",

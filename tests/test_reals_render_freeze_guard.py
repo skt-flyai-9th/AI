@@ -150,7 +150,7 @@ def test_multicut_concat_preserves_cfr_for_project_302_boundaries(tmp_path):
             "-f",
             "lavfi",
             "-i",
-            "testsrc2=size=180x320:rate=30:duration=2",
+            "testsrc2=size=180x320:rate=25:duration=2",
             "-f",
             "lavfi",
             "-i",
@@ -228,6 +228,7 @@ def test_multicut_concat_normalizes_segment_and_final_timebases(tmp_path):
     final_filter = commands[-1][commands[-1].index("-vf") + 1]
     assert "fps=30,settb=expr=1/30,setpts=N" in segment_filter
     assert final_filter == "fps=30,settb=expr=1/30,setpts=N,format=yuv420p,setsar=1"
+    assert commands[-1][commands[-1].index("-r") + 1] == "30"
     assert commands[-1][commands[-1].index("-fps_mode") + 1] == "cfr"
 
 
