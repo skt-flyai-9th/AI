@@ -414,7 +414,7 @@ def test_legacy_recipe_result_does_not_raise_for_operational_cta():
     assert result.recipe.cta.text == "영상의 포인트를 지금 확인해보세요"
 
 
-def test_editing_run_rejects_more_videos_than_free_tier_limit():
+def test_editing_run_accepts_ten_videos_and_rejects_more_than_runtime_limit():
     request_payload = _request().model_dump(mode="json")
     request_payload["videos"] = [
         {
@@ -422,7 +422,7 @@ def test_editing_run_rejects_more_videos_than_free_tier_limit():
             "footage_url": f"https://cdn.example/take-{index}.mp4",
             "shooting_scene_order": index,
         }
-        for index in range(1, 8)
+        for index in range(1, 12)
     ]
     request = EditingRunCreateRequest.model_validate(request_payload)
     service = EditingAgentService(
@@ -430,10 +430,12 @@ def test_editing_run_rejects_more_videos_than_free_tier_limit():
         video_context_builder=FakeVideoContextBuilder(),
         renderer=FakeRenderer(),
     )
-    service.settings = Settings(editing_max_videos_per_run=6)
+    service.settings = Settings(editing_max_videos_per_run=10)
 
-    with SessionLocal() as db, pytest.raises(EditingDomainError) as error:
-        service.create_run(db, request)
+    service._validate_video_limit(request.videos[:10])
+
+    with pytest.raises(EditingDomainError) as error:
+        service._validate_video_limit(request.videos)
 
     assert error.value.code == "EDITING_VIDEO_LIMIT_EXCEEDED"
     assert error.value.status_code == 422
