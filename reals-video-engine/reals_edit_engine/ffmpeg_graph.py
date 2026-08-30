@@ -406,7 +406,8 @@ def build_concat_plan(
             f"scale={rp['width']}:{rp['height']}:"
             f"force_original_aspect_ratio=increase:flags=lanczos,"
             f"{_subject_center_crop_filter(rp['width'], rp['height'], center_x, center_y)},"
-            f"fps={rp['fps']},format={rp['pix_fmt']},setsar=1"
+            f"fps={rp['fps']},settb=expr=1/{rp['fps']},setpts=N,"
+            f"format={rp['pix_fmt']},setsar=1"
         )
         seg_out = wd / f"_cut_{key}_{i}.mp4"
         seg_files.append(seg_out)
@@ -431,7 +432,12 @@ def build_concat_plan(
     cmds.append([
         FFMPEG, "-hide_banner", "-y", "-f", "concat", "-safe", "0",
         "-i", str(list_path),
+        "-vf", (
+            f"fps={rp['fps']},settb=expr=1/{rp['fps']},setpts=N,"
+            f"format={rp['pix_fmt']},setsar=1"
+        ),
         *video_encode_args(rp),
+        "-fps_mode", "cfr",
         "-c:a", rp["audio_codec"], "-b:a", rp["audio_bitrate"],
         "-ar", str(rp["audio_sample_rate"]), "-ac", "2",
         "-max_muxing_queue_size", "1024",

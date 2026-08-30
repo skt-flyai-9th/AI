@@ -21,12 +21,16 @@ from reals_edit_engine.contracts import (  # noqa: E402
     QcStatus,
     RecipeSegment,
 )
-from reals_edit_engine.ffmpeg_graph import _segment_filters, build_render_plan  # noqa: E402
+from reals_edit_engine.ffmpeg_graph import (  # noqa: E402
+    _segment_filters,
+    build_concat_plan,
+    build_render_plan,
+)
 from reals_edit_engine.engine import (  # noqa: E402
     _validate_segment_duration,
     _validate_segment_motion,
 )
-from reals_edit_engine.media import MediaError  # noqa: E402
+from reals_edit_engine.media import MediaError, probe as probe_media  # noqa: E402
 from reals_edit_engine.qc import _freeze_windows, post_render_qc  # noqa: E402
 
 
@@ -127,6 +131,104 @@ def test_zoom_normalizes_mp4_timebase_before_zoompan(tmp_path):
     info = json.loads(probe.stdout)
     assert info["streams"][0]["nb_frames"] == "12"
     assert float(info["format"]["duration"]) == pytest.approx(0.4, abs=0.04)
+
+
+def test_multicut_concat_preserves_cfr_for_project_302_boundaries(tmp_path):
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    if ffmpeg is None or ffprobe is None:
+        pytest.skip("ffmpeg and ffprobe are required")
+
+    source = tmp_path / "source.mp4"
+    output = tmp_path / "assembled.mp4"
+    subprocess.run(
+        [
+            ffmpeg,
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=180x320:rate=30:duration=2",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=1000:sample_rate=48000:duration=2",
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            str(source),
+        ],
+        check=True,
+        timeout=30,
+    )
+    durations_ms = [1467, 1900, 1500, 1900, 1466, 1900, 1433, 1866]
+    profile = {
+        "width": 180,
+        "height": 320,
+        "fps": 30,
+        "pix_fmt": "yuv420p",
+        "video_codec": "libx264",
+        "crf": 20,
+        "preset": "veryfast",
+        "x264_profile": "high",
+        "level": "4.0",
+        "gop": 60,
+        "audio_codec": "aac",
+        "audio_bitrate": "128k",
+        "audio_sample_rate": 48000,
+        "movflags": "+faststart",
+    }
+    commands, _ = build_concat_plan(
+        [(str(source), 0.0, duration / 1000) for duration in durations_ms],
+        str(output),
+        profile,
+        str(tmp_path),
+        key="project-302",
+    )
+    for command in commands:
+        subprocess.run(command, check=True, timeout=60)
+
+    metadata = probe_media(output)
+    assert metadata["duration_ms"] == pytest.approx(sum(durations_ms), abs=100)
+    assert metadata["fps"] == pytest.approx(30, abs=0.1)
+
+
+def test_multicut_concat_normalizes_segment_and_final_timebases(tmp_path):
+    profile = {
+        "width": 180,
+        "height": 320,
+        "fps": 30,
+        "pix_fmt": "yuv420p",
+        "video_codec": "libx264",
+        "crf": 20,
+        "preset": "veryfast",
+        "x264_profile": "high",
+        "level": "4.0",
+        "gop": 60,
+        "audio_codec": "aac",
+        "audio_bitrate": "128k",
+        "audio_sample_rate": 48000,
+        "movflags": "+faststart",
+    }
+    commands, _ = build_concat_plan(
+        [("source.mp4", 0.0, 1.467), ("source.mp4", 0.0, 1.9)],
+        str(tmp_path / "assembled.mp4"),
+        profile,
+        str(tmp_path),
+        key="cfr-contract",
+    )
+
+    segment_filter = commands[0][commands[0].index("-vf") + 1]
+    final_filter = commands[-1][commands[-1].index("-vf") + 1]
+    assert "fps=30,settb=expr=1/30,setpts=N" in segment_filter
+    assert final_filter == "fps=30,settb=expr=1/30,setpts=N,format=yuv420p,setsar=1"
+    assert commands[-1][commands[-1].index("-fps_mode") + 1] == "cfr"
 
 
 def test_freeze_parser_closes_a_trailing_freeze_at_eof():
