@@ -3,6 +3,7 @@ from __future__ import annotations
 import unicodedata
 from typing import Any
 
+from app.agents.editing.duration_contract import template_slot_durations_ms
 from app.agents.editing.reals import RealsRegistry, get_reals_registry
 from app.agents.editing.types import ValidationIssue, VideoContext
 from app.core.config import Settings, get_settings
@@ -143,6 +144,7 @@ class EditRecipeValidator:
         order_by_video = {
             context.video_id: context.shooting_scene_order for context in video_contexts
         }
+        slot_durations = template_slot_durations_ms(video_editing_db)
         clip_orders = [clip.clip_order for clip in recipe.timeline]
         expected_orders = list(range(1, len(recipe.timeline) + 1))
         if clip_orders != expected_orders:
@@ -182,6 +184,15 @@ class EditRecipeValidator:
                 )
             source_duration = clip.source_end_ms - clip.source_start_ms
             output_duration = source_duration / clip.speed
+            slot_duration_ms = slot_durations.get(order_by_video[clip.video_id])
+            if slot_duration_ms is not None and output_duration > slot_duration_ms + 1:
+                add(
+                    "CUT_DURATION_EXCEEDS_SLOT",
+                    path,
+                    "Produced cut duration exceeds template scene "
+                    f"{order_by_video[clip.video_id]} limit of {slot_duration_ms}ms.",
+                    source="DOMAIN",
+                )
             if output_duration < min_cut_ms:
                 add(
                     "CUT_TOO_SHORT",
