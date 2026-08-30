@@ -212,7 +212,16 @@ def _transform_motion_filters(effect_id: str, params: dict, rp: dict, duration_s
 def _segment_filters(s, rp) -> list[str]:
     """Filters for one segment; subtitles/final finishing are applied later."""
     fps = rp["fps"]
-    chain = ["setpts=PTS-STARTPTS", _normalize_filter(s, rp)]
+    # MP4 commonly uses a 1/15360 video time base (512 ticks per frame at
+    # 30fps).  zoompan can interpret those PTS gaps as missing output frames
+    # and duplicate each input frame hundreds of times.  Normalize to one PTS
+    # tick per CFR frame before any temporal transform.
+    chain = [
+        f"fps={fps}",
+        f"settb=expr=1/{fps}",
+        "setpts=N",
+        _normalize_filter(s, rp),
+    ]
     if s.transition_id.value == "FLASH_WHITE":
         chain.append("fade=t=in:st=0:d=0.10:color=white")
     if s.speed_multiplier != 1.0:
@@ -331,6 +340,7 @@ def build_render_plan(recipe: EditRecipe, input_path: str, ass_path: str | None,
         s0 = recipe.segments[0]
         t0 = s0.trim_in_ms / 1000.0
         d0 = (s0.trim_out_ms - s0.trim_in_ms) / 1000.0
+        output_d0 = d0 / s0.speed_multiplier
         vf = ",".join(_segment_filters(s0, rp))
         seg_out = wd / f"_seg_{key}_0.mp4"
         temps.append(str(seg_out))
@@ -339,6 +349,7 @@ def build_render_plan(recipe: EditRecipe, input_path: str, ass_path: str | None,
             FFMPEG, "-hide_banner", "-y",
             "-ss", f"{t0:.6f}", "-t", f"{d0:.6f}", "-i", str(input_path),
             "-vf", vf, "-an", *video_encode_args(inter),
+            "-t", f"{output_d0:.6f}",
             "-movflags", "+faststart", "-map_metadata", "-1", str(seg_out),
         ])
         cmds.append(finish_cmd(["-i", str(seg_out)]))
@@ -349,6 +360,7 @@ def build_render_plan(recipe: EditRecipe, input_path: str, ass_path: str | None,
     for i, seg in enumerate(recipe.segments):
         t0 = seg.trim_in_ms / 1000.0
         d0 = (seg.trim_out_ms - seg.trim_in_ms) / 1000.0
+        output_d0 = d0 / seg.speed_multiplier
         vf = ",".join(_segment_filters(seg, rp))
         seg_out = wd / f"_seg_{key}_{i}.mp4"
         seg_files.append(seg_out)
@@ -357,6 +369,7 @@ def build_render_plan(recipe: EditRecipe, input_path: str, ass_path: str | None,
             FFMPEG, "-hide_banner", "-y",
             "-ss", f"{t0:.6f}", "-t", f"{d0:.6f}", "-i", str(input_path),
             "-vf", vf, "-an", *video_encode_args(inter),
+            "-t", f"{output_d0:.6f}",
             "-movflags", "+faststart", "-map_metadata", "-1", str(seg_out),
         ])
 

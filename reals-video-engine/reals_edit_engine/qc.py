@@ -7,6 +7,9 @@ from .media import FFMPEG, probe
 
 DUR_TOL_MS = 150          # 프레임 허용 오차
 BLACK_MIN_S = 0.35
+FREEZE_DETECT_MIN_S = 1.0
+FREEZE_MAX_RATIO = 0.25
+FREEZE_MIN_LIMIT_S = 2.0
 SILENCE_DB = -55.0
 SFX_WINDOW_PAD_MS = 300
 
@@ -14,6 +17,17 @@ SFX_WINDOW_PAD_MS = 300
 def _ffmpeg_stderr(args: list[str]) -> str:
     proc = subprocess.run([FFMPEG, "-hide_banner", *args], capture_output=True, text=True)
     return proc.stderr
+
+
+def _freeze_windows(stderr: str, duration_s: float) -> list[tuple[float, float]]:
+    """Parse freezedetect output, including a freeze that continues to EOF."""
+    starts = [float(value) for value in re.findall(r"freeze_start:\s*([\d.]+)", stderr)]
+    ends = [float(value) for value in re.findall(r"freeze_end:\s*([\d.]+)", stderr)]
+    windows = []
+    for index, start in enumerate(starts):
+        end = ends[index] if index < len(ends) and ends[index] >= start else duration_s
+        windows.append((start, min(end, duration_s)))
+    return windows
 
 
 def post_render_qc(out_path: str, expected_ms: int, rp: dict,
@@ -50,6 +64,29 @@ def post_render_qc(out_path: str, expected_ms: int, rp: dict,
                           f"blackdetect=d={BLACK_MIN_S}:pix_th=0.10", "-an", "-f", "null", "-"])
     blacks = re.findall(r"black_start:([\d.]+)", err)
     add("black_frames", not blacks, f"검은 구간 {len(blacks)}개: {blacks[:3]}")
+
+    # A valid container can still contain one duplicated frame for most of the
+    # timeline.  Treat a long freeze as render corruption, including a freeze
+    # that begins mid-video and continues through EOF.
+    duration_s = info["duration_ms"] / 1000
+    err = _ffmpeg_stderr([
+        "-i", out_path, "-vf",
+        f"freezedetect=n=-50dB:d={FREEZE_DETECT_MIN_S}",
+        "-an", "-f", "null", "-",
+    ])
+    freeze_limit_s = max(FREEZE_MIN_LIMIT_S, duration_s * FREEZE_MAX_RATIO)
+    freezes = _freeze_windows(err, duration_s)
+    long_freezes = [
+        (round(start, 3), round(end, 3))
+        for start, end in freezes
+        if end - start >= freeze_limit_s
+    ]
+    add(
+        "frozen_video",
+        not long_freezes,
+        f"장시간 정지 구간: {long_freezes[:3]} (limit={freeze_limit_s:.2f}s)"
+        if long_freezes else f"장시간 정지 없음 (limit={freeze_limit_s:.2f}s)",
+    )
 
     # 22.4 오디오
     add("audio_stream", info["has_audio"] and info["audio_sample_rate"] == rp["audio_sample_rate"],
