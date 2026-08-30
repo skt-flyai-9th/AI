@@ -66,15 +66,25 @@ def map_produced_to_output_ms(recipe: EditRecipe, produced_segment_id: str, t_ms
     raise KeyError(produced_segment_id)
 
 
+def _subject_center_crop_filter(
+    width: int,
+    height: int,
+    center_x: float,
+    center_y: float,
+) -> str:
+    """Center the crop window on a normalized source-frame point, clamped to its edges."""
+    x = f"min(max(in_w*{center_x:.6f}-{width}/2,0),in_w-{width})"
+    y = f"min(max(in_h*{center_y:.6f}-{height}/2,0),in_h-{height})"
+    return f"crop={width}:{height}:x='{x}':y='{y}'"
+
+
 def _normalize_filter(s, rp: dict) -> str:
     """Normalize every path, including ONE_TAKE, to the render profile."""
     width, height = int(rp["width"]), int(rp["height"])
     if s.crop_mode.value == "CENTER_9_16":
         return (
             f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
-            f"crop={width}:{height}:"
-            f"x='(in_w-{width})*{s.crop_center_x:.6f}':"
-            f"y='(in_h-{height})*{s.crop_center_y:.6f}'"
+            f"{_subject_center_crop_filter(width, height, s.crop_center_x, s.crop_center_y)}"
         )
     return (
         f"scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,"
@@ -359,9 +369,16 @@ def build_render_plan(recipe: EditRecipe, input_path: str, ass_path: str | None,
     return cmds, temps
 
 
-def build_concat_plan(cut_files: list[tuple[str, float, float]], out_path: str,
-                      rp: dict, workdir: str,
-                      key: str = "asm") -> tuple[list[list[str]], list[str]]:
+def build_concat_plan(
+    cut_files: list[
+        tuple[str, float, float]
+        | tuple[str, float, float, float, float]
+    ],
+    out_path: str,
+    rp: dict,
+    workdir: str,
+    key: str = "asm",
+) -> tuple[list[list[str]], list[str]]:
     """Normalize raw cuts independently, then concatenate with the demuxer."""
     wd = pathlib.Path(workdir)
     cmds: list[list[str]] = []
@@ -369,14 +386,15 @@ def build_concat_plan(cut_files: list[tuple[str, float, float]], out_path: str,
     seg_files: list[pathlib.Path] = []
 
     inter = _intermediate_profile(rp)
-    vf = (
-        f"scale={rp['width']}:{rp['height']}:"
-        f"force_original_aspect_ratio=increase:flags=lanczos,"
-        f"crop={rp['width']}:{rp['height']},"
-        f"fps={rp['fps']},format={rp['pix_fmt']},setsar=1"
-    )
-
-    for i, (path, t0, t1) in enumerate(cut_files):
+    for i, cut in enumerate(cut_files):
+        path, t0, t1 = cut[:3]
+        center_x, center_y = cut[3:] if len(cut) == 5 else (0.5, 0.5)
+        vf = (
+            f"scale={rp['width']}:{rp['height']}:"
+            f"force_original_aspect_ratio=increase:flags=lanczos,"
+            f"{_subject_center_crop_filter(rp['width'], rp['height'], center_x, center_y)},"
+            f"fps={rp['fps']},format={rp['pix_fmt']},setsar=1"
+        )
         seg_out = wd / f"_cut_{key}_{i}.mp4"
         seg_files.append(seg_out)
         temps.append(str(seg_out))

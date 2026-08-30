@@ -182,6 +182,8 @@ class RealsAssemblySegment(BaseModel):
     sequence_index: int = Field(ge=1)
     trim_in_ms: int = Field(ge=0)
     trim_out_ms: int = Field(gt=0)
+    crop_center_x: float = Field(default=0.5, ge=0.0, le=1.0)
+    crop_center_y: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
 class RealsSourceAssemblyPlan(BaseModel):
@@ -363,6 +365,18 @@ class RealsRecipeAdapter:
                         sequence_index=clip.clip_order,
                         trim_in_ms=clip.source_start_ms,
                         trim_out_ms=clip.source_end_ms,
+                        crop_center_x=(
+                            clip.crop_center_x
+                            if clip.crop_mode == "SUBJECT_CENTER"
+                            and clip.crop_center_x is not None
+                            else 0.5
+                        ),
+                        crop_center_y=(
+                            clip.crop_center_y
+                            if clip.crop_mode == "SUBJECT_CENTER"
+                            and clip.crop_center_y is not None
+                            else 0.5
+                        ),
                     )
                 )
                 produced_cursor += source_duration

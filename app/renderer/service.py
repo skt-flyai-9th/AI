@@ -257,7 +257,7 @@ class RealsRendererService:
                 status_code=422,
             )
 
-        inputs: list[tuple[str, float, float]] = []
+        inputs: list[tuple[str, float, float, float, float]] = []
         for segment in ordered:
             try:
                 source = sources[segment.source_file_id]
@@ -278,6 +278,8 @@ class RealsRendererService:
                     source.path,
                     segment.trim_in_ms / 1000,
                     segment.trim_out_ms / 1000,
+                    segment.crop_center_x,
+                    segment.crop_center_y,
                 )
             )
 

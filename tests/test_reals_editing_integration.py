@@ -121,6 +121,13 @@ def test_reals_adapter_passes_crop_center_through_and_defaults_to_center():
     segments = request.final_render.edit_recipe.segments
     assert (segments[0].crop_center_x, segments[0].crop_center_y) == (0.25, 0.75)
     assert (segments[1].crop_center_x, segments[1].crop_center_y) == (0.5, 0.5)
+    assert request.source_assembly is not None
+    assembly_segments = request.source_assembly.segments
+    assert (assembly_segments[0].crop_center_x, assembly_segments[0].crop_center_y) == (
+        0.25,
+        0.75,
+    )
+    assert (assembly_segments[1].crop_center_x, assembly_segments[1].crop_center_y) == (0.5, 0.5)
 
 
 def test_reals_adapter_adds_cta_only_when_last_clip_has_no_overlapping_caption():
