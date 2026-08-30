@@ -261,6 +261,64 @@ def test_validator_allows_single_clip_promotional_recipe_without_reveal_caption(
     assert "PROMOTIONAL_HOOK_MISSING" not in codes
 
 
+def _project_with_copy_directives(**directives) -> dict:
+    return {"shortform_context": {"copy_directives": directives}}
+
+
+def test_validator_flags_caption_too_short_to_read():
+    recipe = _recipe().model_copy(deep=True)
+    recipe.timeline[1].caption.end_ms = recipe.timeline[1].caption.start_ms + 100
+
+    issues = EditRecipeValidator().validate(
+        recipe,
+        selected_shortform=SelectedShortform.model_validate(
+            _request().selected_shortform.model_dump(mode="json")
+        ),
+        video_editing_db=_video_editing_db(),
+        video_contexts=_contexts(),
+    )
+
+    assert any(issue.code == "CAPTION_DURATION_TOO_SHORT" for issue in issues)
+
+
+def test_validator_enforces_requested_caption_position():
+    recipe = _recipe().model_copy(deep=True)
+    project = _project_with_copy_directives(caption_position_request="TOP")
+
+    issues = EditRecipeValidator().validate(
+        recipe,
+        selected_shortform=SelectedShortform.model_validate(
+            _request().selected_shortform.model_dump(mode="json")
+        ),
+        video_editing_db=_video_editing_db(),
+        video_contexts=_contexts(),
+        project=project,
+    )
+
+    mismatches = [issue for issue in issues if issue.code == "PROJECT_CAPTION_POSITION_MISMATCH"]
+    assert len(mismatches) == 2
+
+
+def test_validator_enforces_requested_min_caption_duration():
+    recipe = _recipe().model_copy(deep=True)
+    project = _project_with_copy_directives(requested_min_caption_ms=5000)
+
+    issues = EditRecipeValidator().validate(
+        recipe,
+        selected_shortform=SelectedShortform.model_validate(
+            _request().selected_shortform.model_dump(mode="json")
+        ),
+        video_editing_db=_video_editing_db(),
+        video_contexts=_contexts(),
+        project=project,
+    )
+
+    shortfalls = [
+        issue for issue in issues if issue.code == "PROJECT_CAPTION_DURATION_TOO_SHORT"
+    ]
+    assert len(shortfalls) == 2
+
+
 def test_validator_requires_project_scoped_verbatim_caption_phrase():
     recipe = _recipe().model_copy(deep=True)
     project = _request().project.model_dump(mode="json")

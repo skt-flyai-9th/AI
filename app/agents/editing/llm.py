@@ -921,6 +921,8 @@ def _requirements(
         "Preserve ascending shooting_scene_order and use only supplied video ids.",
         "Every source timestamp must be inside that video's duration.",
         "Caption times are absolute timeline milliseconds and must stay inside their clip.",
+        "Every non-TYPEWRITER caption must stay on screen long enough to read: at least the "
+        "greater of 900ms or 400ms plus 60ms per non-space character.",
         "Caption scale must remain 1.0; use an approved style_id for visual emphasis.",
         "Use only renderer capabilities and the video-editing DB editing_rules.",
         "Keep captions at most 40 characters each and at most 8 captions total.",
@@ -939,6 +941,10 @@ def _requirements(
         "editing_context.project_brief.copy_directives.verbatim_caption_phrases must appear "
         "unchanged in an in-video caption or the CTA. Never import wording from another project, "
         "session, menu, or store.",
+        "If editing_context.project_brief.copy_directives.caption_position_request is set "
+        "(TOP, MIDDLE, or BOTTOM), every caption.position must use that value.",
+        "If editing_context.project_brief.copy_directives.requested_min_caption_ms is set, every "
+        "caption's end_ms minus start_ms must be at least that many milliseconds.",
         "Write audience-facing promotional captions, not production notes. Never narrate filming "
         "or editing directions such as close-up, transition, scene setup, clothing change, hand "
         "movement, or showing an item, unless that exact wording is a project-scoped required "

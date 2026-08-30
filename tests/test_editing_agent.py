@@ -598,6 +598,53 @@ def test_project_alias_recovers_only_the_matching_confirmed_personalization():
     assert all("칙촉" not in item for item in context["recent_user_statements"])
 
 
+def test_copy_directives_capture_unquoted_phrase_position_and_duration_requests():
+    service = EditingAgentService(
+        llm=RepairingFakeLLM(),
+        video_context_builder=FakeVideoContextBuilder(),
+        renderer=FakeRenderer(),
+    )
+    with SessionLocal() as db:
+        _seed_video_editing_db(db)
+        _seed_shortform_session(db)
+        session = db.get(ShortformSession, "shortform_123")
+        session.conversation = [
+            {"role": "user", "content": "오늘도 맛있는 하루 라고 자막에 넣어줘"},
+            {"role": "user", "content": "자막은 화면 하단에 2초 후부터 4초 동안 보여줘"},
+            {"role": "user", "content": "아니, 자막 위치는 상단으로 바꿔줘"},
+        ]
+        db.commit()
+
+        run = service.create_run(db, _request())
+
+    directives = run.request_snapshot["_shortform_context"]["copy_directives"]
+    assert directives["verbatim_caption_phrases"] == ["오늘도 맛있는 하루"]
+    assert directives["caption_position_request"] == "TOP"
+    assert directives["requested_min_caption_ms"] == 4000
+
+
+def test_copy_directives_do_not_treat_caption_start_offset_as_display_duration():
+    service = EditingAgentService(
+        llm=RepairingFakeLLM(),
+        video_context_builder=FakeVideoContextBuilder(),
+        renderer=FakeRenderer(),
+    )
+    with SessionLocal() as db:
+        _seed_video_editing_db(db)
+        _seed_shortform_session(db)
+        session = db.get(ShortformSession, "shortform_123")
+        session.conversation = [
+            {"role": "user", "content": "자막은 상단 말고 하단에 3초 후 띄워줘"},
+        ]
+        db.commit()
+
+        run = service.create_run(db, _request())
+
+    directives = run.request_snapshot["_shortform_context"]["copy_directives"]
+    assert directives["caption_position_request"] == "BOTTOM"
+    assert directives["requested_min_caption_ms"] is None
+
+
 def test_project_alias_does_not_guess_between_matching_sessions():
     request = _request().model_copy(deep=True)
     request.project.project_id = "123"
