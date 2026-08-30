@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     editing_task_timeout_seconds: int = Field(default=2400, ge=60, le=7200)
     editing_input_cost_per_million_usd: float = Field(default=0.0, ge=0.0)
     editing_output_cost_per_million_usd: float = Field(default=0.0, ge=0.0)
-    editing_max_videos_per_run: int = Field(default=6, ge=1, le=20)
+    editing_max_videos_per_run: int = Field(default=10, ge=1, le=20)
     editing_max_output_duration_seconds: int = Field(default=15, ge=1, le=60)
     editing_max_source_duration_seconds: int = Field(default=30, ge=1, le=300)
     editing_disabled_effect_ids: str = "SMOOTH_ZOOM"
