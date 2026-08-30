@@ -22,7 +22,10 @@ from reals_edit_engine.contracts import (  # noqa: E402
     RecipeSegment,
 )
 from reals_edit_engine.ffmpeg_graph import _segment_filters, build_render_plan  # noqa: E402
-from reals_edit_engine.engine import _validate_segment_duration  # noqa: E402
+from reals_edit_engine.engine import (  # noqa: E402
+    _validate_segment_duration,
+    _validate_segment_motion,
+)
 from reals_edit_engine.media import MediaError  # noqa: E402
 from reals_edit_engine.qc import _freeze_windows, post_render_qc  # noqa: E402
 
@@ -229,3 +232,32 @@ def test_intermediate_segment_duration_rejects_zoom_inflation(monkeypatch):
     monkeypatch.setattr(engine, "probe", lambda _: {"duration_ms": 1_484_800})
     with pytest.raises(MediaError, match="중간 컷 길이 불일치"):
         _validate_segment_duration("zoom.mp4", expected_ms=2900, fps=30)
+
+
+def test_intermediate_motion_guard_rejects_renderer_created_freeze(monkeypatch):
+    from reals_edit_engine import engine
+
+    ratios = iter([1.0, 0.0])
+    monkeypatch.setattr(engine, "freeze_ratio", lambda *args: next(ratios))
+    with pytest.raises(MediaError, match="중간 컷 움직임 손실"):
+        _validate_segment_motion(
+            "rendered.mp4",
+            "source.mp4",
+            source_start_s=0.667,
+            source_duration_s=2.9,
+            output_duration_s=2.9,
+        )
+
+
+def test_intermediate_motion_guard_allows_static_source(monkeypatch):
+    from reals_edit_engine import engine
+
+    ratios = iter([1.0, 0.9])
+    monkeypatch.setattr(engine, "freeze_ratio", lambda *args: next(ratios))
+    _validate_segment_motion(
+        "rendered.mp4",
+        "source.mp4",
+        source_start_s=0.0,
+        source_duration_s=1.0,
+        output_duration_s=1.0,
+    )
