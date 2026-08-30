@@ -39,6 +39,7 @@ from app.schemas.template_knowledge import (
     TradeAreaCandidateCreate,
     TradeAreaDBContent,
 )
+from app.schemas.shortform import FilmingTime
 from app.template_knowledge.llm import (
     GeminiYouTubeVideoAnalyzer,
     OpenAITemplateCandidateGenerator,
@@ -47,6 +48,10 @@ from app.template_knowledge.llm import (
     TemplateKnowledgeLLMError,
 )
 from app.template_knowledge.validation import TemplateCandidateValidator
+
+
+_VIDEO_ANALYSIS_SCHEMA_VERSION = "2"
+_FILMING_TIME_BUCKET_ORDER = tuple(item.value for item in FilmingTime)
 
 
 class TemplateKnowledgeDomainError(RuntimeError):
@@ -313,6 +318,7 @@ class TemplateKnowledgeService:
         except TemplateKnowledgeLLMError as exc:
             raise _llm_domain_error(exc) from exc
         payload = proposed.model_dump(mode="json")
+        _normalize_filming_time_metadata(payload, insights)
         guide = payload["shooting_guide"]
         if len(guide["tasks"]) == len(guide["scenes"]):
             for index, task in enumerate(guide["tasks"]):
@@ -541,7 +547,10 @@ class TemplateKnowledgeService:
     ) -> TemplateVideoAnalysis:
         _validate_youtube_url(youtube_url)
         fingerprint = hashlib.sha256(
-            f"{trend_id}\n{youtube_url}\n{self.video_analyzer.model_name}".encode()
+            (
+                f"{trend_id}\n{youtube_url}\n{self.video_analyzer.model_name}"
+                f"\nschema={_VIDEO_ANALYSIS_SCHEMA_VERSION}"
+            ).encode()
         ).hexdigest()
         row = db.scalar(
             select(TemplateVideoAnalysis).where(
@@ -877,6 +886,22 @@ def _editing_payload(row: VideoEditingDBRecord) -> dict[str, Any]:
         "editing_rules": row.editing_rules or {},
         "trend_ids": row.trend_ids or [],
     }
+
+
+def _normalize_filming_time_metadata(
+    payload: dict[str, Any],
+    insights: list[EditingVideoInsight],
+) -> None:
+    """Make Gemini's longest filming-time bucket authoritative over generator output."""
+    bucket_indexes = {bucket: index for index, bucket in enumerate(_FILMING_TIME_BUCKET_ORDER)}
+    minimum_bucket = max(
+        (insight.estimated_shooting_time_bucket.value for insight in insights),
+        key=bucket_indexes.__getitem__,
+    )
+    minimum_index = bucket_indexes[minimum_bucket]
+    metadata = payload["recommendation_metadata"]
+    metadata["minimum_filming_time"] = minimum_bucket
+    metadata["supported_filming_times"] = list(_FILMING_TIME_BUCKET_ORDER[minimum_index:])
 
 
 def _trade_area_read(row: TradeAreaDBRecord) -> TemplateVersionRead:

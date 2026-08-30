@@ -277,6 +277,8 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
         )
         assert guide.status_code == 200
         assert guide.json()["template_id"] == "video_editing_db_028"
+        assert guide.json()["estimated_shooting_sec"] == 300
+        assert guide.json()["estimated_shooting_time_bucket"] == "within_5m"
         assert guide.json()["scenes"][0]["scene_order"] == 1
         task = guide.json()["tasks"][0]
         assert task["display_order"] == 1

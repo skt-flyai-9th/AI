@@ -59,6 +59,19 @@ class FilmingTime(StrEnum):
     PLUS_30M = "30m_plus"
 
 
+# 버킷 → 예상 촬영 소요시간(초), 2026-08-30 추가. Gemini가 레퍼런스 영상을 처음
+# 분석할 때 컷 개수·복잡도를 근거로 이 버킷 중 하나로 분류하고(`app/template_
+# knowledge/llm.py`), `/shooting-guide` 응답의 기존 `estimated_shooting_sec`
+# 계약은 초 단위를 유지한다. 화면은 이 초 값을 기존처럼 분 단위로 표시하며,
+# 분류 자체가 필요한 소비자는 `estimated_shooting_time_bucket`을 사용한다.
+FILMING_TIME_BUCKET_SECONDS: dict[str, int] = {
+    FilmingTime.WITHIN_5M.value: 5 * 60,
+    FilmingTime.WITHIN_10M.value: 10 * 60,
+    FilmingTime.WITHIN_20M.value: 20 * 60,
+    FilmingTime.PLUS_30M.value: 30 * 60,
+}
+
+
 class FaceExposure(StrEnum):
     ALLOWED = "allowed"
     NOT_ALLOWED = "not_allowed"
@@ -218,7 +231,12 @@ class ShootingGuideResponse(BaseModel):
 
     template_id: str
     version: int
+    # 예상 촬영 소요시간(초). 기존 backend DB·frontend 표시·남은 시간
+    # 계산이 모두 초 단위를 사용하므로 계약을 유지한다.
     estimated_shooting_sec: int = Field(ge=1)
+    # 2026-08-30 추가 — Gemini가 분류한 촬영 시간 버킷(`FilmingTime`과 같은 값
+    # 집합이라 백엔드가 사용자의 `filming_time` 응답과 직접 비교할 수 있다).
+    estimated_shooting_time_bucket: FilmingTime | None = None
     required_people: int = Field(ge=1)
     props: list[str] = Field(default_factory=list)
     difficulty: str

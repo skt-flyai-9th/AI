@@ -27,6 +27,7 @@ from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.models.shortform_session import ShortformSession
 from app.schemas.shortform import (
     FaceExposure,
+    FILMING_TIME_BUCKET_SECONDS,
     FilmingTime,
     NextRecommendationResponse,
     PromotionCategory,
@@ -431,17 +432,33 @@ class ShortformAgentService:
                 }
             )
 
-        final_duration = sum(max(int(scene.get("target_duration_sec") or 0), 0) for scene in scenes)
-        estimated_shooting_sec = (
-            max(final_duration * 10, 60)
-            if final_duration
-            else max(int(guide.get("estimated_shooting_sec") or 60), 60)
+        # 2026-08-30 이전에는 컷 개수·복잡도와 무관하게 "완성 길이×10초"로만
+        # 근사했다 — 같은 완성 길이라도 컷이 4개인 영상과 20개인 영상의 실제
+        # 촬영 시간이 같을 리 없다는 문제가 있었다. 지금은 Gemini가 최초 분석
+        # 시점에 분류한 촬영 시간 버킷(`minimum_filming_time`, `filming_time`과
+        # 값 집합이 같다)을 기존 초 단위 API 계약으로 환산해 내려준다.
+        # 버킷이 없는 구버전 템플릿은 예전 근사식으로 초를 계산한 뒤
+        # 같은 버킷으로 눌러 담고, 그 버킷의 초 값을 응답한다.
+        shooting_time_bucket = (template.recommendation_metadata or {}).get(
+            "minimum_filming_time"
         )
+        if shooting_time_bucket not in FILMING_TIME_BUCKET_SECONDS:
+            final_duration = sum(
+                max(int(scene.get("target_duration_sec") or 0), 0) for scene in scenes
+            )
+            legacy_sec = (
+                max(final_duration * 10, 60)
+                if final_duration
+                else max(int(guide.get("estimated_shooting_sec") or 60), 60)
+            )
+            shooting_time_bucket = _filming_time_bucket_from_seconds(legacy_sec)
+        estimated_shooting_sec = FILMING_TIME_BUCKET_SECONDS[shooting_time_bucket]
 
         return ShootingGuideResponse(
             template_id=template.template_id,
             version=template.version,
-            estimated_shooting_sec=int(estimated_shooting_sec),
+            estimated_shooting_sec=estimated_shooting_sec,
+            estimated_shooting_time_bucket=shooting_time_bucket,
             required_people=max(int(guide.get("required_people") or 1), 1),
             props=[str(item) for item in (guide.get("props") or []) if str(item).strip()],
             difficulty=str(
@@ -1100,11 +1117,14 @@ def _objective_from_text(text: str) -> str | None:
     return None
 
 
-def _filming_time_from_text(text: str) -> str | None:
-    match = re.search(r"(\d+)\s*분", text)
-    if not match:
-        return None
-    minutes = int(match.group(1))
+def _filming_time_bucket_from_minutes(minutes: float) -> str:
+    """분 단위 촬영 시간을 표준 버킷으로 분류한다.
+
+    사용자 응답 해석(`_filming_time_from_text`)과 구버전 템플릿의 초 단위 근사치
+    변환(`_filming_time_bucket_from_seconds`)이 이 경계를 공유한다 — 두 곳이
+    따로 하드코딩되어 어긋나면, 같은 시간이 사용자 응답에서는 within_10m으로,
+    템플릿에서는 within_20m으로 분류되어 추천 필터가 어긋난다.
+    """
     if minutes <= 5:
         return FilmingTime.WITHIN_5M.value
     if minutes <= 10:
@@ -1112,6 +1132,18 @@ def _filming_time_from_text(text: str) -> str | None:
     if minutes <= 20:
         return FilmingTime.WITHIN_20M.value
     return FilmingTime.PLUS_30M.value
+
+
+def _filming_time_from_text(text: str) -> str | None:
+    match = re.search(r"(\d+)\s*분", text)
+    if not match:
+        return None
+    return _filming_time_bucket_from_minutes(int(match.group(1)))
+
+
+def _filming_time_bucket_from_seconds(seconds: int) -> str:
+    """구버전 템플릿(버킷 미분류)의 초 단위 근사치를 표준 버킷으로 눌러 담는다."""
+    return _filming_time_bucket_from_minutes(max(seconds, 1) / 60)
 
 
 def _face_exposure_from_text(text: str) -> str | None:

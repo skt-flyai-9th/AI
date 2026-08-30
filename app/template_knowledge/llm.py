@@ -154,6 +154,7 @@ class OpenAITemplateCandidateGenerator:
                     "Do not copy reference caption wording; preserve only caption role/style/placement/timing grammar.",
                     "Set recommendation_metadata.format_type from trend_context: 밈, 챌린지, or 정보형.",
                     "For every format, keep the cut-based shooting guide and return one scene-linked task per capture interval.",
+                    "Set recommendation_metadata.minimum_filming_time to the most conservative (longest) estimated_shooting_time_bucket across gemini_video_insights, and include that bucket plus every longer bucket in supported_filming_times. Do not independently re-estimate a shorter or longer classification than what Gemini observed.",
                 ],
                 "renderer_contract": {
                     "source_type": "VIDEO_ONLY",
@@ -325,7 +326,10 @@ class GeminiYouTubeVideoAnalyzer:
                 "Return every cut in segments with explicit sequence, start_sec, end_sec, "
                 "scene_role, description, shot_type, transition_out and timestamped evidence. "
                 "segments is the authoritative cut plan; shot_sequence must contain the same "
-                "number of items in the same order. Do not merge two physical edit cuts merely "
+                "number of items in the same order. Also classify estimated_shooting_time_bucket "
+                "using shooting_time_bucket_rules: this is the real-world time a small-business "
+                "owner filming this alone would need to capture every segment, not the finished "
+                "video's playback length. Do not merge two physical edit cuts merely "
                 "because they share one semantic role. A new segment is mandatory whenever an "
                 "object suddenly appears or disappears (including a food reveal), a person "
                 "suddenly enters or leaves, a person's pose or screen position jumps without "
@@ -352,6 +356,13 @@ class GeminiYouTubeVideoAnalyzer:
                 "Use timestamps from the supplied video; do not invent evenly spaced cuts.",
                 "Do not overlap segments or reverse their order.",
                 "Record the visual observation that justifies every boundary in segments[].evidence.",
+            ],
+            "shooting_time_bucket_rules": [
+                "within_5m: at most 3 segments, one continuous setup, no prop or costume change, no retake likely.",
+                "within_10m: 4-7 segments, or one prop/costume swap, still a single location and no coordination with another person.",
+                "within_20m: 8-15 segments, or multiple prop/costume changes, or an action that likely needs several retakes to land (precise timing, a reveal, a stunt-like motion).",
+                "30m_plus: 16 or more segments, more than one location, or choreography/timing that requires coordinating two or more people.",
+                "When signals conflict between rules, choose the longer bucket — underestimating shooting time is worse than overestimating it.",
             ],
             "human_reviewed_reference_cut_review": reference_cut_review,
             "allowed_audio_roles": ["PLATFORM_MUSIC", "ORIGINAL_AMBIENCE", "NONE"],
