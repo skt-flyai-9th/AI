@@ -15,7 +15,7 @@ from .contracts import (CutAssemblyRequest, EngineResult, ExecutionMode,
                         OverlayType, QcStatus, RenderManifest)
 from .cut_assembly import CutAssemblyError, SemanticSegmenter, run_cut_assembly
 from .ffmpeg_graph import build_render_plan, map_produced_to_output_ms
-from .media import MediaError, media_ref, run
+from .media import MediaError, media_ref, probe, run
 from .qc import post_render_qc
 from .registries import ENGINE_VERSION, Registries, RegistryError
 from .sfx import SfxResolveError, SfxResolver
@@ -36,6 +36,20 @@ def _idem_key(*parts: str) -> str:
 def _artifact_key(idempotency_key: str) -> str:
     """Return a stable filename-safe key for FFmpeg and temporary render artifacts."""
     return hashlib.sha256(idempotency_key.encode()).hexdigest()[:32]
+
+
+def _validate_segment_duration(path: str, expected_ms: int, fps: float) -> None:
+    """Reject a malformed intermediate before it can distort concat timing."""
+    info = probe(path)
+    frame_ms = max(1, round(1000 / max(fps, 1.0)))
+    tolerance_ms = max(150, frame_ms * 2)
+    actual_ms = int(info["duration_ms"])
+    if abs(actual_ms - expected_ms) > tolerance_ms:
+        raise MediaError(
+            "중간 컷 길이 불일치 — "
+            f"actual={actual_ms}ms expected={expected_ms}ms "
+            f"tolerance={tolerance_ms}ms"
+        )
 
 
 class VideoEditEngine:
@@ -196,6 +210,15 @@ class VideoEditEngine:
                     run(cmd, timeout=1200)
                 except MediaError:
                     run(cmd, timeout=1200)   # deterministic failure 재시도 1회
+                if ci <= len(recipe.segments):
+                    segment = recipe.segments[ci - 1]
+                    segment_ms = int(round(
+                        (segment.trim_out_ms - segment.trim_in_ms)
+                        / segment.speed_multiplier
+                    ))
+                    _validate_segment_duration(
+                        temps[ci - 1], segment_ms, float(rp["fps"])
+                    )
         except MediaError as e:
             return EngineResult(job_id=req.job_id, execution_mode=ExecutionMode.FINAL_RENDER,
                                 status="FAILED", error=str(e))
