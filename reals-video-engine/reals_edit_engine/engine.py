@@ -16,7 +16,7 @@ from .contracts import (CutAssemblyRequest, EngineResult, ExecutionMode,
 from .cut_assembly import CutAssemblyError, SemanticSegmenter, run_cut_assembly
 from .ffmpeg_graph import build_render_plan, map_produced_to_output_ms
 from .media import MediaError, media_ref, probe, run
-from .qc import post_render_qc
+from .qc import freeze_ratio, post_render_qc
 from .registries import ENGINE_VERSION, Registries, RegistryError
 from .sfx import SfxResolveError, SfxResolver
 from .subtitle_layout import (LayoutError, StaticAvoidMapProvider, AvoidMapProvider,
@@ -49,6 +49,25 @@ def _validate_segment_duration(path: str, expected_ms: int, fps: float) -> None:
             "중간 컷 길이 불일치 — "
             f"actual={actual_ms}ms expected={expected_ms}ms "
             f"tolerance={tolerance_ms}ms"
+        )
+
+
+def _validate_segment_motion(
+    output_path: str,
+    source_path: str,
+    source_start_s: float,
+    source_duration_s: float,
+    output_duration_s: float,
+) -> None:
+    """Reject freezes introduced by rendering while allowing static source footage."""
+    output_freeze = freeze_ratio(output_path, output_duration_s)
+    if output_freeze < 0.5:
+        return
+    source_freeze = freeze_ratio(source_path, source_duration_s, source_start_s)
+    if output_freeze - source_freeze >= 0.25:
+        raise MediaError(
+            "중간 컷 움직임 손실 — "
+            f"rendered_freeze={output_freeze:.3f} source_freeze={source_freeze:.3f}"
         )
 
 
@@ -218,6 +237,16 @@ class VideoEditEngine:
                     ))
                     _validate_segment_duration(
                         temps[ci - 1], segment_ms, float(rp["fps"])
+                    )
+                    source_duration_s = (
+                        segment.trim_out_ms - segment.trim_in_ms
+                    ) / 1000.0
+                    _validate_segment_motion(
+                        temps[ci - 1],
+                        src.path,
+                        segment.trim_in_ms / 1000.0,
+                        source_duration_s,
+                        segment_ms / 1000.0,
                     )
         except MediaError as e:
             return EngineResult(job_id=req.job_id, execution_mode=ExecutionMode.FINAL_RENDER,

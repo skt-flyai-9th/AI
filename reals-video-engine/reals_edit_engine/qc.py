@@ -30,6 +30,24 @@ def _freeze_windows(stderr: str, duration_s: float) -> list[tuple[float, float]]
     return windows
 
 
+def freeze_ratio(path: str, duration_s: float, start_s: float = 0.0) -> float:
+    """Return the longest frozen span as a fraction of the inspected window."""
+    if duration_s <= 0:
+        return 0.0
+    args = []
+    if start_s > 0:
+        args += ["-ss", f"{start_s:.6f}"]
+    detect_s = min(FREEZE_DETECT_MIN_S, max(0.15, duration_s * 0.2))
+    args += [
+        "-t", f"{duration_s:.6f}", "-i", path, "-vf",
+        f"freezedetect=n=-50dB:d={detect_s:.6f}",
+        "-an", "-f", "null", "-",
+    ]
+    windows = _freeze_windows(_ffmpeg_stderr(args), duration_s)
+    longest_s = max((end - start for start, end in windows), default=0.0)
+    return min(1.0, longest_s / duration_s)
+
+
 def post_render_qc(out_path: str, expected_ms: int, rp: dict,
                    final_audio: FinalAudioPolicy,
                    sfx_windows_ms: list[tuple[int, int]]) -> QcReport:
