@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app.template_knowledge import llm
 from app.template_knowledge.llm import (
     GeminiYouTubeVideoAnalyzer,
     OpenAITemplateCandidateGenerator,
+    TemplateKnowledgeLLMError,
 )
 from app.schemas.template_knowledge import (
     EditingVideoInsight,
@@ -283,3 +286,93 @@ def test_gemini_retries_until_human_reviewed_cut_count_is_reproduced(monkeypatch
     assert prompts[0]["human_reviewed_reference_cut_review"]["expected_cut_count"] == 7
     assert "returned 6 cuts" in prompts[1]["correction"]
     assert len(prompts[1]["previous_mismatched_cut_analysis"]["segments"]) == 6
+
+
+def _single_cut_insight_payload(*, description: str, shot_type: str) -> dict:
+    return {
+        "trend_id": "ignored",
+        "youtube_url": "https://www.youtube.com/watch?v=example",
+        "summary": "reference summary",
+        "hook_patterns": ["hook"],
+        "shot_sequence": ["HOOK"],
+        "segments": [
+            {
+                "sequence": 1,
+                "start_sec": 0.0,
+                "end_sec": 1.0,
+                "scene_role": "HOOK",
+                "description": description,
+                "shot_type": shot_type,
+                "transition_out": None,
+                "evidence": "0.0-1.0초 결과 컷",
+            }
+        ],
+        "estimated_shooting_time_bucket": "within_5m",
+        "pacing": {"tempo": "FAST", "median_cut_sec": 1.0, "opening_hook_sec": 1.0},
+        "caption_patterns": [],
+        "camera_patterns": [],
+        "transition_patterns": [],
+        "audio_role": "NONE",
+        "reusable_editing_rules": ["rule"],
+        "evidence_notes": ["evidence"],
+        "confidence": 0.9,
+    }
+
+
+def test_gemini_field_validation_failure_gets_one_repair_attempt(monkeypatch):
+    prompts = []
+
+    def fake_call(**kwargs):
+        prompts.append(json.loads(kwargs["user_prompt"]))
+        if len(prompts) == 1:
+            return _single_cut_insight_payload(
+                description="초록색 상의를 입은 인물이 등장한다.",
+                shot_type="CLOSE_UP",
+            )
+        return _single_cut_insight_payload(
+            description="인물이 정면을 바라보며 등장한다.",
+            shot_type="정면 클로즈업",
+        )
+
+    monkeypatch.setattr(llm, "call_gemini_structured", fake_call)
+    analyzer = GeminiYouTubeVideoAnalyzer()
+    analyzer.api_key = "test-gemini-key"
+    analyzer._resolved_model_name = "gemini-test"
+    result = analyzer.analyze(
+        trend_id="trend-1",
+        youtube_url="https://www.youtube.com/watch?v=example",
+        trend_context={},
+    )
+
+    assert len(prompts) == 2
+    assert result.segments[0].shot_type == "정면 클로즈업"
+    repair_prompt = prompts[1]
+    assert repair_prompt["previous_invalid_output"]["segments"][0]["shot_type"] == "CLOSE_UP"
+    assert any(
+        "segments" in error["path"] for error in repair_prompt["field_validation_errors"]
+    )
+    assert "field_validation_errors" in repair_prompt["field_correction"]
+
+
+def test_gemini_field_validation_failure_raises_after_repair_budget(monkeypatch):
+    calls = []
+
+    def fake_call(**kwargs):
+        calls.append(kwargs)
+        return _single_cut_insight_payload(
+            description="초록색 상의를 입은 인물이 등장한다.",
+            shot_type="CLOSE_UP",
+        )
+
+    monkeypatch.setattr(llm, "call_gemini_structured", fake_call)
+    analyzer = GeminiYouTubeVideoAnalyzer()
+    analyzer.api_key = "test-gemini-key"
+    analyzer._resolved_model_name = "gemini-test"
+    with pytest.raises(TemplateKnowledgeLLMError):
+        analyzer.analyze(
+            trend_id="trend-1",
+            youtube_url="https://www.youtube.com/watch?v=example",
+            trend_context={},
+        )
+
+    assert len(calls) == 2

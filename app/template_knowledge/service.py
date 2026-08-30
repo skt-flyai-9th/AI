@@ -456,6 +456,29 @@ class TemplateKnowledgeService:
                 "The base version changed; generate a fresh candidate.",
                 status_code=409,
             )
+        # VALIDATED 판정은 그 시점의 스키마 기준이다. 스키마가 그 뒤로 엄격해졌으면
+        # (예: 촬영 가이드 재사용성 검증 추가) _apply_candidate의 model_validate가
+        # 처리되지 않은 ValidationError로 터지므로, 여기서 현행 규칙으로 다시 걸러
+        # INVALID + 도메인 에러로 답한다.
+        template_type = TemplateType(candidate.template_type)
+        latest = self._latest_version(db, template_type, candidate.template_id)
+        latest_payload = self._version_payload(template_type, latest) if latest else None
+        content_errors = self.validator.validate(
+            candidate.template_type,
+            candidate.proposed_payload,
+            is_initial_version=candidate.base_version is None,
+            base_payload=latest_payload,
+        )
+        if content_errors:
+            candidate.validation_errors = content_errors
+            candidate.status = TemplateCandidateStatus.INVALID.value
+            db.commit()
+            raise TemplateKnowledgeDomainError(
+                "CANDIDATE_INVALID",
+                "The candidate no longer passes current validation rules; "
+                "generate a fresh candidate.",
+                status_code=409,
+            )
         candidate.status = TemplateCandidateStatus.APPROVED.value
         candidate.approved_by = decision.actor
         candidate.approval_note = decision.note

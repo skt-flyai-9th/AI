@@ -479,7 +479,11 @@ def test_video_analysis_schema_version_invalidates_previous_cached_insight():
     "description",
     [
         "초록색 상의를 입고 손을 펼칩니다.",
+        "흰색 상의로 바꾸고 같은 자리에 섭니다.",
+        "옷을 갈아입은 뒤 정면을 바라봅니다.",
+        "여성이 손바닥을 펼쳐 보입니다.",
         "피자가 나타나도록 같은 구도에서 촬영합니다.",
+        "소보로빵을 전경에 배치합니다.",
     ],
 )
 def test_shooting_guide_scene_rejects_non_reusable_description(description):
@@ -493,11 +497,29 @@ def test_shooting_guide_scene_rejects_non_reusable_description(description):
         )
 
 
-def test_shooting_guide_scene_allows_unrelated_korean_suffixes():
+# 이 검증은 LLM 구조화 응답 파싱에 걸리므로, 일상 표현 오탐 하나가 분석 전체를
+# 실패시킨다. 명사+의 결합(이상의/책상의)과 금지어를 부분문자열로 포함하는 단어
+# (옷걸이/빵집/화장실)는 반드시 통과해야 한다.
+@pytest.mark.parametrize(
+    "description",
+    [
+        "참고 영상의 마지막 장면은 반복하지 않습니다.",
+        "2명 이상의 인물이 나란히 서서 손을 흔듭니다.",
+        "화면 상의 자막 위치를 확인하며 촬영합니다.",
+        "책상의 소품을 정면에 배치합니다.",
+        "일상의 한 장면처럼 자연스럽게 이동합니다.",
+        "지하의 매장 입구에서 시작합니다.",
+        "10초 이하의 짧은 컷으로 마무리합니다.",
+        "옷걸이 앞에서 포즈를 취합니다.",
+        "빵집 간판이 보이는 입구에서 촬영합니다.",
+        "화장실 표지판 옆 통로를 지나갑니다.",
+    ],
+)
+def test_shooting_guide_scene_allows_common_korean_phrases(description):
     scene = ShootingGuideScene(
         scene_order=1,
         scene_role="OUTRO",
-        scene_description="참고 영상의 마지막 장면은 반복하지 않습니다.",
+        scene_description=description,
         shot_type="여백 있는 공간 와이드샷",
         target_duration_sec=1,
     )
@@ -895,6 +917,46 @@ def test_rebuild_with_reduced_structure_is_rejected_too():
             requires_human_approval=True,
         )
         assert ok_candidate.status == "VALIDATED"
+
+
+def test_approve_revalidates_candidate_against_current_rules():
+    service, _ = _service()
+    with SessionLocal() as db:
+        candidate = service.create_candidate_from_payload(
+            db,
+            template_type=TemplateType.VIDEO_EDITING,
+            template_id="legacy_rules_guard",
+            payload=_multi_scene_editing_payload(3),
+            source_evidence={"bootstrap": True},
+            generation_model="seed",
+            requires_human_approval=True,
+        )
+        assert candidate.status == "VALIDATED"
+
+        # 검증 규칙이 강화되기 전에 VALIDATED로 저장된 후보를 흉내낸다: 지금
+        # 규칙이 금지하는 문구가 페이로드에 남아 있다. 승인은 500이 아니라
+        # INVALID 전환 + 도메인 에러로 답해야 한다.
+        stale_payload = dict(candidate.proposed_payload)
+        guide = dict(stale_payload["shooting_guide"])
+        scenes = [dict(scene) for scene in guide["scenes"]]
+        scenes[0]["scene_description"] = "초록색 상의를 입고 손을 펼칩니다."
+        guide["scenes"] = scenes
+        stale_payload["shooting_guide"] = guide
+        candidate.proposed_payload = stale_payload
+        db.commit()
+
+        with pytest.raises(TemplateKnowledgeDomainError) as exc_info:
+            service.approve_candidate(
+                db,
+                candidate.id,
+                CandidateDecision(actor="admin", note="approve legacy candidate"),
+            )
+        assert exc_info.value.code == "CANDIDATE_INVALID"
+        assert exc_info.value.status_code == 409
+
+        refreshed = service.get_candidate(db, candidate.id)
+        assert refreshed.status == "INVALID"
+        assert refreshed.validation_errors
 
 
 def test_concurrent_approval_conflict_maps_to_candidate_stale(monkeypatch):

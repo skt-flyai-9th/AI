@@ -4,7 +4,7 @@ import json
 from typing import Any, Protocol, TypeVar
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.core.config import get_settings
 from app.ranker_core.gemini_json import call_gemini_structured, resolve_gemini_model
@@ -385,7 +385,13 @@ class GeminiYouTubeVideoAnalyzer:
                 "subtle discontinuities; do not create arbitrary evenly spaced cuts."
             )
         previous_insight: EditingVideoInsight | None = None
-        for attempt in range(3 if expected_cut_count is not None else 1):
+        # 스키마 필드 검증(외형 금지어, 한글 shot_type 등)에 걸린 응답은 60개 세그먼트
+        # 중 한 필드짜리 문제라 전체 분석을 버릴 이유가 없다 — 검증 오류를 그대로
+        # 돌려주고 한 번 고쳐 쓰게 한다. 컷 수 보정 루프와는 별도 예산이다.
+        validation_repair_budget = 1
+        attempt = 0
+        max_attempts = 3 if expected_cut_count is not None else 1
+        while attempt < max_attempts:
             if attempt:
                 assert previous_insight is not None
                 previous_count = len(previous_insight.segments)
@@ -418,14 +424,42 @@ class GeminiYouTubeVideoAnalyzer:
                 )
                 parsed["trend_id"] = trend_id
                 parsed["youtube_url"] = youtube_url
-                insight = EditingVideoInsight.model_validate(parsed)
-                if expected_cut_count is None or len(insight.segments) == expected_cut_count:
-                    return insight
-                previous_insight = insight
             except TemplateKnowledgeLLMError:
                 raise
             except Exception as exc:
                 raise TemplateKnowledgeLLMError("Gemini video analysis failed.") from exc
+            try:
+                insight = EditingVideoInsight.model_validate(parsed)
+            except ValidationError as exc:
+                if validation_repair_budget <= 0:
+                    raise TemplateKnowledgeLLMError(
+                        "Gemini video analysis failed schema validation after a repair attempt."
+                    ) from exc
+                validation_repair_budget -= 1
+                prompt_payload["previous_invalid_output"] = parsed
+                prompt_payload["field_validation_errors"] = [
+                    {
+                        "path": ".".join(str(part) for part in error["loc"]),
+                        "message": error["msg"],
+                    }
+                    for error in exc.errors()
+                ]
+                prompt_payload["field_correction"] = (
+                    "The previous output in previous_invalid_output failed the listed "
+                    "field_validation_errors. Rewrite only the offending fields to satisfy "
+                    "each constraint (keep every timestamp and boundary unchanged) and "
+                    "return the full corrected object."
+                )
+                continue
+            except Exception as exc:
+                raise TemplateKnowledgeLLMError("Gemini video analysis failed.") from exc
+            prompt_payload.pop("previous_invalid_output", None)
+            prompt_payload.pop("field_validation_errors", None)
+            prompt_payload.pop("field_correction", None)
+            if expected_cut_count is None or len(insight.segments) == expected_cut_count:
+                return insight
+            previous_insight = insight
+            attempt += 1
         raise TemplateKnowledgeLLMError(
             f"Gemini did not reproduce the human-reviewed {expected_cut_count}-cut boundary plan.",
             retryable=True,
