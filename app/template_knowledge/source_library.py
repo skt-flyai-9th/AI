@@ -70,6 +70,15 @@ _EDITING_SCOPE_ADAPTERS: dict[str, dict[str, Any]] = {
         "minimum_filming_time": "within_10m",
         "requires_face": False,
     },
+    "donggeurio_challenge": {
+        "format_type": "정보형",
+        "supported_subject_types": ["MENU", "STORE"],
+        "supported_objectives": ["awareness", "new_customer", "visit", "trust"],
+        "supported_filming_times": ["within_20m", "30m_plus"],
+        "supported_face_modes": ["allowed", "not_allowed"],
+        "minimum_filming_time": "within_20m",
+        "requires_face": False,
+    },
     "otsukare_summer_challenge": {
         "format_type": "챌린지",
         "supported_subject_types": ["STORE", "SERVICE"],
@@ -79,6 +88,11 @@ _EDITING_SCOPE_ADAPTERS: dict[str, dict[str, Any]] = {
         "minimum_filming_time": "within_10m",
         "requires_face": True,
     },
+}
+
+_SHOOTING_REQUIRED_PEOPLE = {
+    "jujutsu_transition": 2,
+    "donggeurio_challenge": 1,
 }
 
 
@@ -745,7 +759,7 @@ def _editing_content(
             },
             "shooting_guide": {
                 "estimated_shooting_sec": production_minutes * 60,
-                "required_people": 1,
+                "required_people": _SHOOTING_REQUIRED_PEOPLE.get(challenge_id, 1),
                 "props": [],
                 "difficulty": "중" if production_minutes <= 10 else "상",
                 "scenes": scenes,

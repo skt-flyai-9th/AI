@@ -783,7 +783,7 @@ class ShortformAgentService:
 
         # Production startup can legitimately reach the first recommendation before
         # the explicit bootstrap endpoint is called. Recover from that deployment
-        # ordering by importing the packaged, validated two-record DB idempotently.
+        # ordering by importing the packaged, validated three-record DB idempotently.
         seed_template_library(db)
         return load()
 

@@ -68,7 +68,7 @@ def initialize_service_once(
 
 
 def _sync_bundled_challenges(db: Session) -> dict[str, list[str]]:
-    """Upsert the authoritative two-item trendcluster without rerunning research."""
+    """Upsert the authoritative three-item trendcluster without rerunning research."""
 
     created: list[str] = []
     updated: list[str] = []

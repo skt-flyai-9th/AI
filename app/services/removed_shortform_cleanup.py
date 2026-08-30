@@ -11,7 +11,6 @@ from app.core.config import Settings, get_settings
 
 REMOVED_SHORTFORM_IDS = {
     "cafe_recommendation_reels",
-    "donggeurio_challenge",
     "donggeurio_store_promotion",
 }
 
