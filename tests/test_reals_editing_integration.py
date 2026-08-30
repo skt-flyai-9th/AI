@@ -292,7 +292,7 @@ def _project_with_copy_directives(**directives) -> dict:
     return {"shortform_context": {"copy_directives": directives}}
 
 
-def test_validator_flags_caption_too_short_to_read():
+def test_validator_allows_short_regular_caption():
     recipe = _recipe().model_copy(deep=True)
     recipe.timeline[1].caption.end_ms = recipe.timeline[1].caption.start_ms + 100
 
@@ -305,10 +305,10 @@ def test_validator_flags_caption_too_short_to_read():
         video_contexts=_contexts(),
     )
 
-    assert any(issue.code == "CAPTION_DURATION_TOO_SHORT" for issue in issues)
+    assert not any(issue.code == "CAPTION_DURATION_TOO_SHORT" for issue in issues)
 
 
-def test_validator_caps_readability_minimum_at_short_clip_duration():
+def test_validator_allows_partial_caption_on_short_clip():
     recipe = _recipe().model_copy(deep=True)
     recipe.timeline = recipe.timeline[:1]
     clip = recipe.timeline[0]
@@ -316,30 +316,21 @@ def test_validator_caps_readability_minimum_at_short_clip_duration():
     clip.source_end_ms = 714
     clip.timeline_start_ms = 0
     clip.caption.start_ms = 0
-    clip.caption.end_ms = 714
+    clip.caption.end_ms = 300
     clip.caption.motion_id = "POP"
     contexts = _contexts()[:1]
     contexts[0].duration_ms = 714
     validator = EditRecipeValidator()
 
-    full_clip_issues = validator.validate(
+    issues = validator.validate(
         recipe,
         selected_shortform=_request().selected_shortform,
         video_editing_db=_video_editing_db(),
         video_contexts=contexts,
     )
-    assert not any(
-        issue.code == "CAPTION_DURATION_TOO_SHORT" for issue in full_clip_issues
-    )
-
-    clip.caption.end_ms = 713
-    truncated_issues = validator.validate(
-        recipe,
-        selected_shortform=_request().selected_shortform,
-        video_editing_db=_video_editing_db(),
-        video_contexts=contexts,
-    )
-    assert any(issue.code == "CAPTION_DURATION_TOO_SHORT" for issue in truncated_issues)
+    assert not any(issue.code == "CAPTION_DURATION_TOO_SHORT" for issue in issues)
+    assert not any(issue.code == "CAPTION_OUTSIDE_CLIP" for issue in issues)
+    assert not any(issue.code == "CAPTION_RANGE_INVALID" for issue in issues)
 
 
 def test_validator_enforces_requested_caption_position():

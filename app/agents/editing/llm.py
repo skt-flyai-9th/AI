@@ -921,9 +921,8 @@ def _requirements(
         "Preserve ascending shooting_scene_order and use only supplied video ids.",
         "Every source timestamp must be inside that video's duration.",
         "Caption times are absolute timeline milliseconds and must stay inside their clip.",
-        "Every non-TYPEWRITER caption must stay on screen long enough to read: at least the "
-        "greater of 900ms or 400ms plus 60ms per non-space character. When the owning clip is "
-        "shorter than that target, keep the caption visible for the entire clip.",
+        "Non-TYPEWRITER captions may use any positive duration inside their owning clip. Do not "
+        "extend them to a readability minimum unless the project explicitly requests one.",
         "Caption scale must remain 1.0; use an approved style_id for visual emphasis.",
         "Use only renderer capabilities and the video-editing DB editing_rules.",
         "Keep captions at most 40 characters each and at most 8 captions total.",
