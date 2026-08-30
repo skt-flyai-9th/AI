@@ -59,16 +59,16 @@ class FilmingTime(StrEnum):
     PLUS_30M = "30m_plus"
 
 
-# 버킷 → 예상 촬영 소요시간(분), 2026-08-30 추가. Gemini가 레퍼런스 영상을 처음
+# 버킷 → 예상 촬영 소요시간(초), 2026-08-30 추가. Gemini가 레퍼런스 영상을 처음
 # 분석할 때 컷 개수·복잡도를 근거로 이 버킷 중 하나로 분류하고(`app/template_
-# knowledge/llm.py`), `/shooting-guide` 응답은 그 버킷의 분 값(5/10/20/30)을
-# 그대로 내려준다. "완성 영상 길이 × 10초" 같은 근거 없는 근사식을 대체하며,
-# 화면에도 초가 아니라 이 분 단위(5분/10분/20분/30분+)로 노출된다.
-FILMING_TIME_BUCKET_MINUTES: dict[str, int] = {
-    FilmingTime.WITHIN_5M.value: 5,
-    FilmingTime.WITHIN_10M.value: 10,
-    FilmingTime.WITHIN_20M.value: 20,
-    FilmingTime.PLUS_30M.value: 30,
+# knowledge/llm.py`), `/shooting-guide` 응답의 기존 `estimated_shooting_sec`
+# 계약은 초 단위를 유지한다. 화면은 이 초 값을 기존처럼 분 단위로 표시하며,
+# 분류 자체가 필요한 소비자는 `estimated_shooting_time_bucket`을 사용한다.
+FILMING_TIME_BUCKET_SECONDS: dict[str, int] = {
+    FilmingTime.WITHIN_5M.value: 5 * 60,
+    FilmingTime.WITHIN_10M.value: 10 * 60,
+    FilmingTime.WITHIN_20M.value: 20 * 60,
+    FilmingTime.PLUS_30M.value: 30 * 60,
 }
 
 
@@ -231,16 +231,12 @@ class ShootingGuideResponse(BaseModel):
 
     template_id: str
     version: int
-    # ⚠️ 2026-08-30부터 **분 단위**다(5/10/20/30 중 하나) — 예전엔 초 단위였다.
-    # Gemini가 분류한 촬영 시간 버킷을 `FILMING_TIME_BUCKET_MINUTES`로 환산한
-    # 값이며, 화면도 이 값을 "5분/10분/20분/30분+"로 그대로 노출한다. 필드명은
-    # 백엔드가 이미 이 키(`estimated_shooting_sec`)를 읽어 저장하고 있어 계약을
-    # 깨지 않으려고 그대로 둔다 — 백엔드 수정 없이 값의 단위만 바뀐다.
+    # 예상 촬영 소요시간(초). 기존 backend DB·frontend 표시·남은 시간
+    # 계산이 모두 초 단위를 사용하므로 계약을 유지한다.
     estimated_shooting_sec: int = Field(ge=1)
     # 2026-08-30 추가 — Gemini가 분류한 촬영 시간 버킷(`FilmingTime`과 같은 값
     # 집합이라 백엔드가 사용자의 `filming_time` 응답과 직접 비교할 수 있다).
-    # 이 필드가 생기기 전 템플릿(레거시)은 null이다.
-    estimated_shooting_time_bucket: str | None = None
+    estimated_shooting_time_bucket: FilmingTime | None = None
     required_people: int = Field(ge=1)
     props: list[str] = Field(default_factory=list)
     difficulty: str

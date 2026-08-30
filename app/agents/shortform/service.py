@@ -27,7 +27,7 @@ from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.models.shortform_session import ShortformSession
 from app.schemas.shortform import (
     FaceExposure,
-    FILMING_TIME_BUCKET_MINUTES,
+    FILMING_TIME_BUCKET_SECONDS,
     FilmingTime,
     NextRecommendationResponse,
     PromotionCategory,
@@ -436,12 +436,11 @@ class ShortformAgentService:
         # 근사했다 — 같은 완성 길이라도 컷이 4개인 영상과 20개인 영상의 실제
         # 촬영 시간이 같을 리 없다는 문제가 있었다. 지금은 Gemini가 최초 분석
         # 시점에 분류한 촬영 시간 버킷(`minimum_filming_time`, `filming_time`과
-        # 값 집합이 같다)의 **분 값(5/10/20/30)**을 그대로 내려준다. 버킷이 없는
-        # 구버전 템플릿은 예전 근사식으로 초를 계산한 뒤 같은 분 버킷으로
-        # 눌러 담는다 — 응답 필드 하나에 초와 분이 섞이면 화면이 구분할 방법이
-        # 없어서다.
+        # 값 집합이 같다)을 기존 초 단위 API 계약으로 환산해 내려준다.
+        # 버킷이 없는 구버전 템플릿은 예전 근사식으로 초를 계산한 뒤
+        # 같은 버킷으로 눌러 담고, 그 버킷의 초 값을 응답한다.
         shooting_time_bucket = template.recommendation_metadata.get("minimum_filming_time")
-        if shooting_time_bucket not in FILMING_TIME_BUCKET_MINUTES:
+        if shooting_time_bucket not in FILMING_TIME_BUCKET_SECONDS:
             final_duration = sum(
                 max(int(scene.get("target_duration_sec") or 0), 0) for scene in scenes
             )
@@ -451,12 +450,12 @@ class ShortformAgentService:
                 else max(int(guide.get("estimated_shooting_sec") or 60), 60)
             )
             shooting_time_bucket = _filming_time_bucket_from_seconds(legacy_sec)
-        estimated_shooting_minutes = FILMING_TIME_BUCKET_MINUTES[shooting_time_bucket]
+        estimated_shooting_sec = FILMING_TIME_BUCKET_SECONDS[shooting_time_bucket]
 
         return ShootingGuideResponse(
             template_id=template.template_id,
             version=template.version,
-            estimated_shooting_sec=estimated_shooting_minutes,
+            estimated_shooting_sec=estimated_shooting_sec,
             estimated_shooting_time_bucket=shooting_time_bucket,
             required_people=max(int(guide.get("required_people") or 1), 1),
             props=[str(item) for item in (guide.get("props") or []) if str(item).strip()],

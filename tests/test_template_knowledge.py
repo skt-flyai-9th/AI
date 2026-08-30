@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -430,6 +431,14 @@ def test_trend_video_analysis_generates_editing_candidate_and_uses_cache():
         )
         assert first.status == "VALIDATED"
         assert first.proposed_payload["trend_ids"] == ["trend_001"]
+        assert first.proposed_payload["recommendation_metadata"]["minimum_filming_time"] == (
+            "within_10m"
+        )
+        assert first.proposed_payload["recommendation_metadata"]["supported_filming_times"] == [
+            "within_10m",
+            "within_20m",
+            "30m_plus",
+        ]
         assert len(first.source_evidence["video_analysis_ids"]) == 1
         assert video.calls == 1
 
@@ -442,6 +451,47 @@ def test_trend_video_analysis_generates_editing_candidate_and_uses_cache():
             trend_context={"trend_id": "trend_001"},
         )
         assert video.calls == 1
+
+
+def test_video_analysis_schema_version_invalidates_legacy_cached_insight():
+    service, video = _service()
+    trend_id = "trend_legacy_cache"
+    youtube_url = "https://www.youtube.com/watch?v=legacy-cache"
+    legacy_payload = video.analyze(
+        trend_id=trend_id,
+        youtube_url=youtube_url,
+        trend_context={"trend_id": trend_id},
+    ).model_dump(mode="json")
+    legacy_payload.pop("estimated_shooting_time_bucket")
+    video.calls = 0
+    legacy_fingerprint = hashlib.sha256(
+        f"{trend_id}\n{youtube_url}\n{video.model_name}".encode()
+    ).hexdigest()
+
+    with SessionLocal() as db:
+        db.add(
+            TemplateVideoAnalysis(
+                id="tva_legacy_cache",
+                trend_id=trend_id,
+                youtube_url=youtube_url,
+                source_fingerprint=legacy_fingerprint,
+                model=video.model_name,
+                status="COMPLETED",
+                insights=legacy_payload,
+            )
+        )
+        db.commit()
+
+        refreshed = service.analyze_reference_video(
+            db,
+            trend_id=trend_id,
+            youtube_url=youtube_url,
+            trend_context={"trend_id": trend_id},
+        )
+
+    assert video.calls == 1
+    assert refreshed.id != "tva_legacy_cache"
+    assert refreshed.insights["estimated_shooting_time_bucket"] == "within_10m"
 
 
 def test_generated_editing_tasks_are_normalized_to_zero_based_scene_indexes():
