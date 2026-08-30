@@ -19,9 +19,10 @@ from app.models.trade_area_db_record import TradeAreaDBRecord
 from app.schemas.template_knowledge import (
     CandidateDecision,
     EditingCandidateCreate,
-    VideoEditingDBContent,
     EditingVideoInsight,
     MAX_SHOOTING_GUIDE_CUTS,
+    ReferenceVideoSegment,
+    ShootingGuideScene,
     TemplateCandidateStatus,
     TemplateType,
     TradeAreaAnalysisResult,
@@ -29,6 +30,7 @@ from app.schemas.template_knowledge import (
     TradeAreaCandidateCreate,
     TradeAreaEvidence,
     TradeAreaDBContent,
+    VideoEditingDBContent,
 )
 from app.template_knowledge.seeds import seed_template_library
 from app.template_knowledge.service import (
@@ -114,7 +116,7 @@ class FakeVideoAnalyzer:
                     "end_sec": float(index),
                     "scene_role": role,
                     "description": f"{role} 장면",
-                    "shot_type": "CLOSE_UP",
+                    "shot_type": "클로즈업",
                     "transition_out": "HARD_CUT" if index < 4 else None,
                     "evidence": f"{index - 1}.0-{index}.0초 {role}",
                 }
@@ -433,7 +435,7 @@ def test_trend_video_analysis_generates_editing_candidate_and_uses_cache():
         assert video.calls == 1
 
 
-def test_video_analysis_schema_version_invalidates_legacy_cached_insight():
+def test_video_analysis_schema_version_invalidates_previous_cached_insight():
     service, video = _service()
     trend_id = "trend_legacy_cache"
     youtube_url = "https://www.youtube.com/watch?v=legacy-cache"
@@ -442,10 +444,9 @@ def test_video_analysis_schema_version_invalidates_legacy_cached_insight():
         youtube_url=youtube_url,
         trend_context={"trend_id": trend_id},
     ).model_dump(mode="json")
-    legacy_payload.pop("estimated_shooting_time_bucket")
     video.calls = 0
-    legacy_fingerprint = hashlib.sha256(
-        f"{trend_id}\n{youtube_url}\n{video.model_name}".encode()
+    previous_fingerprint = hashlib.sha256(
+        f"{trend_id}\n{youtube_url}\n{video.model_name}\nschema=2".encode()
     ).hexdigest()
 
     with SessionLocal() as db:
@@ -454,7 +455,7 @@ def test_video_analysis_schema_version_invalidates_legacy_cached_insight():
                 id="tva_legacy_cache",
                 trend_id=trend_id,
                 youtube_url=youtube_url,
-                source_fingerprint=legacy_fingerprint,
+                source_fingerprint=previous_fingerprint,
                 model=video.model_name,
                 status="COMPLETED",
                 insights=legacy_payload,
@@ -472,6 +473,58 @@ def test_video_analysis_schema_version_invalidates_legacy_cached_insight():
     assert video.calls == 1
     assert refreshed.id != "tva_legacy_cache"
     assert refreshed.insights["estimated_shooting_time_bucket"] == "within_10m"
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "초록색 상의를 입고 손을 펼칩니다.",
+        "피자가 나타나도록 같은 구도에서 촬영합니다.",
+    ],
+)
+def test_shooting_guide_scene_rejects_non_reusable_description(description):
+    with pytest.raises(ValueError):
+        ShootingGuideScene(
+            scene_order=1,
+            scene_role="HOOK",
+            scene_description=description,
+            shot_type="정면 미디엄샷",
+            target_duration_sec=1,
+        )
+
+
+def test_shooting_guide_scene_allows_unrelated_korean_suffixes():
+    scene = ShootingGuideScene(
+        scene_order=1,
+        scene_role="OUTRO",
+        scene_description="참고 영상의 마지막 장면은 반복하지 않습니다.",
+        shot_type="여백 있는 공간 와이드샷",
+        target_duration_sec=1,
+    )
+
+    assert scene.scene_role == "OUTRO"
+
+
+@pytest.mark.parametrize("shot_type", ["가이드 구간 재현", "CLOSE_UP"])
+def test_guide_models_reject_placeholder_or_non_korean_shot_type(shot_type):
+    with pytest.raises(ValueError):
+        ShootingGuideScene(
+            scene_order=1,
+            scene_role="HOOK",
+            scene_description="인물이 손을 펼치는 장면입니다.",
+            shot_type=shot_type,
+            target_duration_sec=1,
+        )
+    with pytest.raises(ValueError):
+        ReferenceVideoSegment(
+            sequence=1,
+            start_sec=0,
+            end_sec=1,
+            scene_role="HOOK",
+            description="인물이 손을 펼치는 장면입니다.",
+            shot_type=shot_type,
+            evidence="0초부터 1초까지 손동작이 관찰됩니다.",
+        )
 
 
 def test_generated_editing_tasks_are_normalized_to_zero_based_scene_indexes():

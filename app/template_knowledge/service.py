@@ -50,7 +50,7 @@ from app.template_knowledge.llm import (
 from app.template_knowledge.validation import TemplateCandidateValidator
 
 
-_VIDEO_ANALYSIS_SCHEMA_VERSION = "2"
+_VIDEO_ANALYSIS_SCHEMA_VERSION = "3"
 _FILMING_TIME_BUCKET_ORDER = tuple(item.value for item in FilmingTime)
 
 
