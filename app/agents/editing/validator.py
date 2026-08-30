@@ -325,7 +325,14 @@ class EditRecipeValidator:
                             source="REALS_REGISTRY",
                         )
                 else:
-                    readable_ms = max(900, _typewriter_unit_count(caption.text) * 60 + 400)
+                    readability_target_ms = max(
+                        900,
+                        _typewriter_unit_count(caption.text) * 60 + 400,
+                    )
+                    # A caption cannot outlive the clip that owns it. For very
+                    # short cuts, displaying the caption for the entire cut is
+                    # the longest valid and therefore sufficient duration.
+                    readable_ms = min(readability_target_ms, max(1, int(output_duration)))
                     if caption_duration_ms < readable_ms:
                         add(
                             "CAPTION_DURATION_TOO_SHORT",
