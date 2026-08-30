@@ -799,7 +799,7 @@ def _scope_user_statements_to_subject(
 _CAPTION_MARKERS = ("자막", "문구", "띄우", "표시", "카피", "대사")
 
 _UNQUOTED_CAPTION_PHRASE_PATTERN = re.compile(
-    r"([\w가-힣0-9!?~.,]{1,40}?)\s*(?:이라고|라고)\s*(?:" + "|".join(_CAPTION_MARKERS) + r")"
+    r"([\w가-힣0-9!?~., ]{1,40}?)\s*(?:이라고|라고)\s*(?:" + "|".join(_CAPTION_MARKERS) + r")"
 )
 
 _CAPTION_POSITION_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -808,7 +808,12 @@ _CAPTION_POSITION_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("BOTTOM", ("하단", "맨 아래", "아래쪽", "화면 아래")),
 )
 
-_CAPTION_SECONDS_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*초")
+_CAPTION_DURATION_PATTERN = re.compile(
+    r"(\d+(?:\.\d+)?)\s*초"
+    r"(?!\s*(?:후|뒤|부터|시점|지점))"
+    r"(?:\s*(?:동안|간|정도|가량|쯤|이상|씩|만)"
+    r"|(?=\s*(?:은|는)?\s*(?:보여|노출|유지|띄워|표시)))"
+)
 
 
 def _extract_caption_phrases(user_statements: list[str]) -> list[str]:
@@ -833,22 +838,26 @@ def _extract_caption_phrases(user_statements: list[str]) -> list[str]:
 
 
 def _extract_caption_position_request(user_statements: list[str]) -> str | None:
-    for statement in user_statements:
+    for statement in reversed(user_statements):
         if not any(marker in statement for marker in _CAPTION_MARKERS):
             continue
+        matches: list[tuple[int, str]] = []
         for position, keywords in _CAPTION_POSITION_KEYWORDS:
-            if any(keyword in statement for keyword in keywords):
-                return position
+            for keyword in keywords:
+                matches.extend((match.start(), position) for match in re.finditer(keyword, statement))
+        if matches:
+            return max(matches, key=lambda item: item[0])[1]
     return None
 
 
 def _extract_requested_caption_duration_ms(user_statements: list[str]) -> int | None:
-    for statement in user_statements:
+    for statement in reversed(user_statements):
         if not any(marker in statement for marker in _CAPTION_MARKERS):
             continue
-        match = _CAPTION_SECONDS_PATTERN.search(statement)
-        if match is None:
+        matches = list(_CAPTION_DURATION_PATTERN.finditer(statement))
+        if not matches:
             continue
+        match = matches[-1]
         seconds = float(match.group(1))
         if seconds <= 0:
             continue
