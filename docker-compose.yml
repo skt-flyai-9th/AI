@@ -27,6 +27,9 @@ services:
   renderer:
     build: .
     command: uvicorn app.renderer.main:app --host 0.0.0.0 --port 8080
+    # Uvicorn drains in-flight requests on SIGTERM. Give an active render the
+    # same upper bound as the editing task before Compose may force-kill it.
+    stop_grace_period: 40m
     env_file: .env
     environment:
       RUN_DB_MIGRATIONS: "false"
@@ -77,6 +80,9 @@ services:
   worker:
     build: .
     command: celery -A app.workers.celery_app.celery_app worker --loglevel=INFO --concurrency=1
+    # Celery performs a warm shutdown on SIGTERM. Deployments must not turn a
+    # valid in-flight edit into a renderer/network failure after ten seconds.
+    stop_grace_period: 40m
     env_file: .env
     environment:
       RUN_DB_MIGRATIONS: "false"
