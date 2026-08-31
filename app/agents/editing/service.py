@@ -46,6 +46,7 @@ from app.schemas.editing import (
     RecipeCta,
     SelectedShortform,
 )
+from app.services.store_trade_area_context import enrich_store_context_with_trade_area
 
 
 class EditingDomainError(RuntimeError):
@@ -82,6 +83,16 @@ class EditingAgentService:
         shortform_context = _find_shortform_context(db, request)
         if shortform_context:
             request_snapshot["_shortform_context"] = shortform_context
+        else:
+            store_context = _find_latest_store_context(db, request.project.store_id)
+            if store_context:
+                request_snapshot["_shortform_context"] = {
+                    "resolution": "STORE_ONLY",
+                    "project_id": request.project.project_id,
+                    "store_context": store_context,
+                    "project_state": {},
+                    "recent_user_statements": [],
+                }
         warnings = []
         if not shortform_context:
             warnings.append(
@@ -480,7 +491,7 @@ class EditingAgentService:
         run.finished_at = datetime.now(timezone.utc)
         db.commit()
 
-    def result(self, run: EditingRun) -> EditingRunResultResponse:
+    def result(self, run: EditingRun, db: Session | None = None) -> EditingRunResultResponse:
         warnings = [str(item) for item in (run.warnings or [])]
         recipe = _recipe_for_result(run.recipe)
         if run.recipe and recipe is None:
@@ -488,7 +499,7 @@ class EditingAgentService:
                 "LEGACY_RECIPE_UNAVAILABLE: 이전 편집 레시피는 현재 형식으로 변환할 수 없습니다."
             )
         try:
-            publishing = _publishing_for_result(run)
+            publishing = _publishing_for_result(run, db=db)
         except ValidationError:
             publishing = None
             warnings.append(
@@ -683,11 +694,14 @@ def _find_shortform_context(
     store_context = dict(session.store_context or {})
     store = dict(store_context.get("store") or {})
     store.pop("store_photos", None)
-    safe_store_context = {
-        "store": store,
-        "representative_menus": list(store_context.get("representative_menus") or []),
-        "trade_area": store_context.get("trade_area"),
-    }
+    safe_store_context = enrich_store_context_with_trade_area(
+        db,
+        {
+            "store": store,
+            "representative_menus": list(store_context.get("representative_menus") or []),
+            "trade_area": store_context.get("trade_area"),
+        },
+    )
     user_statements = [
         str(item.get("content") or "").strip()[:500]
         for item in list(session.conversation or [])[-40:]
@@ -729,6 +743,30 @@ def _find_shortform_context(
         project_state=state,
     )
     return context
+
+
+def _find_latest_store_context(db: Session, store_id: str) -> dict[str, Any]:
+    sessions = db.scalars(
+        select(ShortformSession)
+        .where(ShortformSession.store_id == store_id)
+        .order_by(ShortformSession.updated_at.desc())
+        .limit(50)
+    ).all()
+    for session in sessions:
+        store_context = dict(session.store_context or {})
+        store = dict(store_context.get("store") or {})
+        location = dict(store.get("location") or {})
+        if store.get("store_name") or location.get("address"):
+            store.pop("store_photos", None)
+            return enrich_store_context_with_trade_area(
+                db,
+                {
+                    "store": store,
+                    "representative_menus": list(store_context.get("representative_menus") or []),
+                    "trade_area": store_context.get("trade_area"),
+                },
+            )
+    return {}
 
 
 def _session_recommendations(session: ShortformSession) -> list[dict[str, Any]]:
@@ -1057,14 +1095,26 @@ def _fallback_hashtags(subject_name: str) -> list[str]:
     return list(dict.fromkeys(candidates))[:5]
 
 
-def _publishing_for_result(run: EditingRun) -> PublishingResult | None:
+def _publishing_for_result(
+    run: EditingRun,
+    *,
+    db: Session | None = None,
+) -> PublishingResult | None:
     if not run.publishing_result:
         return None
     data = dict(run.publishing_result)
-    snapshot = run.request_snapshot or {}
+    snapshot = dict(run.request_snapshot or {})
     project = snapshot.get("project") or {}
+    if db is not None and not dict(snapshot.get("_shortform_context") or {}).get("store_context"):
+        store_context = _find_latest_store_context(db, str(project.get("store_id") or ""))
+        if store_context:
+            snapshot["_shortform_context"] = {
+                "resolution": "STORE_ONLY",
+                "store_context": store_context,
+                "project_state": {},
+            }
     subject = project.get("promotion_subject") or {}
-    subject_name = str(subject.get("name") or "오늘의 추천")[:40]
+    subject_name = _promotion_subject_name(subject)
     data["title"] = _strip_legacy_operational_copy(str(data.get("title") or ""))
     data["caption"] = _publishing_caption(snapshot)
     if not data.get("title"):
@@ -1105,9 +1155,7 @@ def _publishing_for_result(run: EditingRun) -> PublishingResult | None:
                 "search_keyword": fixed_keyword,
             }
         )
-        data["post_note"] = (
-            f"플랫폼 음원 검색에서 ‘{fixed_keyword}’을 검색해 직접 추가해주세요."
-        )
+        data["post_note"] = f"플랫폼 음원 검색에서 ‘{fixed_keyword}’을 검색해 직접 추가해주세요."
     elif track.get("title"):
         track["mode"] = "FIXED"
     else:
@@ -1141,7 +1189,7 @@ def _publishing_caption(snapshot: dict[str, Any]) -> str:
     store_name = _clean_post_value(store.get("store_name"), limit=80)
     address = _clean_post_value(location.get("address"), limit=200)
     area = _post_area_label(location=location, trade_area=trade_area, address=address)
-    subject_name = _clean_post_value(subject.get("name"), limit=80) or "오늘의 추천"
+    subject_name = _clean_post_value(_promotion_subject_name(subject), limit=80)
     subject_type = str(subject.get("type") or "").strip().upper()
     subject_label = {
         "MENU": "메뉴",

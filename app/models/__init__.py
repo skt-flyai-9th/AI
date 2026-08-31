@@ -4,6 +4,7 @@ from app.models.editing_run import EditingRun
 from app.models.pipeline_run import PipelineRun
 from app.models.ranking_snapshot import RankingSnapshot
 from app.models.shortform_session import ShortformSession
+from app.models.store_trade_area_insight import StoreTradeAreaInsight
 from app.models.template_update_candidate import TemplateUpdateCandidate
 from app.models.template_video_analysis import TemplateVideoAnalysis
 from app.models.template_knowledge_run import TemplateKnowledgeRun
@@ -18,6 +19,7 @@ __all__ = [
     "PipelineRun",
     "RankingSnapshot",
     "ShortformSession",
+    "StoreTradeAreaInsight",
     "TemplateUpdateCandidate",
     "TemplateVideoAnalysis",
     "TemplateKnowledgeRun",

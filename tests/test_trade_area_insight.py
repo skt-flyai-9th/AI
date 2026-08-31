@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from app.schemas.trade_area_insight import StoreInfo
+from app.db.session import SessionLocal
+from app.models.shortform_session import ShortformSession
+from app.models.store_trade_area_insight import StoreTradeAreaInsight
 from app.services.trade_area_insight import build_trade_area_insight, load_trade_area_knowledge
+from app.services.store_trade_area_context import normalize_store_address
 
 
 def _sharosu_coordinates() -> tuple[float, float]:
@@ -98,7 +102,7 @@ def test_endpoint_returns_expected_response_shape(client, auth_headers):
                 "name": "테스트 분식",
                 "category": "분식",
                 "sub_category": "떡볶이/김밥",
-                "address": "서울 관악구 어딘가 1",
+                "address": "서울 관악구 관악로15길 26",
                 "latitude": lat,
                 "longitude": lon,
             }
@@ -111,3 +115,50 @@ def test_endpoint_returns_expected_response_shape(client, auth_headers):
     assert sum(body["age_distribution"].values()) == 100
     assert set(body["gender_distribution"].keys()) == {"male", "female"}
     assert sum(body["gender_distribution"].values()) == 100
+
+    normalized_address = normalize_store_address("서울 관악구 관악로15길 26")
+    with SessionLocal() as db:
+        saved = db.get(StoreTradeAreaInsight, normalized_address)
+        assert saved is not None
+        assert saved.district_name == "샤로수길·서울대입구"
+
+
+def test_shortform_session_reuses_saved_trade_area_by_address(client, auth_headers):
+    lat, lon = _sharosu_coordinates()
+    analysis = client.post(
+        "/api/v1/trade-area-insights",
+        headers=auth_headers,
+        json={
+            "store": {
+                "name": "오니",
+                "category": "분식",
+                "address": "서울 관악구 관악로15길 26",
+                "latitude": lat,
+                "longitude": lon,
+            }
+        },
+    )
+    assert analysis.status_code == 200
+
+    session = client.post(
+        "/api/v1/shortform-sessions",
+        headers=auth_headers,
+        json={
+            "store_context": {
+                "store": {
+                    "store_id": "58",
+                    "store_name": "오니",
+                    "category": "분식",
+                    "location": {"address": "서울 관악구 관악로15길 26"},
+                },
+                "representative_menus": [],
+                "trade_area": None,
+            }
+        },
+    )
+    assert session.status_code == 200
+
+    with SessionLocal() as db:
+        saved_session = db.get(ShortformSession, session.json()["session_id"])
+        assert saved_session is not None
+        assert saved_session.store_context["trade_area"]["district_name"] == "샤로수길·서울대입구"

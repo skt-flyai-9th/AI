@@ -64,14 +64,17 @@ def get_editing_run(run_id: str, db: Session = Depends(get_db)) -> EditingRunRea
     queue_position: int | None = None
     estimated_wait_sec: int | None = None
     if run.status == EditingRunStatus.QUEUED.value:
-        ahead = db.scalar(
-            select(func.count())
-            .select_from(EditingRun)
-            .where(
-                EditingRun.status.in_(["RUNNING", "QUEUED"]),
-                EditingRun.created_at < run.created_at,
+        ahead = (
+            db.scalar(
+                select(func.count())
+                .select_from(EditingRun)
+                .where(
+                    EditingRun.status.in_(["RUNNING", "QUEUED"]),
+                    EditingRun.created_at < run.created_at,
+                )
             )
-        ) or 0
+            or 0
+        )
         queue_position = int(ahead) + 1
         estimated_wait_sec = int(ahead) * get_settings().editing_estimated_seconds_per_run
     elif run.status == EditingRunStatus.RUNNING.value:
@@ -117,7 +120,7 @@ def get_editing_result(
                 "error_message": run.error_message if run.status == "FAILED" else None,
             },
         )
-    return service.result(run)
+    return service.result(run, db=db)
 
 
 @router.post(

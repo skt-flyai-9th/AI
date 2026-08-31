@@ -46,6 +46,7 @@ from app.schemas.shortform import (
     TurnInputType,
 )
 from app.schemas.template_knowledge import MAX_SHOOTING_GUIDE_TITLE_CHARS
+from app.services.store_trade_area_context import enrich_store_context_with_trade_area
 from app.template_knowledge.seeds import seed_template_library
 
 
@@ -106,11 +107,15 @@ class ShortformAgentService:
     def create_session(
         self, db: Session, store_context: StoreContext
     ) -> ShortformSessionCreateResponse:
+        stored_context = enrich_store_context_with_trade_area(
+            db,
+            store_context.model_dump(mode="json"),
+        )
         session = ShortformSession(
             id=f"sf_{uuid.uuid4().hex}",
             status=ShortformSessionStatus.COLLECTING.value,
             store_id=store_context.store.store_id,
-            store_context=store_context.model_dump(mode="json"),
+            store_context=stored_context,
             project_state=_initial_project_state(),
             conversation=[],
             shown_video_editing_db_ids=[],

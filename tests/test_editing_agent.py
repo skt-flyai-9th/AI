@@ -14,6 +14,7 @@ from app.core.config import Settings
 from app.db.session import SessionLocal
 from app.models.editing_run import EditingRun
 from app.models.shortform_session import ShortformSession
+from app.models.store_trade_area_insight import StoreTradeAreaInsight
 from app.models.video_editing_db_record import VideoEditingDBRecord
 from app.schemas.editing import (
     EditRecipe,
@@ -24,6 +25,7 @@ from app.schemas.editing import (
     PublishingResult,
     RecipeCta,
 )
+from app.services.store_trade_area_context import normalize_store_address
 
 
 def _request() -> EditingRunCreateRequest:
@@ -534,6 +536,81 @@ def test_result_formats_publishing_caption_and_limits_hashtags_to_five():
     assert result.publishing.hashtags == publishing["hashtags"][:5]
 
 
+def test_result_recovers_store_and_trade_area_without_project_session_match():
+    service = EditingAgentService(
+        llm=RepairingFakeLLM(),
+        video_context_builder=FakeVideoContextBuilder(),
+        renderer=FakeRenderer(),
+    )
+    publishing = _publishing().model_dump(mode="json")
+    run = EditingRun(
+        id="edit_store_only_post",
+        status="COMPLETED",
+        stage="COMPLETED",
+        progress=100,
+        request_snapshot={
+            "project": {
+                "project_id": "324",
+                "store_id": "58",
+                "promotion_subject": {
+                    "type": "MENU",
+                    "menu_id": 44,
+                    "menu_name": "참치마요오니",
+                },
+                "promotion_objective": "sales",
+            },
+            "selected_shortform": {"editing_template_id": "gt_donggeurio_challenge"},
+        },
+        publishing_result=publishing,
+        warnings=[],
+        missing_scene_roles=[],
+        available_options=[],
+    )
+    with SessionLocal() as db:
+        db.add(
+            StoreTradeAreaInsight(
+                normalized_address=normalize_store_address("서울 관악구 관악로15길 26"),
+                address="서울 관악구 관악로15길 26",
+                store_name="오니",
+                latitude=37.4804296,
+                longitude=126.9509240,
+                district_name="샤로수길·서울대입구",
+                result={"district_name": "샤로수길·서울대입구", "summary": "상권 요약"},
+            )
+        )
+        db.add(
+            ShortformSession(
+                id="sf_store_only",
+                status="COLLECTING",
+                store_id="58",
+                store_context={
+                    "store": {
+                        "store_id": "58",
+                        "store_name": "오니",
+                        "category": "분식",
+                        "location": {"address": "서울 관악구 관악로15길 26"},
+                    },
+                    "representative_menus": [],
+                    "trade_area": None,
+                },
+                project_state={"brief_confirmed": False},
+                conversation=[],
+                shown_video_editing_db_ids=[],
+                current_recommendation=None,
+            )
+        )
+        db.commit()
+
+        result = service.result(run, db=db)
+
+    assert result.publishing is not None
+    assert result.publishing.caption.startswith(
+        "샤로수길·서울대입구 오니\n\n오니에서 소개하는 이번 메뉴는 ‘참치마요오니’입니다. 🍽️"
+    )
+    assert "📍서울 관악구 관악로15길 26" in result.publishing.caption
+    assert len(result.publishing.hashtags) == 5
+
+
 def test_editing_run_accepts_ten_videos_and_rejects_more_than_runtime_limit():
     request_payload = _request().model_dump(mode="json")
     request_payload["videos"] = [
@@ -795,7 +872,10 @@ def test_project_alias_does_not_guess_between_matching_sessions():
 
         run = service.create_run(db, request)
 
-    assert "_shortform_context" not in run.request_snapshot
+    context = run.request_snapshot["_shortform_context"]
+    assert context["resolution"] == "STORE_ONLY"
+    assert context["recent_user_statements"] == []
+    assert "다른 프로젝트 문구" not in str(context)
     assert any("PERSONALIZATION_CONTEXT_UNRESOLVED" in item for item in run.warnings)
 
 
