@@ -1061,24 +1061,33 @@ def _publishing_for_result(run: EditingRun) -> PublishingResult | None:
     if not run.publishing_result:
         return None
     data = dict(run.publishing_result)
-    raw_caption = str(data.get("caption") or "").strip()
-    project = (run.request_snapshot or {}).get("project") or {}
+    snapshot = run.request_snapshot or {}
+    project = snapshot.get("project") or {}
     subject = project.get("promotion_subject") or {}
     subject_name = str(subject.get("name") or "오늘의 추천")[:40]
     data["title"] = _strip_legacy_operational_copy(str(data.get("title") or ""))
-    data["caption"] = _strip_legacy_operational_copy(raw_caption)
+    data["caption"] = _publishing_caption(snapshot)
     if not data.get("title"):
         data["title"] = f"{subject_name}의 매력을 만나보세요"
-    if not data.get("caption"):
-        data["caption"] = f"{subject_name}의 모습을 짧은 영상으로 확인해 보세요."
 
-    hashtags = [str(value) for value in (data.get("hashtags") or [])]
-    for fallback in ("#숏폼", "#릴스", "#매장소개", "#가게소개", "#동네맛집"):
+    hashtags = []
+    for value in data.get("hashtags") or []:
+        hashtag = str(value).strip()
+        if (
+            hashtag.startswith("#")
+            and len(hashtag) > 1
+            and not any(character.isspace() for character in hashtag)
+            and hashtag not in hashtags
+        ):
+            hashtags.append(hashtag)
+        if len(hashtags) == 5:
+            break
+    for fallback in _fallback_hashtags(subject_name):
         if len(hashtags) >= 5:
             break
         if fallback not in hashtags:
             hashtags.append(fallback)
-    data["hashtags"] = hashtags
+    data["hashtags"] = hashtags[:5]
 
     selected = (run.request_snapshot or {}).get("selected_shortform") or {}
     editing_template_id = str(selected.get("editing_template_id") or "")
@@ -1115,6 +1124,108 @@ def _publishing_for_result(run: EditingRun) -> PublishingResult | None:
         data["post_note"] = f"플랫폼 음원 검색에서 ‘{keyword}’을 검색해 직접 추가해주세요."
     data["track"] = track
     return PublishingResult.model_validate(data)
+
+
+def _publishing_caption(snapshot: dict[str, Any]) -> str:
+    """Build stable store-first publishing copy from verified project fields."""
+
+    project = dict(snapshot.get("project") or {})
+    shortform_context = dict(snapshot.get("_shortform_context") or {})
+    store_context = dict(shortform_context.get("store_context") or {})
+    store = dict(store_context.get("store") or {})
+    location = dict(store.get("location") or {})
+    trade_area = dict(store_context.get("trade_area") or {})
+    state = dict(shortform_context.get("project_state") or {})
+    subject = dict(project.get("promotion_subject") or state.get("promotion_subject") or {})
+
+    store_name = _clean_post_value(store.get("store_name"), limit=80)
+    address = _clean_post_value(location.get("address"), limit=200)
+    area = _post_area_label(location=location, trade_area=trade_area, address=address)
+    subject_name = _clean_post_value(subject.get("name"), limit=80) or "오늘의 추천"
+    subject_type = str(subject.get("type") or "").strip().upper()
+    subject_label = {
+        "MENU": "메뉴",
+        "NEW_MENU": "신메뉴",
+        "PRODUCT": "상품",
+        "EVENT": "이벤트",
+        "STORE": "매장",
+    }.get(subject_type, "홍보 대상")
+
+    sections: list[str] = []
+    header = " ".join(part for part in (area, store_name) if part)
+    if header:
+        sections.append(header)
+
+    owner = f"{store_name}에서 소개하는 " if store_name else ""
+    subject_emoji = {
+        "MENU": "🍽️",
+        "NEW_MENU": "🍽️",
+        "PRODUCT": "✨",
+        "EVENT": "🎉",
+        "STORE": "🏠",
+    }.get(subject_type, "📣")
+    core_lines = [f"{owner}이번 {subject_label}는 ‘{subject_name}’입니다. {subject_emoji}"]
+
+    detail = _verified_post_detail(state)
+    if detail:
+        core_lines.append(detail)
+    sections.append("\n".join(core_lines))
+
+    sections.append(
+        "\n".join(
+            _publishing_cta(project.get("promotion_objective") or state.get("promotion_objective"))
+        )
+    )
+    if address:
+        sections.append(f"📍{address}")
+    return "\n\n".join(sections)
+
+
+def _clean_post_value(value: Any, *, limit: int) -> str:
+    return " ".join(str(value or "").split())[:limit]
+
+
+def _post_area_label(*, location: dict[str, Any], trade_area: dict[str, Any], address: str) -> str:
+    for key in ("nearest_station", "station_name", "area_name", "neighborhood"):
+        value = _clean_post_value(location.get(key), limit=80)
+        if value:
+            return value
+    for key in ("district_name", "name"):
+        value = _clean_post_value(trade_area.get(key), limit=80)
+        if value:
+            return value
+    address_parts = address.split()
+    if len(address_parts) >= 2:
+        return address_parts[1]
+    return address_parts[0] if address_parts else ""
+
+
+def _verified_post_detail(state: dict[str, Any]) -> str:
+    candidates = [
+        *dict(state.get("facts_from_user") or {}).values(),
+        *list(state.get("secondary_information") or []),
+    ]
+    generic_values = {"대표메뉴", "대표 메뉴", "메뉴", "상품", "홍보"}
+    for candidate in candidates:
+        value = _clean_post_value(candidate, limit=160)
+        if value and value not in generic_values and not value.isdecimal():
+            return value if value[-1] in ".!?。！？" else f"{value}."
+    return ""
+
+
+def _publishing_cta(objective: Any) -> list[str]:
+    normalized = str(objective or "").strip().lower()
+    action = {
+        "reservation_inquiry": "궁금한 점은 매장에 문의해보세요!",
+        "visit": "가까운 날 매장에서 직접 만나보세요!",
+        "new_customer": "가까운 날 매장에서 직접 만나보세요!",
+        "revisit": "다시 생각나는 날 매장에 방문해보세요!",
+        "sales": "가까운 날 매장에서 직접 만나보세요!",
+    }.get(normalized, "가까운 날 매장에서 직접 만나보세요!")
+    return [
+        "영상으로 먼저 확인하고, 마음에 든다면 저장해두세요.",
+        f"{action} ✨",
+    ]
 
 
 def _recipe_for_result(raw: dict[str, Any] | None) -> EditRecipe | None:

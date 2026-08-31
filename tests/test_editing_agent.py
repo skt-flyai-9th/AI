@@ -145,6 +145,11 @@ def test_publishing_contract_requires_five_hashtags_and_search_keyword():
         PublishingResult.model_validate(payload)
 
     payload = _publishing().model_dump(mode="json")
+    payload["hashtags"].append("#여섯번째")
+    with pytest.raises(ValueError, match="at most 5 items"):
+        PublishingResult.model_validate(payload)
+
+    payload = _publishing().model_dump(mode="json")
     payload["track"]["search_keyword"] = None
     with pytest.raises(ValueError, match="search_keyword"):
         PublishingResult.model_validate(payload)
@@ -464,6 +469,69 @@ def test_result_forces_template_track_search_keyword(
     assert result.publishing.track.artist is None
     assert result.publishing.track.search_keyword == expected_keyword
     assert expected_keyword in result.publishing.post_note
+
+
+def test_result_formats_publishing_caption_and_limits_hashtags_to_five():
+    service = EditingAgentService(
+        llm=RepairingFakeLLM(),
+        video_context_builder=FakeVideoContextBuilder(),
+        renderer=FakeRenderer(),
+    )
+    publishing = _publishing().model_dump(mode="json")
+    publishing["caption"] = "정면에서 시작해 반전 동작을 보여주세요."
+    publishing["hashtags"] = [
+        "#오니",
+        "#서울대입구맛집",
+        "#관악구맛집",
+        "#대표메뉴",
+        "#숏폼",
+        "#릴스",
+    ]
+    run = EditingRun(
+        id="edit_post_template",
+        status="COMPLETED",
+        stage="COMPLETED",
+        progress=100,
+        request_snapshot={
+            "project": {
+                "promotion_subject": {"type": "MENU", "name": "4"},
+                "promotion_objective": "sales",
+            },
+            "_shortform_context": {
+                "store_context": {
+                    "store": {
+                        "store_name": "오니",
+                        "location": {
+                            "address": "서울특별시 관악구 관악로15길 26",
+                            "nearest_station": "서울대입구역",
+                        },
+                    }
+                },
+                "project_state": {
+                    "facts_from_user": {},
+                    "secondary_information": [],
+                },
+            },
+            "selected_shortform": {"editing_template_id": "video_editing_db_014"},
+        },
+        publishing_result=publishing,
+        warnings=[],
+        missing_scene_roles=[],
+        available_options=[],
+    )
+
+    result = service.result(run)
+
+    assert result.publishing is not None
+    assert result.publishing.caption == (
+        "서울대입구역 오니\n\n"
+        "오니에서 소개하는 이번 메뉴는 ‘4’입니다. 🍽️\n\n"
+        "영상으로 먼저 확인하고, 마음에 든다면 저장해두세요.\n"
+        "가까운 날 매장에서 직접 만나보세요! ✨\n\n"
+        "📍서울특별시 관악구 관악로15길 26"
+    )
+    assert len(result.publishing.hashtags) == 5
+    assert result.publishing.hashtags == publishing["hashtags"][:5]
 
 
 def test_editing_run_accepts_ten_videos_and_rejects_more_than_runtime_limit():

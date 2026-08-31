@@ -1069,7 +1069,7 @@ def _requirements(
         "instead of inventing a specific product name.",
         "Publishing title and caption are separate: title is a short hook and caption is the post body.",
         "Publishing title, caption, and video CTA must contain marketing copy only; never put music, upload, platform, or other operational instructions in them.",
-        "Return 5 to 20 unique hashtags. Every hashtag must begin with # and contain no whitespace.",
+        "Return exactly 5 unique hashtags. Every hashtag must begin with # and contain no whitespace.",
         "Never guess a song title or artist. Use FIXED only for verified metadata; otherwise use SUGGESTED with a concise platform search_keyword derived from the selected trend/template.",
         "Audio start_sec and end_sec must be null until source-song audio matching is available.",
         "Publishing post_note must tell the user how to add music in the platform and, for SUGGESTED audio, include track.search_keyword verbatim.",

@@ -247,7 +247,7 @@ class PublishingResult(BaseModel):
 
     title: str = Field(min_length=1, max_length=80)
     caption: str = Field(min_length=1, max_length=2000)
-    hashtags: list[str] = Field(min_length=5, max_length=20)
+    hashtags: list[str] = Field(min_length=5, max_length=5)
     track: PublishingTrack
     post_note: str = "음원은 게시 시 플랫폼 내에서 추가해주세요."
 
