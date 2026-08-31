@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-08-30T18:30:00+09:00",
-  "count": 3,
+  "generated_at": "2026-08-31T08:45:49+09:00",
+  "count": 4,
   "results": [
     {
       "id": "jujutsu_transition",
@@ -62,6 +62,27 @@
           "사람이 갑자기 사라지거나 다시 나타나는 프레임 불연속마다 별도 컷으로 분리",
           "인물의 자세나 화면 위치가 연속 동작 없이 뚝 바뀌면 별도 컷으로 분리",
           "같은 안무 구간이어도 점프컷을 하나의 연속 장면으로 합치지 않음"
+        ]
+      }
+    },
+    {
+      "id": "doma_bad_challenge",
+      "rank": 4,
+      "name": "도마 BAD 챌린지",
+      "category": "challenge",
+      "representative_youtube_url": "https://www.youtube.com/shorts/rUIEHnyoPrU",
+      "guide_youtube_url": "https://www.youtube.com/shorts/rUIEHnyoPrU",
+      "format_type": "챌린지",
+      "expected_duration_sec": 11,
+      "shooting_difficulty": "중",
+      "requires_face": true,
+      "reference_cut_review": {
+        "status": "UPLOADED_JSON_REVIEWED",
+        "expected_cut_count": 1,
+        "boundary_basis": [
+          "업로드 JSON이 0~11초 전체를 물리 컷 없는 단일 연속 촬영으로 명시",
+          "0~4초 SETUP, 4~5초 BUILDUP, 5~11초 CLIMAX는 의미 구간이며 영상을 분할하지 않음",
+          "5초 비트 드롭의 행동 반전은 인물 동작으로 만들고 합성 전환·속도 변경을 사용하지 않음"
         ]
       }
     }

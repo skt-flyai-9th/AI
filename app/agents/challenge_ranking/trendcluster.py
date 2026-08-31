@@ -11,24 +11,27 @@ from typing import Any
 
 TRENDCLUSTER_FILENAME = "trendcluster.json"
 
-# 운영 trendcluster는 영상편집 DB에서 검증을 마친 이 세 숏폼만 사용한다.
+# 운영 trendcluster는 영상편집 DB에서 검증을 마친 이 네 숏폼만 사용한다.
 # 파이프라인이 더 많은 후보를 찾아도 API/DB에 다시 유입시키지 않는다.
 TRENDCLUSTER_CHALLENGE_IDS = (
     "jujutsu_transition",
     "donggeurio_challenge",
     "otsukare_summer_challenge",
+    "doma_bad_challenge",
 )
 
 TRENDCLUSTER_CANONICAL_RANKS = {
     "jujutsu_transition": 1,
     "donggeurio_challenge": 2,
     "otsukare_summer_challenge": 3,
+    "doma_bad_challenge": 4,
 }
 
 _SEED_CATEGORIES = {
     "jujutsu_transition": "meme",
     "donggeurio_challenge": "food",
     "otsukare_summer_challenge": "challenge",
+    "doma_bad_challenge": "challenge",
 }
 
 _SEED_GUIDE_URL_OVERRIDES = {
@@ -43,6 +46,7 @@ _GUIDE_CLASSIFICATIONS: dict[str, tuple[str, bool]] = {
     "jujutsu_transition": ("밈", False),
     "donggeurio_challenge": ("정보형", False),
     "otsukare_summer_challenge": ("챌린지", True),
+    "doma_bad_challenge": ("챌린지", True),
 }
 
 _REFERENCE_CUT_REVIEWS: dict[str, dict[str, Any]] = {
@@ -71,6 +75,15 @@ _REFERENCE_CUT_REVIEWS: dict[str, dict[str, Any]] = {
             "사람이 갑자기 사라지거나 다시 나타나는 프레임 불연속마다 별도 컷으로 분리",
             "인물의 자세나 화면 위치가 연속 동작 없이 뚝 바뀌면 별도 컷으로 분리",
             "같은 안무 구간이어도 점프컷을 하나의 연속 장면으로 합치지 않음",
+        ],
+    },
+    "doma_bad_challenge": {
+        "status": "UPLOADED_JSON_REVIEWED",
+        "expected_cut_count": 1,
+        "boundary_basis": [
+            "업로드 JSON이 0~11초 전체를 물리 컷 없는 단일 연속 촬영으로 명시",
+            "0~4초 SETUP, 4~5초 BUILDUP, 5~11초 CLIMAX는 의미 구간이며 영상을 분할하지 않음",
+            "5초 비트 드롭의 행동 반전은 인물 동작으로 만들고 합성 전환·속도 변경을 사용하지 않음",
         ],
     },
 }
@@ -168,9 +181,9 @@ def build_video_editing_db_trendcluster() -> dict[str, Any]:
             result["reference_cut_review"] = _REFERENCE_CUT_REVIEWS[challenge_id]
         results.append(result)
     results.sort(key=lambda item: (item["rank"], item["id"]))
-    if len(results) != 3:
+    if len(results) != 4:
         raise ValueError(
-            f"Expected exactly 3 PASS entries in the provided video-editing DB, got {len(results)}."
+            f"Expected exactly 4 PASS entries in the provided video-editing DB, got {len(results)}."
         )
     return {
         "generated_at": max(generated_at),
