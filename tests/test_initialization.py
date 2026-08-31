@@ -77,6 +77,8 @@ def test_compose_uses_one_shot_initializer_and_recovery_only_beat():
     assert services["worker"]["depends_on"]["initializer"]["condition"] == (
         "service_completed_successfully"
     )
+    assert services["worker"]["stop_grace_period"] == "40m"
+    assert services["renderer"]["stop_grace_period"] == "40m"
     assert services["beat"]["depends_on"]["initializer"]["condition"] == (
         "service_completed_successfully"
     )
