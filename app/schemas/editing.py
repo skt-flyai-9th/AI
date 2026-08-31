@@ -189,12 +189,18 @@ class RecipeClip(BaseModel):
     captions: list[RecipeCaption] = Field(default_factory=list)
     effects: list[RecipeEffect] = Field(default_factory=list)
 
-    def all_captions(self) -> list[RecipeCaption]:
-        """Return legacy and multi-caption fields without exact duplicates."""
+    def caption_entries(self) -> list[tuple[str, RecipeCaption]]:
+        """Return de-duplicated captions with paths to their actual fields."""
 
-        captions: list[RecipeCaption] = []
+        entries: list[tuple[str, RecipeCaption]] = []
         seen: set[tuple[Any, ...]] = set()
-        for caption in ([self.caption] if self.caption is not None else []) + self.captions:
+        candidates: list[tuple[str, RecipeCaption]] = []
+        if self.caption is not None:
+            candidates.append(("caption", self.caption))
+        candidates.extend(
+            (f"captions[{index}]", caption) for index, caption in enumerate(self.captions)
+        )
+        for path, caption in candidates:
             key = (
                 caption.text,
                 caption.start_ms,
@@ -207,8 +213,13 @@ class RecipeClip(BaseModel):
             )
             if key not in seen:
                 seen.add(key)
-                captions.append(caption)
-        return captions
+                entries.append((path, caption))
+        return entries
+
+    def all_captions(self) -> list[RecipeCaption]:
+        """Return legacy and multi-caption fields without exact duplicates."""
+
+        return [caption for _path, caption in self.caption_entries()]
 
 
 class RecipeCta(BaseModel):

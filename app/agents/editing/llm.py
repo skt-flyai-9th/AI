@@ -4,6 +4,7 @@ import base64
 import hashlib
 import io
 import json
+import logging
 import math
 from collections.abc import Callable
 from typing import Any, Protocol, TypeVar
@@ -31,6 +32,9 @@ from app.agents.editing.types import (
     VideoContext,
 )
 from app.core.config import Settings, get_settings
+
+
+logger = logging.getLogger(__name__)
 
 
 class EditingLLM(Protocol):
@@ -863,7 +867,7 @@ def _apply_source_preparation(
     else:
         if len(contexts) != 1:
             raise EditingLLMError(
-                "ONE_TAKE final recipe must contain exactly one source clip.",
+                "ONE_TAKE source preparation requires exactly one source video.",
                 retryable=False,
             )
         context = contexts[0]
@@ -872,7 +876,10 @@ def _apply_source_preparation(
                 "ONE_TAKE final recipe references the wrong video.",
                 retryable=False,
             )
-        clip = _collapse_one_take_clips(recipe.timeline)
+        clip = _collapse_one_take_clips(
+            recipe.timeline,
+            source_duration_ms=context.duration_ms,
+        )
         recipe.timeline = [
             clip.model_copy(
                 update={
@@ -886,13 +893,50 @@ def _apply_source_preparation(
     return decision.model_copy(update={"recipe": recipe})
 
 
-def _collapse_one_take_clips(timeline: list[Any]) -> Any:
+def _collapse_one_take_clips(
+    timeline: list[Any],
+    *,
+    source_duration_ms: int,
+) -> Any:
     """Keep one render segment while preserving overlays from split LLM output."""
 
     first = timeline[0]
     captions = []
     effects = []
     seen_effects: set[tuple[str, str]] = set()
+    seen_exclusive_effects: set[str] = set()
+    exclusive_effect_ids = {"COLOR_TONE"}
+
+    covered_ms = _covered_source_duration_ms(timeline, source_duration_ms)
+    if covered_ms < source_duration_ms:
+        logger.warning(
+            "ONE_TAKE split recipe covered %sms of %sms before full-source collapse; "
+            "overlay timing is preserved and may leave an undecorated tail.",
+            covered_ms,
+            source_duration_ms,
+        )
+
+    speeds = {round(float(clip.speed), 6) for clip in timeline}
+    speed = float(first.speed)
+    if len(speeds) > 1:
+        speed = 1.0
+        logger.warning(
+            "ONE_TAKE split recipe used inconsistent speeds %s; using 1.0 for the collapsed clip.",
+            sorted(speeds),
+        )
+
+    discarded_transitions = {
+        transition
+        for clip in timeline
+        for transition in (clip.transition_in, clip.transition_out)
+        if transition not in {None, "CUT", "HARD_CUT"}
+    }
+    if discarded_transitions:
+        logger.warning(
+            "ONE_TAKE collapse removed internal transitions: %s.",
+            sorted(discarded_transitions),
+        )
+
     for clip in timeline:
         captions.extend(clip.all_captions())
         for effect in clip.effects:
@@ -910,6 +954,14 @@ def _collapse_one_take_clips(timeline: list[Any]) -> Any:
                         )
                     }
                 )
+            if effect.effect_id in exclusive_effect_ids:
+                if effect.effect_id in seen_exclusive_effects:
+                    logger.warning(
+                        "ONE_TAKE collapse kept only the first exclusive %s effect.",
+                        effect.effect_id,
+                    )
+                    continue
+                seen_exclusive_effects.add(effect.effect_id)
             key = (effect.effect_id, effect.params.model_dump_json(exclude_none=True))
             if key not in seen_effects:
                 seen_effects.add(key)
@@ -919,10 +971,33 @@ def _collapse_one_take_clips(timeline: list[Any]) -> Any:
             "caption": None,
             "captions": captions,
             "effects": effects,
+            "speed": speed,
             "transition_in": None,
             "transition_out": "CUT",
         }
     )
+
+
+def _covered_source_duration_ms(timeline: list[Any], source_duration_ms: int) -> int:
+    ranges = sorted(
+        (
+            max(0, int(clip.source_start_ms)),
+            min(source_duration_ms, int(clip.source_end_ms)),
+        )
+        for clip in timeline
+        if clip.source_end_ms > 0 and clip.source_start_ms < source_duration_ms
+    )
+    covered_ms = 0
+    range_end = 0
+    for start_ms, end_ms in ranges:
+        if end_ms <= start_ms:
+            continue
+        if start_ms >= range_end:
+            covered_ms += end_ms - start_ms
+        elif end_ms > range_end:
+            covered_ms += end_ms - range_end
+        range_end = max(range_end, end_ms)
+    return covered_ms
 
 
 def _enforce_caption_budget(
@@ -1084,6 +1159,9 @@ def _requirements(
         "Preserve ascending shooting_scene_order and use only supplied video ids.",
         "Every source timestamp must be inside that video's duration.",
         "Caption times are absolute timeline milliseconds and must stay inside their clip.",
+        "Every clip must return both caption fields required by the schema: use caption for the "
+        "primary or only caption, captions for additional overlays, and [] when there are none. "
+        "Do not duplicate the same caption in both fields.",
         "Non-TYPEWRITER captions may use any positive duration inside their owning clip. Do not "
         "extend them to a readability minimum unless the project explicitly requests one.",
         "Caption scale must remain 1.0; use an approved style_id for visual emphasis.",

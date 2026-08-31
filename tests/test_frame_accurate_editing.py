@@ -439,6 +439,11 @@ def test_source_preparation_overrides_llm_cut_boundaries():
                     "source_end_ms": 900,
                     "timeline_start_ms": 900,
                     "speed": 1.0,
+                    "caption": {
+                        "text": "두 번째 컷",
+                        "start_ms": 200,
+                        "end_ms": 700,
+                    },
                 },
                 {
                     "clip_order": 1,
@@ -447,6 +452,11 @@ def test_source_preparation_overrides_llm_cut_boundaries():
                     "source_end_ms": 900,
                     "timeline_start_ms": 0,
                     "speed": 2.0,
+                    "caption": {
+                        "text": "첫 번째 컷",
+                        "start_ms": 0,
+                        "end_ms": 200,
+                    },
                 },
             ],
             "cta": {"text": "지금 확인해보세요"},
@@ -486,6 +496,11 @@ def test_source_preparation_overrides_llm_cut_boundaries():
     ]
     assert result.recipe.timeline[0].timeline_start_ms == 0
     assert result.recipe.timeline[1].timeline_start_ms == 200
+    assert [clip.caption.text for clip in result.recipe.timeline] == [
+        "첫 번째 컷",
+        "두 번째 컷",
+    ]
+    assert all(clip.captions == [] for clip in result.recipe.timeline)
 
 
 def test_source_preparation_enforces_template_slot_duration_with_speed_floor():
@@ -556,6 +571,11 @@ def test_project_302_cut_lengths_fit_all_eight_template_slots():
                     "source_end_ms": duration,
                     "timeline_start_ms": sum(source_durations[: index - 1]),
                     "speed": 1.0,
+                    "caption": {
+                        "text": f"자막 {index}",
+                        "start_ms": sum(source_durations[: index - 1]),
+                        "end_ms": sum(source_durations[:index]),
+                    },
                 }
                 for index, (video_id, duration) in enumerate(
                     zip(video_ids, source_durations, strict=True), start=1
@@ -611,6 +631,12 @@ def test_project_302_cut_lengths_fit_all_eight_template_slots():
         for produced, slot in zip(produced_durations, slot_durations, strict=True)
     )
     assert sum(produced_durations) <= 14_000
+    assert [clip.video_id for clip in result.recipe.timeline] == video_ids
+    assert [clip.clip_order for clip in result.recipe.timeline] == list(range(1, 9))
+    assert [clip.caption.text for clip in result.recipe.timeline] == [
+        f"자막 {index}" for index in range(1, 9)
+    ]
+    assert all(clip.captions == [] for clip in result.recipe.timeline)
 
 
 def test_caption_budget_reserves_cta_and_preserves_required_copy():
@@ -668,7 +694,7 @@ def test_caption_budget_reserves_cta_and_preserves_required_copy():
     assert captions[-2] is None
 
 
-def test_one_take_source_preparation_keeps_full_source():
+def test_one_take_source_preparation_keeps_full_source(caplog):
     context = _context("one", 1, count=10)
     recipe = EditRecipe.model_validate(
         {
@@ -710,9 +736,10 @@ def test_one_take_source_preparation_keeps_full_source():
 
     assert result.recipe.timeline[0].source_start_ms == 0
     assert result.recipe.timeline[0].source_end_ms == context.duration_ms
+    assert "may leave an undecorated tail" in caplog.text
 
 
-def test_one_take_source_preparation_collapses_split_recipe_and_keeps_captions():
+def test_one_take_source_preparation_collapses_split_recipe_and_keeps_captions(caplog):
     context = _context("one", 1, count=30)
     recipe = EditRecipe.model_validate(
         {
@@ -731,19 +758,27 @@ def test_one_take_source_preparation_collapses_split_recipe_and_keeps_captions()
                         "end_ms": 400,
                         "style_id": "HOOK",
                     },
+                    "effects": [
+                        {"effect_id": "COLOR_TONE", "params": {"tone": "WARM"}}
+                    ],
+                    "transition_out": "FLASH_WHITE",
                 },
                 {
                     "clip_order": 2,
                     "video_id": "one",
                     "source_start_ms": 500,
-                    "source_end_ms": 900,
+                    "source_end_ms": 1000,
                     "timeline_start_ms": 500,
+                    "speed": 2.0,
                     "caption": {
                         "text": "두 번째 자막",
                         "start_ms": 500,
-                        "end_ms": 850,
+                        "end_ms": 950,
                         "style_id": "CAPTION_EMPHASIS",
                     },
+                    "effects": [
+                        {"effect_id": "COLOR_TONE", "params": {"tone": "COOL"}}
+                    ],
                 },
             ],
             "cta": {"text": "확인해보세요"},
@@ -781,6 +816,12 @@ def test_one_take_source_preparation_collapses_split_recipe_and_keeps_captions()
         "첫 자막",
         "두 번째 자막",
     ]
+    assert clip.speed == 1.0
+    assert [effect.effect_id for effect in clip.effects] == ["COLOR_TONE"]
+    assert "inconsistent speeds" in caplog.text
+    assert "kept only the first exclusive COLOR_TONE effect" in caplog.text
+    assert "removed internal transitions" in caplog.text
+    assert "undecorated tail" not in caplog.text
 
 
 def test_shoot_mode_is_backward_compatible():

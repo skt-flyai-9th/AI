@@ -277,13 +277,10 @@ class EditRecipeValidator:
                     "At most one COLOR_TONE effect is allowed per clip.",
                 )
 
-            for caption_index, caption in enumerate(clip.all_captions()):
+            caption_entries = clip.caption_entries()
+            for caption_field_path, caption in caption_entries:
                 caption_count += 1
-                caption_path = (
-                    f"{path}.caption"
-                    if clip.caption is not None and caption_index == 0
-                    else f"{path}.captions[{caption_index - int(clip.caption is not None)}]"
-                )
+                caption_path = f"{path}.{caption_field_path}"
                 if caption.start_ms >= caption.end_ms:
                     add(
                         "CAPTION_RANGE_INVALID",
@@ -362,6 +359,23 @@ class EditRecipeValidator:
                         source="REALS_REGISTRY",
                     )
 
+            last_by_position: dict[str, tuple[str, Any]] = {}
+            for caption_field_path, caption in sorted(
+                caption_entries,
+                key=lambda item: (item[1].position, item[1].start_ms, item[1].end_ms),
+            ):
+                previous = last_by_position.get(caption.position)
+                if previous is not None and caption.start_ms < previous[1].end_ms:
+                    add(
+                        "CAPTION_OVERLAP",
+                        f"{path}.{caption_field_path}",
+                        "Captions at the same position must not overlap in time; "
+                        f"this caption overlaps {path}.{previous[0]}.",
+                    )
+                    if caption.end_ms <= previous[1].end_ms:
+                        continue
+                last_by_position[caption.position] = (caption_field_path, caption)
+
         if scene_orders != sorted(scene_orders):
             add(
                 "SHOOTING_ORDER_CHANGED",
@@ -395,27 +409,27 @@ class EditRecipeValidator:
                     f"{required_caption_count} regular in-video captions; "
                     f"received {regular_caption_count}. The final CTA does not count.",
                 )
-            first_captions = recipe.timeline[0].all_captions() if recipe.timeline else []
-            first_caption = first_captions[0] if first_captions else None
+            first_entries = recipe.timeline[0].caption_entries() if recipe.timeline else []
+            first_caption_path, first_caption = first_entries[0] if first_entries else ("caption", None)
             if first_caption is None or first_caption.style_id != "HOOK":
                 add(
                     "PROMOTIONAL_HOOK_MISSING",
-                    "timeline[0].caption",
+                    f"timeline[0].{first_caption_path}",
                     "The first promotional clip requires a HOOK caption grounded in the project.",
                 )
             elif not _caption_contains_promotion_subject(first_caption.text, project):
                 add(
                     "PROMOTIONAL_HOOK_NOT_PERSONALIZED",
-                    "timeline[0].caption.text",
+                    f"timeline[0].{first_caption_path}.text",
                     "The first promotional HOOK must name the verified promotion subject.",
                 )
             for index, clip in enumerate(recipe.timeline):
-                for caption_index, caption in enumerate(clip.all_captions()):
+                for caption_field_path, caption in clip.caption_entries():
                     if not _is_stage_direction_caption(caption.text, required_phrases):
                         continue
                     add(
                         "PROMOTIONAL_CAPTION_IS_STAGE_DIRECTION",
-                        f"timeline[{index}].captions[{caption_index}].text",
+                        f"timeline[{index}].{caption_field_path}.text",
                         "Promotional captions must be audience-facing copy, not filming or editing directions.",
                     )
             if (len(recipe.timeline) >= 2 or regular_caption_count >= 2) and not any(

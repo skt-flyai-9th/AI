@@ -367,6 +367,37 @@ def test_validator_allows_partial_caption_on_short_clip():
     assert not any(issue.code == "CAPTION_RANGE_INVALID" for issue in issues)
 
 
+def test_validator_rejects_overlapping_captions_at_same_position_only():
+    recipe = _recipe().model_copy(deep=True)
+    recipe.timeline = recipe.timeline[:1]
+    clip = recipe.timeline[0]
+    clip.captions = [
+        RecipeCaption(
+            text="같은 위치 겹침",
+            start_ms=1000,
+            end_ms=1800,
+            position=clip.caption.position,
+        ),
+        RecipeCaption(
+            text="다른 위치 동시 표시",
+            start_ms=1000,
+            end_ms=1800,
+            position="TOP",
+        ),
+    ]
+
+    issues = EditRecipeValidator().validate(
+        recipe,
+        selected_shortform=_request().selected_shortform,
+        video_editing_db=_video_editing_db(),
+        video_contexts=_contexts(),
+    )
+
+    overlaps = [issue for issue in issues if issue.code == "CAPTION_OVERLAP"]
+    assert len(overlaps) == 1
+    assert overlaps[0].path == "timeline[0].captions[0]"
+
+
 def test_validator_enforces_requested_caption_position():
     recipe = _recipe().model_copy(deep=True)
     project = _project_with_copy_directives(caption_position_request="TOP")
@@ -443,7 +474,10 @@ def test_validator_rejects_stage_directions_as_promotional_captions():
         project=_request().project.model_dump(mode="json"),
     )
 
-    assert any(issue.code == "PROMOTIONAL_CAPTION_IS_STAGE_DIRECTION" for issue in issues)
+    stage_direction = next(
+        issue for issue in issues if issue.code == "PROMOTIONAL_CAPTION_IS_STAGE_DIRECTION"
+    )
+    assert stage_direction.path == "timeline[1].caption.text"
 
 
 def test_validator_allows_explicit_verbatim_stage_direction_caption():
