@@ -808,7 +808,7 @@ def _promotion_subject_terms(value: Any) -> set[str]:
     if not isinstance(value, dict):
         return set()
     terms: set[str] = set()
-    for key in ("name", "menu_name", "title", "description"):
+    for key in ("name", "menu_name", "event_name", "title", "description"):
         normalized = "".join(str(value.get(key) or "").split()).casefold()
         if normalized:
             terms.add(normalized)
@@ -954,7 +954,7 @@ def _is_editing_plan_contract_error(exc: EditingLLMError) -> bool:
 
 
 def _promotion_subject_name(subject: dict[str, Any]) -> str:
-    for key in ("name", "menu_name", "description", "title"):
+    for key in ("name", "menu_name", "event_name", "description", "title"):
         value = " ".join(str(subject.get(key) or "").split())
         if value:
             return value[:40]

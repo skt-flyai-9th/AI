@@ -445,6 +445,47 @@ def test_validator_requires_promotion_subject_in_first_hook():
     assert any(issue.code == "PROMOTIONAL_HOOK_NOT_PERSONALIZED" for issue in issues)
 
 
+def test_validator_accepts_concise_hook_for_long_event_name():
+    recipe = _recipe().model_copy(deep=True)
+    recipe.timeline[0].caption.text = "술게임 이기면 소주 한 병 무료!"
+    project = _request().project.model_dump(mode="json")
+    project["promotion_subject"] = {
+        "event_name": (
+            "사장님들과 진행하는 술게임 단 1000원으로 사장님들과 "
+            "게임해서 이기면 소주 한병이 무료"
+        )
+    }
+
+    issues = EditRecipeValidator().validate(
+        recipe,
+        selected_shortform=_request().selected_shortform,
+        video_editing_db=_video_editing_db(),
+        video_contexts=_contexts(),
+        project=project,
+    )
+
+    assert not any(issue.code == "PROMOTIONAL_HOOK_NOT_PERSONALIZED" for issue in issues)
+
+
+def test_validator_rejects_generic_hook_for_long_event_name():
+    recipe = _recipe().model_copy(deep=True)
+    recipe.timeline[0].caption.text = "오늘의 특별한 이벤트"
+    project = _request().project.model_dump(mode="json")
+    project["promotion_subject"] = {
+        "event_name": "술게임에서 이기면 소주 한 병이 무료"
+    }
+
+    issues = EditRecipeValidator().validate(
+        recipe,
+        selected_shortform=_request().selected_shortform,
+        video_editing_db=_video_editing_db(),
+        video_contexts=_contexts(),
+        project=project,
+    )
+
+    assert any(issue.code == "PROMOTIONAL_HOOK_NOT_PERSONALIZED" for issue in issues)
+
+
 def test_validator_rejects_typewriter_without_animation_hold_time():
     recipe = _recipe().model_copy(deep=True)
     recipe.timeline[0].caption.end_ms = 500

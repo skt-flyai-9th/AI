@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unicodedata
 from typing import Any
 
@@ -581,7 +582,28 @@ def _caption_contains_promotion_subject(caption: str, project: dict[str, Any] | 
     elements = subject.get("elements")
     if isinstance(elements, list):
         terms.extend(str(value) for value in elements if str(value).strip())
-    return any(_normalize_copy(term) in normalized_caption for term in terms)
+    if any(_normalize_copy(term) in normalized_caption for term in terms):
+        return True
+
+    # Event names supplied by the backend are often full promotional sentences.
+    # Requiring the entire value would be impossible under the 40-character
+    # caption limit, so accept a concise hook that preserves at least two of the
+    # event's meaningful terms.
+    event_name = subject.get("event_name")
+    if not isinstance(event_name, str) or not event_name.strip():
+        return False
+    normalized_event_name = _normalize_copy(event_name)
+    if normalized_event_name in normalized_caption:
+        return True
+    event_terms = {
+        _normalize_copy(token)
+        for token in re.findall(r"[0-9A-Za-z가-힣]+", event_name)
+        if len(_normalize_copy(token)) >= 2
+    }
+    matched_terms = {
+        term for term in event_terms if term in normalized_caption
+    }
+    return len(matched_terms) >= 2
 
 
 def _is_stage_direction_caption(text: str, required_phrases: list[str]) -> bool:
