@@ -442,6 +442,31 @@ class EditRecipeValidator:
                 source="REALS_REGISTRY",
                 repairable=False,
             )
+        # The engine blocks the render on any glyph missing from the approved
+        # font; mirroring the check here keeps it inside the repair loop.
+        font_cmap = self.registry.caption_font_cmap()
+        if font_cmap is not None:
+            for index, clip in enumerate(recipe.timeline):
+                if clip.caption is None:
+                    continue
+                missing = _unsupported_glyphs(clip.caption.text, font_cmap)
+                if missing:
+                    add(
+                        "CAPTION_GLYPH_UNSUPPORTED",
+                        f"timeline[{index}].caption.text",
+                        "Caption uses characters the PRETENDARD font cannot render: "
+                        f"{missing!r}. Rewrite with plain Korean/Latin text and no emoji.",
+                        source="REALS_REGISTRY",
+                    )
+            missing = _unsupported_glyphs(recipe.cta.text, font_cmap)
+            if missing:
+                add(
+                    "CTA_GLYPH_UNSUPPORTED",
+                    "cta.text",
+                    "CTA uses characters the PRETENDARD font cannot render: "
+                    f"{missing!r}. Rewrite with plain Korean/Latin text and no emoji.",
+                    source="REALS_REGISTRY",
+                )
         rendered_copy = "\n".join(
             [
                 *(clip.caption.text for clip in recipe.timeline if clip.caption is not None),
@@ -600,6 +625,13 @@ def _is_stage_direction_caption(text: str, required_phrases: list[str]) -> bool:
         "손을펼치면",
     )
     return any(marker in normalized_text for marker in markers)
+
+
+def _unsupported_glyphs(text: str, cmap: set[int]) -> str:
+    # The engine checks raw overlay text (no NFC), so this must match exactly.
+    return "".join(
+        sorted({character for character in text if not character.isspace() and ord(character) not in cmap})
+    )
 
 
 def _normalize_copy(value: str) -> str:

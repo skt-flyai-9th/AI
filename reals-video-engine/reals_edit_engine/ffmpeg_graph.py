@@ -391,13 +391,35 @@ def build_concat_plan(
     rp: dict,
     workdir: str,
     key: str = "asm",
+    *,
+    keep_audio: bool = True,
 ) -> tuple[list[list[str]], list[str]]:
-    """Normalize raw cuts independently, then concatenate with the demuxer."""
+    """Normalize raw cuts independently, then concatenate with the demuxer.
+
+    keep_audio=False drops audio entirely; the concat demuxer requires every
+    segment to carry the same streams, so mixing audio-less sources (screen
+    recordings) with normal footage breaks assembly unless audio is dropped.
+    """
     wd = pathlib.Path(workdir)
     cmds: list[list[str]] = []
     temps: list[str] = []
     seg_files: list[pathlib.Path] = []
 
+    audio_args = (
+        [
+            "-af", f"aresample={rp['audio_sample_rate']},aformat=channel_layouts=stereo",
+        ]
+        if keep_audio
+        else []
+    )
+    audio_encode_args = (
+        [
+            "-c:a", rp["audio_codec"], "-b:a", rp["audio_bitrate"],
+            "-ar", str(rp["audio_sample_rate"]), "-ac", "2",
+        ]
+        if keep_audio
+        else ["-an"]
+    )
     inter = _intermediate_profile(rp)
     for i, cut in enumerate(cut_files):
         path, t0, t1 = cut[:3]
@@ -416,10 +438,9 @@ def build_concat_plan(
             FFMPEG, "-hide_banner", "-y",
             "-ss", f"{t0:.6f}", "-t", f"{max(t1 - t0, 0.001):.6f}", "-i", str(path),
             "-vf", vf,
-            "-af", f"aresample={rp['audio_sample_rate']},aformat=channel_layouts=stereo",
+            *audio_args,
             *video_encode_args(inter),
-            "-c:a", rp["audio_codec"], "-b:a", rp["audio_bitrate"],
-            "-ar", str(rp["audio_sample_rate"]), "-ac", "2",
+            *audio_encode_args,
             "-movflags", "+faststart", "-map_metadata", "-1", str(seg_out),
         ])
 
@@ -439,8 +460,7 @@ def build_concat_plan(
         *video_encode_args(rp),
         "-r", str(rp["fps"]),
         "-fps_mode", "cfr",
-        "-c:a", rp["audio_codec"], "-b:a", rp["audio_bitrate"],
-        "-ar", str(rp["audio_sample_rate"]), "-ac", "2",
+        *audio_encode_args,
         "-max_muxing_queue_size", "1024",
         "-movflags", rp["movflags"], "-map_metadata", "-1", str(out_path),
     ])

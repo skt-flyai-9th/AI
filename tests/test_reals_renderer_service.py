@@ -113,13 +113,14 @@ def test_renderer_service_downloads_assembles_and_invokes_final_render(tmp_path,
             fps=30,
         )
 
-    def build_concat_plan(inputs, output_path, profile, workdir, key):
+    def build_concat_plan(inputs, output_path, profile, workdir, key, *, keep_audio=True):
         assert len(inputs) == 2
         assert all(len(item) == 5 for item in inputs)
         assert [(item[3], item[4]) for item in inputs] == [(0.5, 0.5), (0.5, 0.5)]
         assert profile["width"] == 1080
         assert workdir
         assert key
+        assert keep_audio is False
         Path(output_path).write_bytes(b"assembled-video")
         return [], []
 

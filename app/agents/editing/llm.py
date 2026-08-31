@@ -1034,6 +1034,9 @@ def _requirements(
         "Use only renderer capabilities and the video-editing DB editing_rules.",
         "Keep captions at most 40 characters each. The rendered CTA counts toward the REALS "
         "maximum of 8 text overlays, so return at most 7 regular in-video captions.",
+        "Write captions and CTA using only characters the approved PRETENDARD font can render: "
+        "Korean, basic Latin letters, digits, and common punctuation. Never use emoji, dingbats, "
+        "or decorative unicode symbols — a single unsupported glyph blocks the entire render.",
         "This is promotional video: regular in-video captions are required, not optional. "
         "Create at least 3 regular captions when the timeline has 3 or more clips; otherwise "
         "create one regular caption per clip. The rendered CTA does not count toward this minimum.",

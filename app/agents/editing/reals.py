@@ -30,6 +30,36 @@ class RealsRegistry:
         self.render_profiles = self._load("render_profiles")
         self.safe_area_profiles = self._load("safe_area_profiles")
         self.audio_mix_policies = self._load("audio_mix_policy")
+        self._caption_font_cmap: set[int] | None | Literal[False] = False
+
+    def caption_font_cmap(self) -> set[int] | None:
+        """Union of codepoints across the registered caption font weights.
+
+        The engine blocks a render on any glyph missing from the approved font,
+        so the same character set must be known at validation time. Returns
+        None when the font files are not present in this deployment (e.g. a
+        worker host without renderer assets), in which case the glyph check is
+        skipped rather than failing every run.
+        """
+        if self._caption_font_cmap is not False:
+            return self._caption_font_cmap
+        cmap: set[int] = set()
+        try:
+            from fontTools.ttLib import TTFont
+
+            registry = json.loads(
+                (self.registry_dir / "font_registry.json").read_text(encoding="utf-8")
+            )
+            files = registry.get("fonts", {}).get("PRETENDARD", {}).get("files", {})
+            engine_root = self.registry_dir.parent
+            for value in files.values():
+                font_path = engine_root / str(value.get("path") or "")
+                cmap |= set(TTFont(str(font_path)).getBestCmap().keys())
+        except Exception:
+            self._caption_font_cmap = None
+            return None
+        self._caption_font_cmap = cmap or None
+        return self._caption_font_cmap
 
     def _load(self, name: str) -> dict[str, Any]:
         path = self.registry_dir / f"{name}.json"
@@ -478,13 +508,39 @@ class RealsRecipeAdapter:
             last_range[0],
         )
         cta_end_ms = last_range[1]
-        overlaps_existing_caption = any(
-            overlay.produced_segment_id == cta_segment_id
-            and overlay.start_ms < cta_end_ms
-            and overlay.end_ms > cta_start_ms
-            for overlay in overlays
+        conflict_index = next(
+            (
+                index
+                for index, overlay in enumerate(overlays)
+                if overlay.produced_segment_id == cta_segment_id
+                and overlay.start_ms < cta_end_ms
+                and overlay.end_ms > cta_start_ms
+            ),
+            None,
         )
-        if not overlaps_existing_caption:
+        add_cta = True
+        if conflict_index is not None:
+            # The CTA must render whenever possible: trim the trailing caption
+            # down to (at most) its readability minimum to clear the CTA
+            # window, and only when even that leaves the CTA under 600ms of
+            # visible time keep the caption and skip the CTA to avoid stacking.
+            conflict = overlays[conflict_index]
+            min_caption_end = conflict.start_ms + _min_caption_produced_ms(
+                conflict, speed=last_clip.speed
+            )
+            min_cta_produced_ms = int(round(600 * last_clip.speed))
+            if min_caption_end <= cta_start_ms:
+                overlays[conflict_index] = conflict.model_copy(
+                    update={"end_ms": cta_start_ms}
+                )
+            elif cta_end_ms - min_caption_end >= min_cta_produced_ms:
+                overlays[conflict_index] = conflict.model_copy(
+                    update={"end_ms": min_caption_end}
+                )
+                cta_start_ms = min_caption_end
+            else:
+                add_cta = False
+        if add_cta:
             overlays.append(
                 RealsOverlay(
                     overlay_id="ov_cta",
@@ -563,6 +619,20 @@ def _to_reals_crop(value: str) -> str:
 
 def _to_reals_placement(value: str) -> str:
     return {"BOTTOM": "BOTTOM_SAFE", "MIDDLE": "MID_SAFE", "TOP": "UPPER_SAFE"}[value]
+
+
+def _min_caption_produced_ms(overlay: RealsOverlay, *, speed: float) -> int:
+    """Minimum produced-time span a caption needs to stay readable.
+
+    Overlay times are produced-video ms; visible time divides out the speed,
+    so the visible minimum is scaled back up by the segment speed.
+    """
+    if overlay.motion_id == "TYPEWRITER":
+        units = sum(1 for character in overlay.text_content if not character.isspace())
+        visible_ms = max(0, units - 1) * 80 + 600
+    else:
+        visible_ms = 500
+    return int(round(visible_ms * speed))
 
 
 def _output_to_produced_ms(

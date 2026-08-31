@@ -146,10 +146,13 @@ def validate_recipe(recipe: EditRecipe, produced: MediaFileRef, reg: Registries)
                 if unit_count > 18:
                     fails.append(f"{o.overlay_id}: TYPEWRITER 문구 {unit_count}자 > 최대 18자")
                 required_ms = max(0, unit_count - 1) * 80 + 600
-                if o.end_ms - o.start_ms < required_ms:
+                # 오버레이 시각은 produced 기준이지만 실제 노출 시간은
+                # 세그먼트 speed 적용 후의 출력 시간이다.
+                visible_ms = (o.end_ms - o.start_ms) / max(host.speed_multiplier, 0.01)
+                if visible_ms < required_ms:
                     fails.append(
                         f"{o.overlay_id}: TYPEWRITER 노출시간 부족 "
-                        f"({o.end_ms-o.start_ms}ms < {required_ms}ms)"
+                        f"({visible_ms:.0f}ms < {required_ms}ms)"
                     )
             try:
                 f = reg.resolve_font(o.font_asset_id, o.font_weight.value)

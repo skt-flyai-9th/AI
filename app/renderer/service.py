@@ -286,12 +286,16 @@ class RealsRendererService:
         try:
             profile = self.engine.reg.render_profile(plan.output_profile_id)
             output = job_dir / "assembled.mp4"
+            # The final render replaces all audio (SILENT policy), and sources
+            # without an audio stream would break the concat demuxer, so the
+            # assembled intermediate is built video-only.
             commands, temporary_files = self.native.build_concat_plan(
                 inputs,
                 str(output),
                 profile,
                 str(job_dir),
                 key=hashlib.sha256(request.job_id.encode()).hexdigest()[:16],
+                keep_audio=False,
             )
             try:
                 for command in commands:

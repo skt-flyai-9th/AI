@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import time
 import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -13,12 +14,13 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.editing.duration_contract import template_slot_durations_ms
 from app.agents.editing.effect_planner import EffectPlanner
 from app.agents.editing.graph import build_editing_graph
 from app.agents.editing.llm import EditingLLM, OpenAIEditingLLM
 from app.agents.editing.structured_output import EditingLLMError
 from app.agents.editing.telemetry import reset_usage, usage_snapshot
-from app.agents.editing.renderer import EditingRenderer, HttpEditingRenderer
+from app.agents.editing.renderer import EditingRenderer, HttpEditingRenderer, RendererError
 from app.agents.editing.reals import RealsRegistryError, get_reals_registry
 from app.agents.editing.types import (
     EditingPlanDecision,
@@ -324,7 +326,7 @@ class EditingAgentService:
             recipe = EditRecipe.model_validate(decision.recipe)
             publishing = PublishingResult.model_validate(decision.publishing)
             self._set_stage(db, run, EditingRunStage.RENDERING, 80)
-            render_result = self.renderer.render(
+            render_result = self._render_with_retry(
                 run_id=run.id,
                 recipe=recipe,
                 videos=request.videos,
@@ -355,6 +357,26 @@ class EditingAgentService:
                 db.commit()
             raise
 
+    def _render_with_retry(self, **render_kwargs: Any):
+        """Retry fast-failing transient renderer errors.
+
+        A renderer timeout has already consumed most of the Celery task budget,
+        so it is surfaced immediately instead of blocking for another cycle.
+        """
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return self.renderer.render(**render_kwargs)
+            except RendererError as exc:
+                if (
+                    not exc.retryable
+                    or exc.code == "RENDERER_TIMEOUT"
+                    or attempt >= max_attempts
+                ):
+                    raise
+                time.sleep(min(2.0 * attempt, 5.0))
+        raise RuntimeError("unreachable")
+
     def _build_ordered_fallback(
         self,
         request: EditingRunCreateRequest,
@@ -369,10 +391,14 @@ class EditingAgentService:
             int(float(rules.get("max_duration_sec") or 90) * 1000),
             self.settings.editing_max_output_duration_seconds * 1000,
         )
+        # A template scene slot shorter than the minimum cut cannot host any
+        # valid clip, so such scenes are excluded instead of failing the run.
+        slot_durations = template_slot_durations_ms(video_editing_db)
         usable = [
             context
             for context in sorted(contexts, key=lambda item: item.shooting_scene_order)
             if context.duration_ms >= min_cut_ms
+            and slot_durations.get(context.shooting_scene_order, max_duration_ms) >= min_cut_ms
         ]
         max_clip_count = max(1, max_duration_ms // min_cut_ms)
         usable = usable[:max_clip_count]
@@ -391,7 +417,8 @@ class EditingAgentService:
         cursor = 0
         for index, context in enumerate(usable, start=1):
             remaining = max_duration_ms - cursor
-            duration = min(context.duration_ms, target_per_clip_ms, remaining)
+            slot_ms = slot_durations.get(context.shooting_scene_order, max_duration_ms)
+            duration = min(context.duration_ms, target_per_clip_ms, remaining, slot_ms)
             if duration < min_cut_ms:
                 break
             timeline.append(

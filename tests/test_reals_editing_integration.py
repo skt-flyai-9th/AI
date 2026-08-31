@@ -95,12 +95,20 @@ def test_reals_adapter_builds_multicut_assembly_and_engine_recipe():
     ]
     assert final.edit_recipe.segments[0].color_tone == "WARM"
     assert [effect.effect_id for effect in final.edit_recipe.segments[0].effects] == ["PUNCH_ZOOM"]
-    caption, reveal_caption = final.edit_recipe.overlays
+    caption, reveal_caption, cta = final.edit_recipe.overlays
     assert (caption.start_ms, caption.end_ms, caption.style_id) == (0, 1500, "HOOK")
     assert caption.motion_id == "TYPEWRITER"
     assert reveal_caption.style_id == "CAPTION_EMPHASIS"
     assert reveal_caption.motion_id == "POP"
-    assert not any(overlay.overlay_id == "ov_cta" for overlay in final.edit_recipe.overlays)
+    # The trailing caption cedes everything past its readability minimum so the
+    # CTA always renders instead of being silently dropped.
+    assert (reveal_caption.start_ms, reveal_caption.end_ms) == (2000, 2500)
+    assert (cta.overlay_id, cta.start_ms, cta.end_ms, cta.style_id) == (
+        "ov_cta",
+        2500,
+        4000,
+        "CTA_BOX",
+    )
 
 
 def test_reals_adapter_passes_crop_center_through_and_defaults_to_center():
@@ -168,8 +176,16 @@ def test_reals_adapter_uses_one_take_without_source_assembly():
     assert request.final_render.produced_video.duration_ms == 5000
     segment = request.final_render.edit_recipe.segments[0]
     assert (segment.trim_in_ms, segment.trim_out_ms) == (500, 2500)
+    # 9 non-space TYPEWRITER characters need 8*80+600=1240ms, so the caption is
+    # trimmed to 500+1240 and the CTA takes the remaining tail of the clip.
     caption = request.final_render.edit_recipe.overlays[0]
-    assert (caption.start_ms, caption.end_ms) == (500, 2000)
+    assert (caption.start_ms, caption.end_ms) == (500, 1740)
+    cta = next(
+        overlay
+        for overlay in request.final_render.edit_recipe.overlays
+        if overlay.overlay_id == "ov_cta"
+    )
+    assert (cta.start_ms, cta.end_ms) == (1740, 2500)
 
 
 def test_reals_adapter_maps_output_time_back_to_produced_time_with_speed():
