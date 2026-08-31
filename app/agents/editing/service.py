@@ -1037,10 +1037,10 @@ def _fallback_search_keyword(value: str) -> str:
 
 
 _TEMPLATE_TRACK_SEARCH_KEYWORDS = {
-    "jujutsu_transition": "주술회전, Delirious",
-    "donggeurio_challenge": "동그리오, Mori no chiisana restaurant",
-    "otsukare_summer_challenge": "오츠카레, Otsukare SUMMER",
-    "doma_bad_challenge": "도마bad챌린지",
+    "gt_jujutsu_transition": "주술회전, Delirious",
+    "gt_donggeurio_challenge": "동그리오, Mori no chiisana restaurant",
+    "gt_otsukare_summer": "오츠카레, Otsukare SUMMER",
+    "gt_doma_bad_challenge": "도마bad챌린지",
 }
 
 
