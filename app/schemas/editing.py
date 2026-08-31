@@ -186,7 +186,29 @@ class RecipeClip(BaseModel):
     transition_in: Literal["CUT", "HARD_CUT", "FLASH_WHITE"] | None = None
     transition_out: Literal["CUT", "HARD_CUT", "FLASH_WHITE"] | None = "CUT"
     caption: RecipeCaption | None = None
+    captions: list[RecipeCaption] = Field(default_factory=list)
     effects: list[RecipeEffect] = Field(default_factory=list)
+
+    def all_captions(self) -> list[RecipeCaption]:
+        """Return legacy and multi-caption fields without exact duplicates."""
+
+        captions: list[RecipeCaption] = []
+        seen: set[tuple[Any, ...]] = set()
+        for caption in ([self.caption] if self.caption is not None else []) + self.captions:
+            key = (
+                caption.text,
+                caption.start_ms,
+                caption.end_ms,
+                caption.position,
+                caption.style_id,
+                caption.motion_id,
+                caption.font_weight,
+                caption.scale,
+            )
+            if key not in seen:
+                seen.add(key)
+                captions.append(caption)
+        return captions
 
 
 class RecipeCta(BaseModel):

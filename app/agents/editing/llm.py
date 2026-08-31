@@ -861,18 +861,18 @@ def _apply_source_preparation(
             cursor += (trim_out - trim_in) / clip.speed
         recipe.timeline = normalized_timeline
     else:
-        if len(recipe.timeline) != 1 or len(contexts) != 1:
+        if len(contexts) != 1:
             raise EditingLLMError(
                 "ONE_TAKE final recipe must contain exactly one source clip.",
                 retryable=False,
             )
         context = contexts[0]
-        clip = recipe.timeline[0]
-        if clip.video_id != context.video_id:
+        if any(clip.video_id != context.video_id for clip in recipe.timeline):
             raise EditingLLMError(
                 "ONE_TAKE final recipe references the wrong video.",
                 retryable=False,
             )
+        clip = _collapse_one_take_clips(recipe.timeline)
         recipe.timeline = [
             clip.model_copy(
                 update={
@@ -884,6 +884,45 @@ def _apply_source_preparation(
             )
         ]
     return decision.model_copy(update={"recipe": recipe})
+
+
+def _collapse_one_take_clips(timeline: list[Any]) -> Any:
+    """Keep one render segment while preserving overlays from split LLM output."""
+
+    first = timeline[0]
+    captions = []
+    effects = []
+    seen_effects: set[tuple[str, str]] = set()
+    for clip in timeline:
+        captions.extend(clip.all_captions())
+        for effect in clip.effects:
+            params = effect.params.model_dump(exclude_none=True)
+            start_ms = params.get("start_ms")
+            end_ms = params.get("end_ms")
+            if start_ms is not None and end_ms is not None:
+                effect = effect.model_copy(
+                    update={
+                        "params": effect.params.model_copy(
+                            update={
+                                "start_ms": int(clip.timeline_start_ms + start_ms),
+                                "end_ms": int(clip.timeline_start_ms + end_ms),
+                            }
+                        )
+                    }
+                )
+            key = (effect.effect_id, effect.params.model_dump_json(exclude_none=True))
+            if key not in seen_effects:
+                seen_effects.add(key)
+                effects.append(effect)
+    return first.model_copy(
+        update={
+            "caption": None,
+            "captions": captions,
+            "effects": effects,
+            "transition_in": None,
+            "transition_out": "CUT",
+        }
+    )
 
 
 def _enforce_caption_budget(
@@ -902,11 +941,17 @@ def _enforce_caption_budget(
         )
     regular_limit = max(0, max_captions - 1)
     timeline = list(decision.recipe.timeline)
-    caption_indices = [index for index, clip in enumerate(timeline) if clip.caption is not None]
-    if len(caption_indices) <= regular_limit:
+    caption_slots = [
+        (clip_index, caption_index, caption)
+        for clip_index, clip in enumerate(timeline)
+        for caption_index, caption in enumerate(clip.all_captions())
+    ]
+    if len(caption_slots) <= regular_limit:
         return decision
 
-    protected: set[int] = {caption_indices[0]}
+    protected: set[tuple[int, int]] = {
+        (caption_slots[0][0], caption_slots[0][1])
+    }
     shortform_context = project.get("shortform_context") if isinstance(project, dict) else None
     copy_directives = (
         shortform_context.get("copy_directives")
@@ -919,21 +964,32 @@ def _enforce_caption_budget(
         and isinstance(copy_directives.get("verbatim_caption_phrases"), list)
         else []
     )
-    for index in caption_indices:
-        caption = timeline[index].caption
-        if caption is not None and any(
-            phrase and phrase in caption.text for phrase in required_phrases
-        ):
-            protected.add(index)
+    for clip_index, caption_index, caption in caption_slots:
+        if any(phrase and phrase in caption.text for phrase in required_phrases):
+            protected.add((clip_index, caption_index))
 
-    remove_count = len(caption_indices) - regular_limit
-    for index in reversed(caption_indices):
+    remove_count = len(caption_slots) - regular_limit
+    removed: set[tuple[int, int]] = set()
+    for clip_index, caption_index, _caption in reversed(caption_slots):
         if remove_count <= 0:
             break
-        if index in protected:
+        slot = (clip_index, caption_index)
+        if slot in protected:
             continue
-        timeline[index] = timeline[index].model_copy(update={"caption": None})
+        removed.add(slot)
         remove_count -= 1
+    for clip_index, clip in enumerate(timeline):
+        kept = [
+            caption
+            for caption_index, caption in enumerate(clip.all_captions())
+            if (clip_index, caption_index) not in removed
+        ]
+        if clip.caption is not None:
+            timeline[clip_index] = clip.model_copy(
+                update={"caption": kept[0] if kept else None, "captions": kept[1:]}
+            )
+        else:
+            timeline[clip_index] = clip.model_copy(update={"captions": kept})
     recipe = decision.recipe.model_copy(update={"timeline": timeline})
     return decision.model_copy(update={"recipe": recipe})
 
@@ -1086,7 +1142,9 @@ def _requirements(
         )
     else:
         requirements.append(
-            "ONE_TAKE is passthrough for source preparation and must keep the full source duration."
+            "ONE_TAKE is passthrough for source preparation: return exactly one timeline clip, "
+            "keep the full source duration, and put multiple semantic captions in that clip's "
+            "captions list instead of splitting the source into multiple clips."
         )
     if reduced_structure:
         requirements.append(

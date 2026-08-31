@@ -437,11 +437,14 @@ class RealsRecipeAdapter:
                     actual_video_evidence=f"source_video_id={clip.video_id}",
                 )
             )
-            if clip.caption is not None:
-                caption = clip.caption
+            for caption_index, caption in enumerate(clip.all_captions(), start=1):
                 overlays.append(
                     RealsOverlay(
-                        overlay_id=f"ov_caption_{clip.clip_order:03d}",
+                        overlay_id=(
+                            f"ov_caption_{clip.clip_order:03d}"
+                            if caption_index == 1
+                            else f"ov_caption_{clip.clip_order:03d}_{caption_index:02d}"
+                        ),
                         produced_segment_id=produced_segment_id,
                         text_content=caption.text,
                         style_id=caption.style_id,

@@ -712,6 +712,77 @@ def test_one_take_source_preparation_keeps_full_source():
     assert result.recipe.timeline[0].source_end_ms == context.duration_ms
 
 
+def test_one_take_source_preparation_collapses_split_recipe_and_keeps_captions():
+    context = _context("one", 1, count=30)
+    recipe = EditRecipe.model_validate(
+        {
+            "editing_template_id": "db",
+            "editing_template_version": 1,
+            "timeline": [
+                {
+                    "clip_order": 1,
+                    "video_id": "one",
+                    "source_start_ms": 0,
+                    "source_end_ms": 500,
+                    "timeline_start_ms": 0,
+                    "caption": {
+                        "text": "첫 자막",
+                        "start_ms": 0,
+                        "end_ms": 400,
+                        "style_id": "HOOK",
+                    },
+                },
+                {
+                    "clip_order": 2,
+                    "video_id": "one",
+                    "source_start_ms": 500,
+                    "source_end_ms": 900,
+                    "timeline_start_ms": 500,
+                    "caption": {
+                        "text": "두 번째 자막",
+                        "start_ms": 500,
+                        "end_ms": 850,
+                        "style_id": "CAPTION_EMPHASIS",
+                    },
+                },
+            ],
+            "cta": {"text": "확인해보세요"},
+        }
+    )
+    decision = EditingPlanDecision(
+        outcome="RECIPE",
+        recipe=recipe,
+        publishing=PublishingResult(
+            title="테스트 제목",
+            caption="테스트 본문",
+            hashtags=["#테스트1", "#테스트2", "#테스트3", "#테스트4", "#테스트5"],
+            track={"mode": "SUGGESTED", "search_keyword": "테스트 음원"},
+            post_note="플랫폼에서 ‘테스트 음원’을 검색해 추가해주세요.",
+        ),
+        missing_scene_roles=[],
+        available_options=[],
+        rationale="test",
+    )
+
+    result = _apply_source_preparation(
+        decision,
+        {"mode": "ONE_TAKE_PASSTHROUGH"},
+        [context],
+    )
+
+    assert len(result.recipe.timeline) == 1
+    clip = result.recipe.timeline[0]
+    assert (clip.source_start_ms, clip.source_end_ms, clip.timeline_start_ms) == (
+        0,
+        context.duration_ms,
+        0,
+    )
+    assert [caption.text for caption in clip.all_captions()] == [
+        "첫 자막",
+        "두 번째 자막",
+    ]
+
+
 def test_shoot_mode_is_backward_compatible():
     one = _context("one", 1)
     two = _context("two", 2)

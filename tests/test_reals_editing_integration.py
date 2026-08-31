@@ -20,7 +20,7 @@ from app.agents.editing.renderer import HttpEditingRenderer, RendererError
 from app.agents.editing.types import VideoContext
 from app.agents.editing.validator import EditRecipeValidator
 from app.core.config import Settings
-from app.schemas.editing import RecipeEffect, SelectedShortform
+from app.schemas.editing import RecipeCaption, RecipeEffect, SelectedShortform
 from tests.test_editing_agent import _recipe, _request
 
 
@@ -170,6 +170,40 @@ def test_reals_adapter_uses_one_take_without_source_assembly():
     assert (segment.trim_in_ms, segment.trim_out_ms) == (500, 2500)
     caption = request.final_render.edit_recipe.overlays[0]
     assert (caption.start_ms, caption.end_ms) == (500, 2000)
+
+
+def test_reals_adapter_renders_multiple_captions_on_one_take_clip():
+    recipe = _recipe().model_copy(deep=True)
+    recipe.timeline = [recipe.timeline[0]]
+    recipe.timeline[0].captions = [
+        RecipeCaption(
+            text="두 번째 자막",
+            start_ms=1500,
+            end_ms=1900,
+            style_id="CAPTION_EMPHASIS",
+            motion_id="POP",
+        )
+    ]
+
+    request = RealsRecipeAdapter().build_request(
+        run_id="edit_one_take_multi_caption",
+        recipe=recipe,
+        videos=_request().videos,
+        video_contexts=_contexts(),
+        video_editing_db=_video_editing_db(),
+    )
+
+    assert request.source_assembly is None
+    assert request.final_render.source_mode == "ONE_TAKE_PASSTHROUGH"
+    captions = request.final_render.edit_recipe.overlays
+    assert [caption.text_content for caption in captions] == [
+        recipe.timeline[0].caption.text,
+        "두 번째 자막",
+    ]
+    assert [caption.overlay_id for caption in captions] == [
+        "ov_caption_001",
+        "ov_caption_001_02",
+    ]
 
 
 def test_reals_adapter_maps_output_time_back_to_produced_time_with_speed():

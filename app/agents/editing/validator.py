@@ -277,10 +277,13 @@ class EditRecipeValidator:
                     "At most one COLOR_TONE effect is allowed per clip.",
                 )
 
-            if clip.caption is not None:
+            for caption_index, caption in enumerate(clip.all_captions()):
                 caption_count += 1
-                caption = clip.caption
-                caption_path = f"{path}.caption"
+                caption_path = (
+                    f"{path}.caption"
+                    if clip.caption is not None and caption_index == 0
+                    else f"{path}.captions[{caption_index - int(clip.caption is not None)}]"
+                )
                 if caption.start_ms >= caption.end_ms:
                     add(
                         "CAPTION_RANGE_INVALID",
@@ -392,7 +395,8 @@ class EditRecipeValidator:
                     f"{required_caption_count} regular in-video captions; "
                     f"received {regular_caption_count}. The final CTA does not count.",
                 )
-            first_caption = recipe.timeline[0].caption if recipe.timeline else None
+            first_captions = recipe.timeline[0].all_captions() if recipe.timeline else []
+            first_caption = first_captions[0] if first_captions else None
             if first_caption is None or first_caption.style_id != "HOOK":
                 add(
                     "PROMOTIONAL_HOOK_MISSING",
@@ -406,20 +410,18 @@ class EditRecipeValidator:
                     "The first promotional HOOK must name the verified promotion subject.",
                 )
             for index, clip in enumerate(recipe.timeline):
-                if clip.caption is None:
-                    continue
-                if _is_stage_direction_caption(clip.caption.text, required_phrases):
+                for caption_index, caption in enumerate(clip.all_captions()):
+                    if not _is_stage_direction_caption(caption.text, required_phrases):
+                        continue
                     add(
                         "PROMOTIONAL_CAPTION_IS_STAGE_DIRECTION",
-                        f"timeline[{index}].caption.text",
+                        f"timeline[{index}].captions[{caption_index}].text",
                         "Promotional captions must be audience-facing copy, not filming or editing directions.",
                     )
-            # A single-clip recipe has exactly one caption slot and the HOOK
-            # rule above already claims it, so the reveal caption can only be
-            # required once a second clip exists.
-            if len(recipe.timeline) >= 2 and not any(
-                clip.caption is not None and clip.caption.style_id == "CAPTION_EMPHASIS"
+            if (len(recipe.timeline) >= 2 or regular_caption_count >= 2) and not any(
+                caption.style_id == "CAPTION_EMPHASIS"
                 for clip in recipe.timeline
+                for caption in clip.all_captions()
             ):
                 add(
                     "PROMOTIONAL_REVEAL_CAPTION_MISSING",
@@ -444,7 +446,11 @@ class EditRecipeValidator:
             )
         rendered_copy = "\n".join(
             [
-                *(clip.caption.text for clip in recipe.timeline if clip.caption is not None),
+                *(
+                    caption.text
+                    for clip in recipe.timeline
+                    for caption in clip.all_captions()
+                ),
                 recipe.cta.text,
             ]
         )

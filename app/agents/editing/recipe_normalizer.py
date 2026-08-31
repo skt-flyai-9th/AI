@@ -33,6 +33,10 @@ def _normalize_clip(clip: RecipeClip, *, registry: RealsRegistry) -> RecipeClip:
         if clip.caption is not None
         else None
     )
+    captions = [
+        _normalize_caption(item, clip=clip, duration_ms=duration_ms)
+        for item in clip.captions
+    ]
     effects = [
         normalized
         for effect in clip.effects
@@ -46,7 +50,9 @@ def _normalize_clip(clip: RecipeClip, *, registry: RealsRegistry) -> RecipeClip:
         )
         is not None
     ]
-    return clip.model_copy(update={"caption": caption, "effects": effects})
+    return clip.model_copy(
+        update={"caption": caption, "captions": captions, "effects": effects}
+    )
 
 
 def _normalize_caption(
