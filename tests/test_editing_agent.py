@@ -414,6 +414,58 @@ def test_legacy_recipe_result_does_not_raise_for_operational_cta():
     assert result.recipe.cta.text == "영상의 포인트를 지금 확인해보세요"
 
 
+@pytest.mark.parametrize(
+    ("editing_template_id", "expected_keyword"),
+    [
+        ("jujutsu_transition", "주술회전, Delirious"),
+        ("donggeurio_challenge", "동그리오, Mori no chiisana restaurant"),
+        ("otsukare_summer_challenge", "오츠카레, Otsukare SUMMER"),
+        ("doma_bad_challenge", "도마bad챌린지"),
+    ],
+)
+def test_result_forces_template_track_search_keyword(
+    editing_template_id: str,
+    expected_keyword: str,
+):
+    service = EditingAgentService(
+        llm=RepairingFakeLLM(),
+        video_context_builder=FakeVideoContextBuilder(),
+        renderer=FakeRenderer(),
+    )
+    publishing = _publishing().model_dump(mode="json")
+    publishing["track"].update(
+        {
+            "mode": "FIXED",
+            "title": "AI가 반환한 곡명",
+            "artist": "AI가 반환한 가수",
+            "search_keyword": None,
+        }
+    )
+    run = EditingRun(
+        id=f"edit_{editing_template_id}",
+        status="COMPLETED",
+        stage="COMPLETED",
+        progress=100,
+        request_snapshot={
+            "project": {"promotion_subject": {"name": "테스트 메뉴"}},
+            "selected_shortform": {"editing_template_id": editing_template_id},
+        },
+        publishing_result=publishing,
+        warnings=[],
+        missing_scene_roles=[],
+        available_options=[],
+    )
+
+    result = service.result(run)
+
+    assert result.publishing is not None
+    assert result.publishing.track.mode == "SUGGESTED"
+    assert result.publishing.track.title is None
+    assert result.publishing.track.artist is None
+    assert result.publishing.track.search_keyword == expected_keyword
+    assert expected_keyword in result.publishing.post_note
+
+
 def test_editing_run_accepts_ten_videos_and_rejects_more_than_runtime_limit():
     request_payload = _request().model_dump(mode="json")
     request_payload["videos"] = [

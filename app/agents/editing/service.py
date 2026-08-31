@@ -1036,6 +1036,14 @@ def _fallback_search_keyword(value: str) -> str:
     return (keyword or "트렌드 음원")[:80]
 
 
+_TEMPLATE_TRACK_SEARCH_KEYWORDS = {
+    "jujutsu_transition": "주술회전, Delirious",
+    "donggeurio_challenge": "동그리오, Mori no chiisana restaurant",
+    "otsukare_summer_challenge": "오츠카레, Otsukare SUMMER",
+    "doma_bad_challenge": "도마bad챌린지",
+}
+
+
 def _fallback_hashtags(subject_name: str) -> list[str]:
     subject_tag = "#" + "".join(subject_name.split())
     candidates = [
@@ -1073,11 +1081,25 @@ def _publishing_for_result(run: EditingRun) -> PublishingResult | None:
     data["hashtags"] = hashtags
 
     selected = (run.request_snapshot or {}).get("selected_shortform") or {}
-    fallback_keyword = _fallback_search_keyword(str(selected.get("editing_template_id") or ""))
+    editing_template_id = str(selected.get("editing_template_id") or "")
+    fixed_keyword = _TEMPLATE_TRACK_SEARCH_KEYWORDS.get(editing_template_id)
+    fallback_keyword = _fallback_search_keyword(editing_template_id)
     track = dict(data.get("track") or {})
     track["start_sec"] = None
     track["end_sec"] = None
-    if track.get("title"):
+    if fixed_keyword:
+        track.update(
+            {
+                "mode": "SUGGESTED",
+                "title": None,
+                "artist": None,
+                "search_keyword": fixed_keyword,
+            }
+        )
+        data["post_note"] = (
+            f"플랫폼 음원 검색에서 ‘{fixed_keyword}’을 검색해 직접 추가해주세요."
+        )
+    elif track.get("title"):
         track["mode"] = "FIXED"
     else:
         keyword = str(track.get("search_keyword") or fallback_keyword)
