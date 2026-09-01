@@ -69,7 +69,7 @@ def run_pipeline(config: dict[str, Any]) -> RunResult:
             ~candidates["challenge_id"].fillna("").astype(str).isin(excluded_ids)
         ].reset_index(drop=True)
     if candidates.empty:
-        raise RuntimeError("기존 고정 트렌드를 제외한 신규 리서치 후보가 없습니다.")
+        raise RuntimeError("트렌드 리서치 후보가 없습니다.")
 
     metric_frames: list[pd.DataFrame] = []
     representative_row_frames: list[pd.DataFrame] = []
@@ -105,9 +105,9 @@ def run_pipeline(config: dict[str, Any]) -> RunResult:
 
     # --------------------------------------------------------
     # 1) Instagram + NAVER first.
-    #    We use those signals to choose the 100 candidates worth spending one
-    #    YouTube search.list call on. This keeps the YouTube budget focused on
-    #    the actual provisional Top 100 instead of candidate discovery order.
+    #    We use those signals to choose the ranked candidate pool worth spending
+    #    YouTube search.list calls on. Reserve candidates allow URL failures to
+    #    be replaced before publishing the complete Top 100.
     # --------------------------------------------------------
     non_youtube_specs = [
         ("instagram_apify", InstagramApifyConnector, (timezone_name,)),
@@ -132,15 +132,16 @@ def run_pipeline(config: dict[str, Any]) -> RunResult:
     preliminary_ranking = score_challenges(preliminary_features, config["ranking"])
 
     # --------------------------------------------------------
-    # 2) YouTube search.list: one call per provisional top challenge, up to 100.
-    #    One maxResults=50 result set feeds BOTH representative and guide ranking.
+    # 2) YouTube search.list over the provisional Top 100 plus a reserve pool.
+    #    One successful result set feeds BOTH representative and guide ranking.
     # --------------------------------------------------------
     youtube_cfg = config.get("sources", {}).get("youtube", {})
     if youtube_cfg.get("enabled", False):
+        target_count = max(1, int(config.get("ranking", {}).get("top_n", 100)))
         max_youtube_challenges = min(
-            100,
-            max(1, int(youtube_cfg.get("max_challenges", 100))),
-            max(1, int(youtube_cfg.get("max_search_requests", 100))),
+            len(candidates),
+            max(target_count, int(youtube_cfg.get("max_challenges", target_count))),
+            max(1, int(youtube_cfg.get("max_search_requests", target_count))),
         )
         provisional = preliminary_ranking.sort_values(
             ["final_rank", "confidence"], ascending=[True, False]

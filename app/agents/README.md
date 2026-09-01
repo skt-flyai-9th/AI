@@ -16,3 +16,9 @@ OpenAI를 사용하는 `shortform`, `editing` Agent의 기본 모델은 `gpt-5.4
 컴포넌트도 기본적으로 `gpt-5.4-mini`를 사용한다.
 
 등록 정보는 `app/agents/registry.py`, 확장 규칙은 `docs/ADDING_AN_AGENT.md`를 참고한다.
+
+세 Agent의 실행은 `app/agents/harness.py`의 공통 하네스를 통과한다. 하네스는 Agent를
+추가하거나 실행 엔진을 통일하지 않고, operation별 입출력·의미 계약과 상관관계 ID,
+검증·repair를 포함한 실행 이벤트를 표준화한다. 제한된 repair는 Agent별로 안전하다고
+명시된 실행에만 적용한다. Agent별 계약은 각 Agent 디렉터리의 `harness.py`, 상세 책임
+경계는 `docs/AGENT_HARNESS.md`에 정의한다.

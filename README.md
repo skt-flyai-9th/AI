@@ -67,6 +67,13 @@ flowchart LR
 
 LangGraph는 현재 필요한 결정 흐름에만 사용합니다. 챌린지 수집, DB 승인, FFmpeg 렌더링처럼 결정론적 서비스·배치 작업까지 불필요하게 그래프로 감싸지 않습니다.
 
+세 Agent의 실제 실행 진입점은 공통 Agent 하네스를 통과합니다. 트렌드 리서치는 기존
+파이프라인을, `shortform`과 `editing`은 기존 LangGraph를 그대로 실행하며, 하네스는
+operation별 입출력·의미 계약, 제한된 검증/repair 루프, 실행 상관관계 ID와 payload
+비포함 수명주기 로그를 표준화합니다. 비용이 큰 전체 Agent 자동 재시도와 DB
+트랜잭션은 하네스가 소유하지 않습니다. 자세한 계약은 `docs/AGENT_HARNESS.md`를
+참고합니다.
+
 ## 서비스 범위
 
 AI 서버가 담당하는 기능:

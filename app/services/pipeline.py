@@ -12,13 +12,8 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agents.challenge_ranking.trendcluster import (
-    PINNED_TREND_IDS,
-    RESEARCH_TREND_COUNT,
-    RESEARCH_TREND_FIRST_RANK,
-    RESEARCH_TREND_LAST_RANK,
-    write_trendcluster,
-)
+from app.agents.challenge_ranking.harness import challenge_ranking_harness
+from app.agents.challenge_ranking.trendcluster import write_trendcluster
 from app.core.config import get_settings
 from app.models.challenge import Challenge
 from app.models.pipeline_run import PipelineRun
@@ -27,12 +22,8 @@ from app.ranker_core.pipeline import run_pipeline
 from app.ranker_core.representative import extract_youtube_video_id, youtube_watch_url
 
 
-class TrendExpansionIncomplete(RuntimeError):
-    """The research run did not produce eleven usable YouTube-backed trends."""
-
-
-class TrendExpansionAlreadyComplete(RuntimeError):
-    """Ranks 5..15 were already populated by an earlier successful run."""
+class TrendResearchIncomplete(RuntimeError):
+    """The research run did not produce the requested full URL-backed ranking."""
 
 
 def _json_value(value: Any) -> Any:
@@ -71,15 +62,15 @@ def build_runtime_config() -> dict[str, Any]:
             "observations_csv": str(data_dir / "observations.csv"),
             "database": str(data_dir / "ranker-history.sqlite3"),
             # Ranker diagnostics are staged away from the public trendcluster.
-            # export_trendcluster() replaces the public file only after all
-            # eleven rows commit successfully.
+            # export_trendcluster() replaces the public file only after the
+            # complete Top 100 commits successfully.
             "output_dir": str(research_output_dir),
         }
     )
     ranking = config.setdefault("ranking", {})
-    ranking["top_n"] = RESEARCH_TREND_COUNT
+    ranking["top_n"] = 100
     ranking["require_youtube_video"] = True
-    ranking["exclude_challenge_ids"] = list(PINNED_TREND_IDS)
+    ranking.pop("exclude_challenge_ids", None)
     return config
 
 
@@ -87,12 +78,7 @@ def validate_runtime_keys() -> dict[str, bool]:
     return get_settings().required_api_key_status
 
 
-def create_run(db: Session, *, replace_expansion: bool = False) -> PipelineRun:
-    if trend_expansion_complete(db) and not replace_expansion:
-        raise TrendExpansionAlreadyComplete(
-            f"Trend ranks {RESEARCH_TREND_FIRST_RANK}..{RESEARCH_TREND_LAST_RANK} "
-            "are already populated."
-        )
+def create_run(db: Session) -> PipelineRun:
     run = PipelineRun(id=str(uuid.uuid4()), status="QUEUED", stage="QUEUED", progress=0)
     db.add(run)
     db.commit()
@@ -113,14 +99,25 @@ def execute_pipeline(db: Session, run_id: str) -> PipelineRun:
 
     try:
         config = build_runtime_config()
-        result = run_pipeline(config)
+        result = challenge_ranking_harness.execute(
+            operation="research",
+            input_value=config,
+            executor=run_pipeline,
+            correlation_id=run.id,
+        )
         run.stage = "PERSISTING"
         run.progress = 85
         run.source_status = result.statuses
         run.warnings = _status_warnings(result.statuses)
         db.commit()
 
-        persist_result(db, run, result.ranking, result.source_metrics)
+        persist_result(
+            db,
+            run,
+            result.ranking,
+            result.source_metrics,
+            expected_count=int(config["ranking"]["top_n"]),
+        )
         export_trendcluster(db)
 
         run.status = "COMPLETED"
@@ -158,6 +155,8 @@ def persist_result(
     run: PipelineRun,
     ranking: pd.DataFrame,
     source_metrics: pd.DataFrame,
+    *,
+    expected_count: int = 100,
 ) -> None:
     now = datetime.now(timezone.utc)
     metrics_by_id: dict[str, dict[str, Any]] = {}
@@ -165,24 +164,24 @@ def persist_result(
         for row in source_metrics.to_dict(orient="records"):
             metrics_by_id[str(row.get("challenge_id"))] = _row_dict(row)
 
-    researched = _select_researched_trends(ranking)
-    if len(researched) != RESEARCH_TREND_COUNT:
-        raise TrendExpansionIncomplete(
-            f"Expected {RESEARCH_TREND_COUNT} unique YouTube-backed trends, "
-            f"found {len(researched)}. Existing ranks 1..4 were not changed."
+    researched = _select_researched_trends(ranking, limit=expected_count)
+    if len(researched) != expected_count:
+        raise TrendResearchIncomplete(
+            f"Expected {expected_count} unique YouTube-backed trends, "
+            f"found {len(researched)}. The existing ranking was not changed."
         )
 
-    # Do not expose stale auto-discovery rows from an older deployment. The
-    # bundled four remain active and untouched; the new batch is committed only
-    # after all eleven rows passed validation above.
+    # Replace the active ranking only after the complete validated batch exists.
+    # Historical rows and snapshots remain queryable, but stale challenges are
+    # no longer exposed by the current ranking APIs or export.
     selected_ids = {str(row["challenge_id"]) for row in researched}
     for challenge in db.scalars(select(Challenge)):
-        if challenge.id not in PINNED_TREND_IDS and challenge.id not in selected_ids:
+        if challenge.id not in selected_ids:
             challenge.active = False
 
     for offset, row in enumerate(researched):
         challenge_id = str(row["challenge_id"])
-        assigned_rank = RESEARCH_TREND_FIRST_RANK + offset
+        assigned_rank = offset + 1
         challenge = db.get(Challenge, challenge_id)
         if challenge is None:
             challenge = Challenge(
@@ -241,26 +240,12 @@ def persist_result(
     db.commit()
 
 
-def trend_expansion_complete(db: Session) -> bool:
-    """Return True only when every automatically assigned rank 5..15 exists."""
-
-    rows = list(
-        db.scalars(
-            select(Challenge).where(
-                Challenge.active.is_(True),
-                Challenge.id.not_in(PINNED_TREND_IDS),
-                Challenge.automatic_rank >= RESEARCH_TREND_FIRST_RANK,
-                Challenge.automatic_rank <= RESEARCH_TREND_LAST_RANK,
-            )
-        )
-    )
-    return len(rows) == RESEARCH_TREND_COUNT and {row.automatic_rank for row in rows} == set(
-        range(RESEARCH_TREND_FIRST_RANK, RESEARCH_TREND_LAST_RANK + 1)
-    )
-
-
-def _select_researched_trends(ranking: pd.DataFrame) -> list[dict[str, Any]]:
-    """Pick exactly the best unique non-pinned rows with usable YouTube URLs."""
+def _select_researched_trends(
+    ranking: pd.DataFrame,
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Pick the best unique social trends with usable YouTube URLs."""
 
     if ranking is None or ranking.empty:
         return []
@@ -272,7 +257,7 @@ def _select_researched_trends(ranking: pd.DataFrame) -> list[dict[str, Any]]:
     ranked = ranked.sort_values(["final_rank", "confidence"], ascending=[True, False])
 
     selected: list[dict[str, Any]] = []
-    seen: set[str] = set(PINNED_TREND_IDS)
+    seen: set[str] = set()
     for raw in ranked.to_dict(orient="records"):
         row = _row_dict(raw)
         challenge_id = str(row.get("challenge_id") or "").strip()
@@ -295,7 +280,7 @@ def _select_researched_trends(ranking: pd.DataFrame) -> list[dict[str, Any]]:
 
         seen.add(challenge_id)
         selected.append(row)
-        if len(selected) == RESEARCH_TREND_COUNT:
+        if len(selected) == limit:
             break
     return selected
 

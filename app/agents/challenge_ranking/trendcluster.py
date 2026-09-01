@@ -11,31 +11,22 @@ from typing import Any
 
 TRENDCLUSTER_FILENAME = "trendcluster.json"
 
-# The first four rows come from the reviewed video-editing DB and are immutable
-# during live research. A successful research run appends eleven automatically
-# activated rows at ranks 5..15; there is no human-approval gate for trends.
-PINNED_TREND_IDS = (
+# These four reviewed rows seed a new installation before the first successful
+# Top 100 research run. They are ordinary ranking candidates after that run and
+# are not pinned to ranks 1..4.
+TRENDCLUSTER_CHALLENGE_IDS = (
     "jujutsu_transition",
     "donggeurio_challenge",
     "otsukare_summer_challenge",
     "doma_bad_challenge",
 )
 
-PINNED_TREND_RANKS = {
+TRENDCLUSTER_CANONICAL_RANKS = {
     "jujutsu_transition": 1,
     "donggeurio_challenge": 2,
     "otsukare_summer_challenge": 3,
     "doma_bad_challenge": 4,
 }
-
-RESEARCH_TREND_COUNT = 11
-RESEARCH_TREND_FIRST_RANK = 5
-RESEARCH_TREND_LAST_RANK = RESEARCH_TREND_FIRST_RANK + RESEARCH_TREND_COUNT - 1
-
-# Backward-compatible aliases for seed/import code that still describes the
-# bundled four-item dataset as the initial trendcluster.
-TRENDCLUSTER_CHALLENGE_IDS = PINNED_TREND_IDS
-TRENDCLUSTER_CANONICAL_RANKS = PINNED_TREND_RANKS
 
 _SEED_CATEGORIES = {
     "jujutsu_transition": "meme",

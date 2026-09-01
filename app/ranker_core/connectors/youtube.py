@@ -55,7 +55,7 @@ class YouTubeConnector:
                     "requests": self.request_count,
                     "search_requests": self.search_request_count,
                     "searched_challenges": min(
-                        len(candidates), int(self.config.get("max_challenges", 100))
+                        len(candidates), int(self.config.get("max_challenges", 160))
                     ),
                     "rows": int(len(rows)),
                 },
@@ -78,16 +78,14 @@ class YouTubeConnector:
     def _collect_rows(
         self, candidates: pd.DataFrame, now: pd.Timestamp, api_key: str
     ) -> pd.DataFrame:
-        # One search.list per challenge. This intentionally uses most of the daily
-        # search bucket because the product needs two high-quality links for each
-        # of the Top 100 challenges. Both app-card and guide links are selected
-        # from the same up-to-50-video result set, so we do NOT spend two searches
-        # per challenge.
+        # One successful search.list result set feeds both app-card and guide
+        # selection. Empty searches may use bounded fallback queries, and the
+        # configured reserve budget allows later candidates to replace failures.
         lookback_days = max(30, int(self.config.get("lookback_days", 180)))
         max_aliases = max(1, int(self.config.get("max_aliases_per_challenge", 3)))
         max_results = min(50, max(10, int(self.config.get("max_results_per_challenge", 50))))
-        budget = min(100, max(1, int(self.config.get("max_search_requests", 100))))
-        max_challenges = min(budget, max(1, int(self.config.get("max_challenges", 100))))
+        budget = max(1, int(self.config.get("max_search_requests", 200)))
+        max_challenges = min(budget, max(1, int(self.config.get("max_challenges", 160))))
         published_after = (now - pd.Timedelta(days=lookback_days)).isoformat().replace(
             "+00:00", "Z"
         )

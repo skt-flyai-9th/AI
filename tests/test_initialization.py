@@ -54,13 +54,13 @@ def test_initializer_runs_ranking_only_before_the_first_success():
         assert second["bundled_challenges"]["created"] == []
 
 
-def test_initializer_preserves_appended_research_trends():
+def test_initializer_preserves_completed_research_ranking_without_bootstrap_overwrite():
     now = datetime.now(timezone.utc)
     with SessionLocal() as db:
         researched = Challenge(
-            id="researched-five",
-            automatic_name="리서치 5위",
-            automatic_rank=5,
+            id="researched-top",
+            automatic_name="리서치 1위",
+            automatic_rank=1,
             automatic_representative_youtube_url="https://youtu.be/ABCDEFGHIJK",
             automatic_guide_youtube_url="https://youtu.be/ABCDEFGHIJK",
             active=True,
@@ -83,7 +83,7 @@ def test_initializer_preserves_appended_research_trends():
 
         db.refresh(researched)
         assert researched.active is True
-        assert researched.automatic_rank == 5
+        assert researched.automatic_rank == 1
 
 
 def test_celery_beat_only_schedules_operational_editing_recovery():
