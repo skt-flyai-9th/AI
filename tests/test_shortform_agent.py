@@ -106,6 +106,38 @@ class MultiQuestionLLM(FakeShortformLLM):
         )
 
 
+class PromotionObjectiveOptionsLLM(FakeShortformLLM):
+    def decide_turn(self, **kwargs) -> ShortformTurnDecision:
+        return ShortformTurnDecision(
+            action=ShortformAction.ASK,
+            assistant_message="이 영상으로 어떤 결과를 가장 원하세요?",
+            state_updates=StateUpdates(
+                promotion_category="menu",
+                promotion_subject=DecisionPromotionSubject(
+                    type="MENU",
+                    name="딸기 크림 라떼",
+                    menu_id="menu_001",
+                    details=[],
+                ),
+                promotion_objective=None,
+                filming_time="within_10m",
+                face_exposure="not_allowed",
+                creative_preferences=[],
+                secondary_information=[],
+                facts_from_user=[],
+            ),
+            options=[
+                DecisionOption(id="sales", label="판매 늘리기"),
+                DecisionOption(id="awareness", label="인지도 높이기"),
+                DecisionOption(id="visit", label="방문 유도"),
+                DecisionOption(id="direct_input", label="직접 입력"),
+            ],
+            missing_required_fields=["promotion_objective"],
+            conflicts=[],
+            ready_for_confirmation=False,
+        )
+
+
 def _store_context() -> dict:
     return {
         "store_context": {
@@ -402,6 +434,34 @@ def test_shortform_filters_removed_categories_and_stores_one_question(client, au
             session = db.get(ShortformSession, session_id)
             assert session is not None
             assert session.conversation[-1]["content"] == payload["assistant_message"]
+    finally:
+        app.dependency_overrides.pop(get_shortform_agent_service, None)
+
+
+def test_shortform_removes_promotion_objective_quick_reply_options(client, auth_headers):
+    fake_service = ShortformAgentService(llm=PromotionObjectiveOptionsLLM())
+    app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
+    try:
+        created = client.post(
+            "/api/v1/shortform-sessions",
+            headers=auth_headers,
+            json=_store_context(),
+        )
+        session_id = created.json()["session_id"]
+        response = client.post(
+            f"/api/v1/shortform-sessions/{session_id}/turns",
+            headers=auth_headers,
+            json={"input": {"type": "TEXT", "text": "딸기 크림 라떼를 홍보하고 싶어요"}},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["assistant_message"] == "이 영상으로 어떤 결과를 가장 원하세요?"
+        assert payload["options"] == []
+        with SessionLocal() as db:
+            session = db.get(ShortformSession, session_id)
+            assert session is not None
+            assert session.project_state["current_question_field"] == "promotion_objective"
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)
 
