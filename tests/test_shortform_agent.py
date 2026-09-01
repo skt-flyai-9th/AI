@@ -170,6 +170,28 @@ class SummaryOnlyFilmingTimeLLM(FakeShortformLLM):
         )
 
 
+class OppositeFaceExposureLLM(FakeShortformLLM):
+    def decide_turn(self, **kwargs) -> ShortformTurnDecision:
+        return ShortformTurnDecision(
+            action=ShortformAction.CONFIRM,
+            assistant_message="얼굴 노출 없이 촬영하는 것으로 이해했어요.",
+            state_updates=StateUpdates(
+                promotion_category=None,
+                promotion_subject=None,
+                promotion_objective=None,
+                filming_time=None,
+                face_exposure="not_allowed",
+                creative_preferences=[],
+                secondary_information=[],
+                facts_from_user=[],
+            ),
+            options=[],
+            missing_required_fields=[],
+            conflicts=[],
+            ready_for_confirmation=True,
+        )
+
+
 def _store_context() -> dict:
     return {
         "store_context": {
@@ -558,6 +580,64 @@ def test_shortform_adds_explicit_filming_time_question_to_summary_only_response(
             session = db.get(ShortformSession, session_id)
             assert session is not None
             assert session.project_state["current_question_field"] == "filming_time"
+    finally:
+        app.dependency_overrides.pop(get_shortform_agent_service, None)
+
+
+def test_face_exposure_option_is_not_overwritten_by_opposite_llm_update(
+    client, auth_headers
+):
+    fake_service = ShortformAgentService(llm=OppositeFaceExposureLLM())
+    app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
+    try:
+        created = client.post(
+            "/api/v1/shortform-sessions",
+            headers=auth_headers,
+            json=_store_context(),
+        )
+        session_id = created.json()["session_id"]
+        with SessionLocal() as db:
+            session = db.get(ShortformSession, session_id)
+            assert session is not None
+            state = dict(session.project_state or {})
+            state.update(
+                {
+                    "promotion_category": "menu",
+                    "promotion_subject": {
+                        "type": "MENU",
+                        "name": "참치마요오니",
+                        "menu_id": None,
+                        "details": {},
+                    },
+                    "filming_time": "30m_plus",
+                    "face_exposure": None,
+                    "current_question": "이제 얼굴 노출 여부만 알려주실래요?",
+                    "current_question_field": "face_exposure",
+                    "option_labels": {
+                        "allowed": "얼굴 노출 가능",
+                        "not_allowed": "얼굴 노출 없이",
+                    },
+                }
+            )
+            session.project_state = state
+            db.commit()
+
+        response = client.post(
+            f"/api/v1/shortform-sessions/{session_id}/turns",
+            headers=auth_headers,
+            json={"input": {"type": "OPTION", "option_id": "allowed"}},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["action"] == "CONFIRM"
+        assert payload["project_state"]["face_exposure"] == "allowed"
+        assert "얼굴 노출 가능" in payload["assistant_message"]
+        assert "얼굴 노출 없이" not in payload["assistant_message"]
+        with SessionLocal() as db:
+            session = db.get(ShortformSession, session_id)
+            assert session is not None
+            assert session.project_state["face_exposure"] == "allowed"
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)
 

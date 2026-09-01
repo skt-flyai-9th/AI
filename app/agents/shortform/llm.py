@@ -80,6 +80,7 @@ class OpenAIShortformLLM:
                 "Return exactly one allowed action.",
                 "Every field required by the structured schema must be returned; use null or empty lists when there is no update.",
                 "Do not ask for information already present in project_state or store_context.",
+                "A current UI option_id is authoritative: preserve its canonical filming_time or face_exposure value exactly and never replace it with the opposite interpretation.",
                 "Do not invent factual store/menu/event information.",
                 "The only required brief fields are promotion_subject, filming_time, and face_exposure.",
                 "promotion_objective has been removed from this conversation flow: always return null for its state update and never ask for, collect, summarize, mention, or offer options for it.",
