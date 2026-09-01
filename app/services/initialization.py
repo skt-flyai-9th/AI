@@ -31,7 +31,6 @@ def initialize_service_once(
     """
 
     database_result = seed_template_library(db)
-    bundled_challenges = _sync_bundled_challenges(db)
     completed = db.scalar(
         select(PipelineRun)
         .where(PipelineRun.status == "COMPLETED")
@@ -39,6 +38,7 @@ def initialize_service_once(
         .limit(1)
     )
     if completed is None:
+        bundled_challenges = _sync_bundled_challenges(db)
         run = create_run(db)
         completed = ranking_executor(db, run.id)
         ranking_result = {
@@ -47,6 +47,9 @@ def initialize_service_once(
             "executed": True,
         }
     else:
+        # The completed Top 100 is authoritative. Re-syncing the four bundled
+        # bootstrap rows here would overwrite researched ranks on every deploy.
+        bundled_challenges = {"created": [], "updated": []}
         ranking_result = {
             "status": "SKIPPED",
             "run_id": completed.id,
@@ -67,7 +70,7 @@ def initialize_service_once(
 
 
 def _sync_bundled_challenges(db: Session) -> dict[str, list[str]]:
-    """Upsert the authoritative four-item trendcluster without rerunning research."""
+    """Seed four reviewed rows only before the first successful Top 100 run."""
 
     created: list[str] = []
     updated: list[str] = []
@@ -97,8 +100,5 @@ def _sync_bundled_challenges(db: Session) -> dict[str, list[str]]:
         challenge.raw_details = dict(item)
         challenge.last_seen_at = now
 
-    # Research results at ranks 5..15 are durable across deployments. The
-    # initializer owns only the bundled rows and must not deactivate appended
-    # trends when it re-syncs ranks 1..4.
     db.commit()
     return {"created": created, "updated": updated}

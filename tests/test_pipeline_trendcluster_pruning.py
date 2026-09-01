@@ -4,17 +4,15 @@ import pandas as pd
 import pytest
 from sqlalchemy import select
 
-from app.agents.challenge_ranking.trendcluster import PINNED_TREND_RANKS
 from app.db.session import SessionLocal
 from app.models.challenge import Challenge
 from app.models.pipeline_run import PipelineRun
 from app.models.ranking_snapshot import RankingSnapshot
 from app.services.pipeline import (
-    TrendExpansionAlreadyComplete,
-    TrendExpansionIncomplete,
+    TrendResearchIncomplete,
+    build_runtime_config,
     create_run,
     persist_result,
-    trend_expansion_complete,
 )
 
 
@@ -45,16 +43,16 @@ def _ranking_row(
     }
 
 
-def _add_pinned_rows(db) -> dict[str, tuple[str, int]]:
+def _add_existing_ranking(db, *, count: int = 15, prefix: str = "existing") -> list[str]:
     now = datetime.now(timezone.utc)
-    original: dict[str, tuple[str, int]] = {}
-    for challenge_id, rank in PINNED_TREND_RANKS.items():
-        name = f"pinned-{challenge_id}"
-        original[challenge_id] = (name, rank)
+    challenge_ids = []
+    for rank in range(1, count + 1):
+        challenge_id = f"{prefix}-{rank}"
+        challenge_ids.append(challenge_id)
         db.add(
             Challenge(
                 id=challenge_id,
-                automatic_name=name,
+                automatic_name=challenge_id,
                 automatic_rank=rank,
                 automatic_score=777.0,
                 active=True,
@@ -63,7 +61,7 @@ def _add_pinned_rows(db) -> dict[str, tuple[str, int]]:
             )
         )
     db.commit()
-    return original
+    return challenge_ids
 
 
 def _add_run(db, run_id: str = "research-run") -> PipelineRun:
@@ -73,31 +71,33 @@ def _add_run(db, run_id: str = "research-run") -> PipelineRun:
     return run
 
 
-def test_persist_result_appends_eleven_url_backed_trends_without_changing_top_four() -> None:
-    with SessionLocal() as db:
-        original = _add_pinned_rows(db)
-        run = _add_run(db)
-        ranking = pd.DataFrame(
-            [
-                _ranking_row("missing-url", 1),
-                _ranking_row(
-                    "not-a-challenge",
-                    2,
-                    youtube_url=_youtube_url(99),
-                    is_social_challenge=False,
-                ),
-                *[
-                    _ranking_row(
-                        f"researched-{index}",
-                        index + 2,
-                        youtube_url=_youtube_url(index),
-                    )
-                    for index in range(1, 12)
-                ],
-            ]
-        )
+def _valid_ranking(*, prefix: str, count: int = 100) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            _ranking_row(
+                f"{prefix}-{index}",
+                index,
+                youtube_url=_youtube_url(index),
+            )
+            for index in range(1, count + 1)
+        ]
+    )
 
-        persist_result(db, run, ranking, pd.DataFrame())
+
+def test_runtime_config_restores_full_top_one_hundred_research() -> None:
+    config = build_runtime_config()
+
+    assert config["ranking"]["top_n"] == 100
+    assert config["ranking"]["require_youtube_video"] is True
+    assert "exclude_challenge_ids" not in config["ranking"]
+
+
+def test_complete_batch_replaces_active_ranking_with_top_one_hundred() -> None:
+    with SessionLocal() as db:
+        old_ids = _add_existing_ranking(db)
+        run = _add_run(db)
+
+        persist_result(db, run, _valid_ranking(prefix="researched"), pd.DataFrame())
 
         active = list(
             db.scalars(
@@ -106,16 +106,14 @@ def test_persist_result_appends_eleven_url_backed_trends_without_changing_top_fo
                 .order_by(Challenge.automatic_rank)
             )
         )
-        assert len(active) == 15
-        assert [(row.id, row.automatic_rank) for row in active[:4]] == [
-            (challenge_id, rank) for challenge_id, rank in PINNED_TREND_RANKS.items()
-        ]
-        assert [(row.automatic_name, row.automatic_rank) for row in active[:4]] == [
-            (original[challenge_id][0], rank) for challenge_id, rank in PINNED_TREND_RANKS.items()
-        ]
-        assert [row.automatic_rank for row in active[4:]] == list(range(5, 16))
-        assert {row.id for row in active[4:]} == {f"researched-{index}" for index in range(1, 12)}
-        assert all(row.raw_details["research_auto_activated"] is True for row in active[4:])
+        assert len(active) == 100
+        assert [row.automatic_rank for row in active] == list(range(1, 101))
+        assert {row.id for row in active} == {
+            f"researched-{index}" for index in range(1, 101)
+        }
+        assert all(row.raw_details["research_auto_activated"] is True for row in active)
+        assert all(db.get(Challenge, challenge_id).active is False for challenge_id in old_ids)
+
         snapshots = list(
             db.scalars(
                 select(RankingSnapshot)
@@ -123,22 +121,27 @@ def test_persist_result_appends_eleven_url_backed_trends_without_changing_top_fo
                 .order_by(RankingSnapshot.automatic_rank)
             )
         )
-        assert [row.automatic_rank for row in snapshots] == list(range(5, 16))
-        assert trend_expansion_complete(db) is True
+        assert len(snapshots) == 100
+        assert [row.automatic_rank for row in snapshots] == list(range(1, 101))
 
 
 def test_persist_result_reuses_one_valid_youtube_url_for_both_contract_fields() -> None:
     with SessionLocal() as db:
-        _add_pinned_rows(db)
         run = _add_run(db)
         rows = []
-        for index in range(1, 12):
+        for index in range(1, 3):
             row = _ranking_row(f"researched-{index}", index, youtube_url=_youtube_url(index))
             if index == 1:
                 row["guide_youtube_url"] = ""
             rows.append(row)
 
-        persist_result(db, run, pd.DataFrame(rows), pd.DataFrame())
+        persist_result(
+            db,
+            run,
+            pd.DataFrame(rows),
+            pd.DataFrame(),
+            expected_count=2,
+        )
 
         stored = db.get(Challenge, "researched-1")
         assert stored is not None
@@ -146,57 +149,56 @@ def test_persist_result_reuses_one_valid_youtube_url_for_both_contract_fields() 
         assert stored.automatic_guide_youtube_url == _youtube_url(1)
 
 
-def test_persist_result_is_all_or_nothing_when_fewer_than_eleven_urls_exist() -> None:
+def test_incomplete_batch_leaves_existing_database_untouched() -> None:
     with SessionLocal() as db:
-        original = _add_pinned_rows(db)
+        old_ids = _add_existing_ranking(db)
         run = _add_run(db)
-        ranking = pd.DataFrame(
-            [
-                _ranking_row(f"researched-{index}", index, youtube_url=_youtube_url(index))
-                for index in range(1, 11)
-            ]
-        )
+        ranking = _valid_ranking(prefix="researched", count=99)
 
-        with pytest.raises(TrendExpansionIncomplete, match="found 10"):
+        with pytest.raises(TrendResearchIncomplete, match="found 99"):
             persist_result(db, run, ranking, pd.DataFrame())
         db.rollback()
 
-        rows = list(db.scalars(select(Challenge).order_by(Challenge.automatic_rank)))
-        assert [(row.id, row.automatic_name, row.automatic_rank) for row in rows] == [
-            (challenge_id, original[challenge_id][0], rank)
-            for challenge_id, rank in PINNED_TREND_RANKS.items()
-        ]
+        active_ids = list(
+            db.scalars(
+                select(Challenge.id)
+                .where(Challenge.active.is_(True))
+                .order_by(Challenge.automatic_rank)
+            )
+        )
+        assert active_ids == old_ids
         assert list(db.scalars(select(RankingSnapshot))) == []
 
 
-def test_create_run_refuses_to_duplicate_a_completed_expansion() -> None:
+def test_complete_rerun_replaces_previous_top_one_hundred() -> None:
     with SessionLocal() as db:
-        _add_pinned_rows(db)
-        first_run = _add_run(db)
-        ranking = pd.DataFrame(
-            [
-                _ranking_row(f"researched-{index}", index, youtube_url=_youtube_url(index))
-                for index in range(1, 12)
-            ]
+        first_run = _add_run(db, "first-run")
+        persist_result(db, first_run, _valid_ranking(prefix="first"), pd.DataFrame())
+
+        second_run = _add_run(db, "second-run")
+        persist_result(db, second_run, _valid_ranking(prefix="second"), pd.DataFrame())
+
+        active_ids = set(db.scalars(select(Challenge.id).where(Challenge.active.is_(True))))
+        inactive_first_ids = set(
+            db.scalars(
+                select(Challenge.id).where(
+                    Challenge.id.like("first-%"), Challenge.active.is_(False)
+                )
+            )
         )
-        persist_result(db, first_run, ranking, pd.DataFrame())
-
-        with pytest.raises(TrendExpansionAlreadyComplete):
-            create_run(db)
+        assert active_ids == {f"second-{index}" for index in range(1, 101)}
+        assert inactive_first_ids == {f"first-{index}" for index in range(1, 101)}
 
 
-def test_create_run_allows_explicit_replacement_of_a_completed_expansion() -> None:
+def test_create_run_always_allows_a_new_top_one_hundred_research() -> None:
     with SessionLocal() as db:
-        _add_pinned_rows(db)
-        first_run = _add_run(db)
-        ranking = pd.DataFrame(
-            [
-                _ranking_row(f"researched-{index}", index, youtube_url=_youtube_url(index))
-                for index in range(1, 12)
-            ]
-        )
-        persist_result(db, first_run, ranking, pd.DataFrame())
+        previous = _add_run(db, "completed-run")
+        previous.status = "COMPLETED"
+        previous.stage = "COMPLETED"
+        previous.finished_at = datetime.now(timezone.utc)
+        db.commit()
 
-        replacement_run = create_run(db, replace_expansion=True)
+        new_run = create_run(db)
 
-        assert replacement_run.status == "QUEUED"
+        assert new_run.status == "QUEUED"
+        assert new_run.id != previous.id

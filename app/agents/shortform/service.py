@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.shortform.graph import build_shortform_graph
+from app.agents.shortform.harness import shortform_harness
 from app.agents.shortform.llm import OpenAIShortformLLM, ShortformLLM, ShortformLLMError
 from app.agents.shortform.types import (
     DecisionOption,
@@ -186,7 +187,8 @@ class ShortformAgentService:
                 "conversation": session.conversation,
                 "user_input": user_input,
                 "photo_urls": self._photo_urls(session.store_context),
-            }
+            },
+            correlation_id=session.id,
         )
         decision = ShortformTurnDecision.model_validate(graph_result["decision"])
         project_state = self._merge_project_state(project_state, decision)
@@ -663,7 +665,8 @@ class ShortformAgentService:
                     "video_editing_db_candidates": [
                         item.model_dump(mode="json") for item in candidates
                     ],
-                }
+                },
+                correlation_id=session.id,
             )
             selections = VideoEditingDBSelections.model_validate(
                 graph_result["recommendations"]
@@ -863,9 +866,28 @@ class ShortformAgentService:
         ]
         return [url for url in urls if url][: self.settings.shortform_max_photo_inputs]
 
-    def _invoke_graph(self, state: dict[str, Any]) -> dict[str, Any]:
+    def _invoke_graph(
+        self,
+        state: dict[str, Any],
+        *,
+        correlation_id: str,
+    ) -> dict[str, Any]:
         try:
-            return self.graph.invoke(state)
+            operation = {
+                "TURN": "turn",
+                "RECOMMEND": "recommend",
+            }.get(str(state.get("mode") or ""))
+            if operation is None:
+                raise ValueError("Unsupported Shortform graph mode")
+            return shortform_harness.execute(
+                operation=operation,
+                input_value=state,
+                executor=self.graph.invoke,
+                correlation_id=correlation_id,
+                repair_executor=lambda value, _result, _issues, _attempt: self.graph.invoke(
+                    value
+                ),
+            )
         except ShortformLLMError:
             raise
         except ShortformDomainError:

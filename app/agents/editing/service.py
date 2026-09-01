@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.editing.effect_planner import EffectPlanner
 from app.agents.editing.graph import build_editing_graph
+from app.agents.editing.harness import editing_harness
 from app.agents.editing.llm import EditingLLM, OpenAIEditingLLM
 from app.agents.editing.structured_output import EditingLLMError
 from app.agents.editing.telemetry import reset_usage, usage_snapshot
@@ -239,8 +240,9 @@ class EditingAgentService:
 
             planning_error: EditingLLMError | None = None
             try:
-                result = self.graph.invoke(
-                    {
+                result = editing_harness.execute(
+                    operation="plan",
+                    input_value={
                         "domain_context": self.domain_context,
                         "project": project_payload,
                         "selected_shortform": request.selected_shortform.model_dump(mode="json"),
@@ -253,7 +255,9 @@ class EditingAgentService:
                         "repair_attempts": 0,
                         "stage_callback": update_graph_stage,
                         "checkpoint_callback": save_analysis_checkpoint,
-                    }
+                    },
+                    executor=self.graph.invoke,
+                    correlation_id=run.id,
                 )
             except EditingLLMError as exc:
                 if not _is_editing_plan_contract_error(exc):
@@ -297,8 +301,9 @@ class EditingAgentService:
                     "SOURCE_ROLE_MATCH_FALLBACK: 장면 매칭이 부족하여 촬영 순서 기반 편집을 적용했습니다.",
                 ]
                 try:
-                    reduced = self.graph.invoke(
-                        {
+                    reduced = editing_harness.execute(
+                        operation="reduced_plan",
+                        input_value={
                             "domain_context": self.domain_context,
                             "project": project_payload,
                             "selected_shortform": request.selected_shortform.model_dump(
@@ -315,7 +320,9 @@ class EditingAgentService:
                             "repair_attempts": 0,
                             "stage_callback": update_graph_stage,
                             "checkpoint_callback": save_analysis_checkpoint,
-                        }
+                        },
+                        executor=self.graph.invoke,
+                        correlation_id=run.id,
                     )
                     if reduced.get("exhausted"):
                         decision = self._build_ordered_fallback(
