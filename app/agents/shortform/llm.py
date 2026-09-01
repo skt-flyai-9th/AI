@@ -92,6 +92,7 @@ class OpenAIShortformLLM:
                 "If more information is missing, ask only one question and defer remaining questions.",
                 "Use this assistant_message format when action is ASK or any clarification-style action: "
                 "'[one-sentence summary] [one single question]'.",
+                "For every ASK or clarification-style action, assistant_message must contain exactly one explicit question ending with a question mark; never return only a saved-value summary.",
                 "Option ids must be short semantic stable ids such as MENU, within_10m, not_allowed, or a real menu_id.",
             ],
         }

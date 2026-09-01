@@ -230,9 +230,16 @@ class ShortformAgentService:
             decision = decision.model_copy(update={"options": fallback_options})
         else:
             assistant_message = _format_assistant_message(decision.assistant_message, action)
-            if action in _QUESTION_ACTIONS and previous_question == _extract_question(
-                assistant_message
-            ):
+            extracted_question = _extract_question(assistant_message)
+            if action in _QUESTION_ACTIONS and next_question_field and not extracted_question:
+                fallback_question, fallback_options = _fallback_question(next_question_field)
+                assistant_message = _format_assistant_message(
+                    f"{assistant_message}\n{fallback_question}",
+                    action,
+                )
+                if fallback_options:
+                    decision = decision.model_copy(update={"options": fallback_options})
+            elif action in _QUESTION_ACTIONS and previous_question == extracted_question:
                 assistant_message, fallback_options = _fallback_question(next_question_field)
                 if fallback_options:
                     decision = decision.model_copy(update={"options": fallback_options})

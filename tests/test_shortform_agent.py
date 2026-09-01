@@ -138,6 +138,38 @@ class RemovedPromotionObjectiveLLM(FakeShortformLLM):
         )
 
 
+class SummaryOnlyFilmingTimeLLM(FakeShortformLLM):
+    def decide_turn(self, **kwargs) -> ShortformTurnDecision:
+        return ShortformTurnDecision(
+            action=ShortformAction.ASK,
+            assistant_message="참치마요오니로 저장했어요.",
+            state_updates=StateUpdates(
+                promotion_category="menu",
+                promotion_subject=DecisionPromotionSubject(
+                    type="MENU",
+                    name="참치마요오니",
+                    menu_id=None,
+                    details=[],
+                ),
+                promotion_objective=None,
+                filming_time=None,
+                face_exposure=None,
+                creative_preferences=[],
+                secondary_information=[],
+                facts_from_user=[],
+            ),
+            options=[
+                DecisionOption(id="within_5m", label="5분 이내"),
+                DecisionOption(id="within_10m", label="10분 이내"),
+                DecisionOption(id="within_20m", label="20분 이내"),
+                DecisionOption(id="30m_plus", label="30분 이상"),
+            ],
+            missing_required_fields=["filming_time", "face_exposure"],
+            conflicts=[],
+            ready_for_confirmation=False,
+        )
+
+
 def _store_context() -> dict:
     return {
         "store_context": {
@@ -484,6 +516,43 @@ def test_shortform_skips_removed_promotion_objective_step(client, auth_headers):
         assert payload["project_state"]["promotion_objective"] is None
         assert "promotion_objective" not in payload["project_state"][
             "missing_required_fields"
+        ]
+        with SessionLocal() as db:
+            session = db.get(ShortformSession, session_id)
+            assert session is not None
+            assert session.project_state["current_question_field"] == "filming_time"
+    finally:
+        app.dependency_overrides.pop(get_shortform_agent_service, None)
+
+
+def test_shortform_adds_explicit_filming_time_question_to_summary_only_response(
+    client, auth_headers
+):
+    fake_service = ShortformAgentService(llm=SummaryOnlyFilmingTimeLLM())
+    app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
+    try:
+        created = client.post(
+            "/api/v1/shortform-sessions",
+            headers=auth_headers,
+            json=_store_context(),
+        )
+        session_id = created.json()["session_id"]
+        response = client.post(
+            f"/api/v1/shortform-sessions/{session_id}/turns",
+            headers=auth_headers,
+            json={"input": {"type": "TEXT", "text": "참치마요오니를 홍보할게요"}},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["assistant_message"] == (
+            "참치마요오니로 저장했어요.\n촬영에 어느 정도 시간을 쓸 수 있으세요?"
+        )
+        assert [item["id"] for item in payload["options"]] == [
+            "within_5m",
+            "within_10m",
+            "within_20m",
+            "30m_plus",
         ]
         with SessionLocal() as db:
             session = db.get(ShortformSession, session_id)
