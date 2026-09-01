@@ -54,6 +54,38 @@ def test_initializer_runs_ranking_only_before_the_first_success():
         assert second["bundled_challenges"]["created"] == []
 
 
+def test_initializer_preserves_appended_research_trends():
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        researched = Challenge(
+            id="researched-five",
+            automatic_name="리서치 5위",
+            automatic_rank=5,
+            automatic_representative_youtube_url="https://youtu.be/ABCDEFGHIJK",
+            automatic_guide_youtube_url="https://youtu.be/ABCDEFGHIJK",
+            active=True,
+            first_seen_at=now,
+            last_seen_at=now,
+        )
+        completed = PipelineRun(
+            id="already-completed",
+            status="COMPLETED",
+            stage="COMPLETED",
+            progress=100,
+            created_at=now,
+            started_at=now,
+            finished_at=now,
+        )
+        db.add_all([researched, completed])
+        db.commit()
+
+        initialize_service_once(db, ranking_executor=_complete_ranking)
+
+        db.refresh(researched)
+        assert researched.active is True
+        assert researched.automatic_rank == 5
+
+
 def test_celery_beat_only_schedules_operational_editing_recovery():
     schedules = celery_app.conf.beat_schedule
 

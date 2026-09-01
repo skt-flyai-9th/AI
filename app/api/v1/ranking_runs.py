@@ -12,6 +12,7 @@ from app.agents.challenge_ranking.service import (
 from app.core.security import require_internal_api_key
 from app.db.session import get_db
 from app.models.pipeline_run import PipelineRun
+from app.services.pipeline import TrendExpansionAlreadyComplete
 from app.schemas.pipeline_run import (
     PipelineRunCreateResponse,
     PipelineRunRead,
@@ -36,7 +37,13 @@ def start_ranking_run(db: Session = Depends(get_db)) -> PipelineRunCreateRespons
     missing = [name for name, ready in key_status.items() if not ready]
     if missing:
         raise HTTPException(status_code=422, detail={"missing_api_keys": missing})
-    run = create_run(db)
+    try:
+        run = create_run(db)
+    except TrendExpansionAlreadyComplete as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "TREND_EXPANSION_ALREADY_COMPLETE", "message": str(exc)},
+        ) from exc
     task = enqueue_ranking_pipeline(run.id)
     run.celery_task_id = task.id
     db.commit()

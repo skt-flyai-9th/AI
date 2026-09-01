@@ -110,34 +110,40 @@ class YouTubeConnector:
             if not aliases:
                 continue
 
-            query_terms = _build_query_terms(aliases)
-            query = "|".join(query_terms)
-            params = {
-                "key": api_key,
-                "part": "snippet",
-                "type": "video",
-                "q": query,
-                "order": "relevance",
-                "publishedAfter": published_after,
-                "maxResults": max_results,
-                # Do not restrict to <4 min. Follow-along choreography/practice
-                # videos are often longer than Shorts.
-                "regionCode": self.config.get("region_code", "KR"),
-                "relevanceLanguage": self.config.get("relevance_language", "ko"),
-                "safeSearch": "moderate",
-            }
-            payload = request_json(self.session, "GET", self.search_url, params=params)
-            self.request_count += 1
-            self.search_request_count += 1
-            searched_ids.append(str(candidate.challenge_id))
-            for item in payload.get("items", []):
-                video_id = str(item.get("id", {}).get("videoId", "")).strip()
-                if not video_id:
-                    continue
-                # This call is challenge-specific. Downstream semantic scoring
-                # checks title/description/tags before choosing either link.
-                for alias in aliases:
-                    video_matches[video_id][str(candidate.challenge_id)].add(alias)
+            max_attempts = max(1, int(self.config.get("search_attempts_per_challenge", 3)))
+            for query in _build_query_attempts(aliases)[:max_attempts]:
+                if self.search_request_count >= budget:
+                    break
+                params = {
+                    "key": api_key,
+                    "part": "snippet",
+                    "type": "video",
+                    "q": query,
+                    "order": "relevance",
+                    "publishedAfter": published_after,
+                    "maxResults": max_results,
+                    # Do not restrict to <4 min. Follow-along choreography/practice
+                    # videos are often longer than Shorts.
+                    "regionCode": self.config.get("region_code", "KR"),
+                    "relevanceLanguage": self.config.get("relevance_language", "ko"),
+                    "safeSearch": "moderate",
+                }
+                payload = request_json(self.session, "GET", self.search_url, params=params)
+                self.request_count += 1
+                self.search_request_count += 1
+                searched_ids.append(str(candidate.challenge_id))
+                found = False
+                for item in payload.get("items", []):
+                    video_id = str(item.get("id", {}).get("videoId", "")).strip()
+                    if not video_id:
+                        continue
+                    found = True
+                    # This call is challenge-specific. Downstream semantic scoring
+                    # checks title/description/tags before choosing either link.
+                    for alias in aliases:
+                        video_matches[video_id][str(candidate.challenge_id)].add(alias)
+                if found:
+                    break
 
         if not video_matches:
             return _empty_rows()
@@ -262,6 +268,19 @@ def _build_query_terms(aliases: list[str]) -> list[str]:
 
     # Keep the query reasonably short while preserving the explicit guide terms.
     return list(dict.fromkeys(terms))[:12]
+
+
+def _build_query_attempts(aliases: list[str]) -> list[str]:
+    """Return progressively broader queries for candidates with no video hit."""
+
+    primary = "|".join(_build_query_terms(aliases))
+    base = aliases[0].strip()
+    attempts = [
+        primary,
+        f'"{base}" 챌린지 shorts',
+        f'"{base}" challenge tutorial',
+    ]
+    return [query for query in dict.fromkeys(attempts) if query.strip()]
 
 
 def _duration_seconds(value: Any) -> int:

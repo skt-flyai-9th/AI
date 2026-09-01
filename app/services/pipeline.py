@@ -9,12 +9,14 @@ from typing import Any
 
 import pandas as pd
 import yaml
-from sqlalchemy import delete
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.challenge_ranking.trendcluster import (
-    TRENDCLUSTER_CANONICAL_RANKS,
-    TRENDCLUSTER_CHALLENGE_IDS,
+    PINNED_TREND_IDS,
+    RESEARCH_TREND_COUNT,
+    RESEARCH_TREND_FIRST_RANK,
+    RESEARCH_TREND_LAST_RANK,
     write_trendcluster,
 )
 from app.core.config import get_settings
@@ -22,6 +24,15 @@ from app.models.challenge import Challenge
 from app.models.pipeline_run import PipelineRun
 from app.models.ranking_snapshot import RankingSnapshot
 from app.ranker_core.pipeline import run_pipeline
+from app.ranker_core.representative import extract_youtube_video_id, youtube_watch_url
+
+
+class TrendExpansionIncomplete(RuntimeError):
+    """The research run did not produce eleven usable YouTube-backed trends."""
+
+
+class TrendExpansionAlreadyComplete(RuntimeError):
+    """Ranks 5..15 were already populated by an earlier successful run."""
 
 
 def _json_value(value: Any) -> Any:
@@ -49,17 +60,26 @@ def build_runtime_config() -> dict[str, Any]:
     config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     data_dir = settings.ranker_data_dir.resolve()
     export_dir = settings.export_dir.resolve()
+    research_output_dir = data_dir / "research-outputs"
     data_dir.mkdir(parents=True, exist_ok=True)
     export_dir.mkdir(parents=True, exist_ok=True)
+    research_output_dir.mkdir(parents=True, exist_ok=True)
     config.setdefault("paths", {})
     config["paths"].update(
         {
             "candidates_csv": str(data_dir / "candidates.auto.csv"),
             "observations_csv": str(data_dir / "observations.csv"),
             "database": str(data_dir / "ranker-history.sqlite3"),
-            "output_dir": str(export_dir),
+            # Ranker diagnostics are staged away from the public trendcluster.
+            # export_trendcluster() replaces the public file only after all
+            # eleven rows commit successfully.
+            "output_dir": str(research_output_dir),
         }
     )
+    ranking = config.setdefault("ranking", {})
+    ranking["top_n"] = RESEARCH_TREND_COUNT
+    ranking["require_youtube_video"] = True
+    ranking["exclude_challenge_ids"] = list(PINNED_TREND_IDS)
     return config
 
 
@@ -68,6 +88,11 @@ def validate_runtime_keys() -> dict[str, bool]:
 
 
 def create_run(db: Session) -> PipelineRun:
+    if trend_expansion_complete(db):
+        raise TrendExpansionAlreadyComplete(
+            f"Trend ranks {RESEARCH_TREND_FIRST_RANK}..{RESEARCH_TREND_LAST_RANK} "
+            "are already populated."
+        )
     run = PipelineRun(id=str(uuid.uuid4()), status="QUEUED", stage="QUEUED", progress=0)
     db.add(run)
     db.commit()
@@ -135,21 +160,29 @@ def persist_result(
     source_metrics: pd.DataFrame,
 ) -> None:
     now = datetime.now(timezone.utc)
-    # 운영 데이터 소스는 검증된 네 숏폼과 원래 순위 1·2·3·4로 고정한다. 과거 자동 발굴 결과는
-    # 비활성 행으로도 남기지 않아 `/challenges`와 다음 export에 재등장할 수 없게 한다.
-    db.execute(delete(Challenge).where(Challenge.id.not_in(TRENDCLUSTER_CHALLENGE_IDS)))
-
     metrics_by_id: dict[str, dict[str, Any]] = {}
     if source_metrics is not None and not source_metrics.empty:
         for row in source_metrics.to_dict(orient="records"):
             metrics_by_id[str(row.get("challenge_id"))] = _row_dict(row)
 
-    ranked = ranking.sort_values(["final_rank", "confidence"], ascending=[True, False]).head(100)
-    for raw in ranked.to_dict(orient="records"):
-        row = _row_dict(raw)
-        challenge_id = str(row.get("challenge_id") or "").strip()
-        if not challenge_id or challenge_id not in TRENDCLUSTER_CHALLENGE_IDS:
-            continue
+    researched = _select_researched_trends(ranking)
+    if len(researched) != RESEARCH_TREND_COUNT:
+        raise TrendExpansionIncomplete(
+            f"Expected {RESEARCH_TREND_COUNT} unique YouTube-backed trends, "
+            f"found {len(researched)}. Existing ranks 1..4 were not changed."
+        )
+
+    # Do not expose stale auto-discovery rows from an older deployment. The
+    # bundled four remain active and untouched; the new batch is committed only
+    # after all eleven rows passed validation above.
+    selected_ids = {str(row["challenge_id"]) for row in researched}
+    for challenge in db.scalars(select(Challenge)):
+        if challenge.id not in PINNED_TREND_IDS and challenge.id not in selected_ids:
+            challenge.active = False
+
+    for offset, row in enumerate(researched):
+        challenge_id = str(row["challenge_id"])
+        assigned_rank = RESEARCH_TREND_FIRST_RANK + offset
         challenge = db.get(Challenge, challenge_id)
         if challenge is None:
             challenge = Challenge(
@@ -162,8 +195,7 @@ def persist_result(
         challenge.automatic_name = str(row.get("name") or challenge_id)
         challenge.aliases = list(row.get("alias_list") or [])
         challenge.category = str(row.get("category") or "unknown")
-        canonical_rank = TRENDCLUSTER_CANONICAL_RANKS[challenge_id]
-        challenge.automatic_rank = canonical_rank
+        challenge.automatic_rank = assigned_rank
         challenge.automatic_score = float(row.get("final_score") or 0.0)
         challenge.lifecycle = str(row.get("stage") or "UNKNOWN")
         challenge.kr_affinity = float(row.get("kr_affinity") or 0.0)
@@ -189,6 +221,8 @@ def persist_result(
             "guide_type": row.get("guide_youtube_type"),
         }
         challenge.raw_details = row
+        challenge.raw_details["research_rank"] = assigned_rank
+        challenge.raw_details["research_auto_activated"] = True
         challenge.latest_run_id = run.id
         challenge.active = True
         challenge.last_seen_at = now
@@ -198,13 +232,72 @@ def persist_result(
             RankingSnapshot(
                 run_id=run.id,
                 challenge_id=challenge_id,
-                automatic_rank=canonical_rank,
+                automatic_rank=assigned_rank,
                 automatic_score=float(row.get("final_score") or 0.0),
                 row_data=row,
                 source_metrics=metrics_by_id.get(challenge_id, {}),
             )
         )
     db.commit()
+
+
+def trend_expansion_complete(db: Session) -> bool:
+    """Return True only when every automatically assigned rank 5..15 exists."""
+
+    rows = list(
+        db.scalars(
+            select(Challenge).where(
+                Challenge.active.is_(True),
+                Challenge.id.not_in(PINNED_TREND_IDS),
+                Challenge.automatic_rank >= RESEARCH_TREND_FIRST_RANK,
+                Challenge.automatic_rank <= RESEARCH_TREND_LAST_RANK,
+            )
+        )
+    )
+    return len(rows) == RESEARCH_TREND_COUNT and {row.automatic_rank for row in rows} == set(
+        range(RESEARCH_TREND_FIRST_RANK, RESEARCH_TREND_LAST_RANK + 1)
+    )
+
+
+def _select_researched_trends(ranking: pd.DataFrame) -> list[dict[str, Any]]:
+    """Pick exactly the best unique non-pinned rows with usable YouTube URLs."""
+
+    if ranking is None or ranking.empty:
+        return []
+    ranked = ranking.copy()
+    if "final_rank" not in ranked.columns:
+        return []
+    if "confidence" not in ranked.columns:
+        ranked["confidence"] = 0.0
+    ranked = ranked.sort_values(["final_rank", "confidence"], ascending=[True, False])
+
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set(PINNED_TREND_IDS)
+    for raw in ranked.to_dict(orient="records"):
+        row = _row_dict(raw)
+        challenge_id = str(row.get("challenge_id") or "").strip()
+        if not challenge_id or challenge_id in seen:
+            continue
+        if "is_social_challenge" in row and not bool(row.get("is_social_challenge")):
+            continue
+
+        representative_id = extract_youtube_video_id(row.get("representative_youtube_url"))
+        guide_id = extract_youtube_video_id(row.get("guide_youtube_url"))
+        usable_id = representative_id or guide_id
+        if not usable_id:
+            continue
+        if not representative_id:
+            row["representative_youtube_url"] = youtube_watch_url(usable_id)
+            row["representative_youtube_video_id"] = usable_id
+        if not guide_id:
+            row["guide_youtube_url"] = youtube_watch_url(usable_id)
+            row["guide_youtube_video_id"] = usable_id
+
+        seen.add(challenge_id)
+        selected.append(row)
+        if len(selected) == RESEARCH_TREND_COUNT:
+            break
+    return selected
 
 
 def export_trendcluster(db: Session) -> Path:

@@ -59,6 +59,18 @@ def run_pipeline(config: dict[str, Any]) -> RunResult:
     else:
         candidates = load_candidates(config["paths"]["candidates_csv"], timezone_name)
 
+    excluded_ids = {
+        str(value).strip()
+        for value in config.get("ranking", {}).get("exclude_challenge_ids", [])
+        if str(value).strip()
+    }
+    if excluded_ids and not candidates.empty:
+        candidates = candidates[
+            ~candidates["challenge_id"].fillna("").astype(str).isin(excluded_ids)
+        ].reset_index(drop=True)
+    if candidates.empty:
+        raise RuntimeError("기존 고정 트렌드를 제외한 신규 리서치 후보가 없습니다.")
+
     metric_frames: list[pd.DataFrame] = []
     representative_row_frames: list[pd.DataFrame] = []
 

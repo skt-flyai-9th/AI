@@ -127,8 +127,11 @@ sources:
     lookback_days: 365
     max_aliases_per_challenge: 3
     max_results_per_challenge: 50
-    max_search_requests: 100
-    max_challenges: 100
+    # Final output is 11 new trends. Search a bounded reserve pool so candidates
+    # without a usable URL can be retried or replaced without returning <11.
+    max_search_requests: 33
+    max_challenges: 33
+    search_attempts_per_challenge: 3
     max_duration_seconds: 900
     region_code: KR
     relevance_language: ko
@@ -198,8 +201,13 @@ representative_youtube:
     kr_affinity: 0.10
 
 ranking:
-  top_n: 100
-  require_youtube_video: false
+  top_n: 11
+  require_youtube_video: true
+  exclude_challenge_ids:
+    - jujutsu_transition
+    - donggeurio_challenge
+    - otsukare_summer_challenge
+    - doma_bad_challenge
   exclude_ai_rejected: true
   backfill_to_top_n: true
   backfill_min_entity_confidence: 0.15

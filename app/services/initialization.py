@@ -8,7 +8,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.challenge_ranking.trendcluster import (
-    TRENDCLUSTER_CHALLENGE_IDS,
     TRENDCLUSTER_FILENAME,
     build_video_editing_db_trendcluster,
 )
@@ -98,8 +97,8 @@ def _sync_bundled_challenges(db: Session) -> dict[str, list[str]]:
         challenge.raw_details = dict(item)
         challenge.last_seen_at = now
 
-    for challenge in db.scalars(select(Challenge)):
-        if challenge.id not in TRENDCLUSTER_CHALLENGE_IDS:
-            challenge.active = False
+    # Research results at ranks 5..15 are durable across deployments. The
+    # initializer owns only the bundled rows and must not deactivate appended
+    # trends when it re-syncs ranks 1..4.
     db.commit()
     return {"created": created, "updated": updated}
