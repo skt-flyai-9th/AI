@@ -246,7 +246,11 @@ class ShortformAgentService:
         if action == ShortformAction.RECOMMEND and project_state.get("brief_confirmed"):
             return self._recommend(db, session)
 
-        options = _sanitize_options(decision.options, action)
+        options = _sanitize_options(
+            decision.options,
+            action,
+            question_field=next_question_field,
+        )
         project_state["option_labels"] = {item.id: item.label for item in options}
         session.project_state = project_state
         db.commit()
@@ -1193,11 +1197,7 @@ def _fallback_question(field: str | None) -> tuple[str, list[DecisionOption]]:
     if field == "promotion_objective":
         return (
             "이 영상으로 어떤 결과를 가장 원하세요?",
-            [
-                DecisionOption(id="sales", label="매출 늘리기"),
-                DecisionOption(id="visit", label="매장 방문"),
-                DecisionOption(id="awareness", label="가게 알리기"),
-            ],
+            [],
         )
     if field == "filming_time":
         return (
@@ -1299,9 +1299,16 @@ def _promotion_category_from_option(
     return mapping.get(str(turn_input.option_id or "").upper())
 
 
-def _sanitize_options(options: list[Any], action: ShortformAction) -> list[ShortformOption]:
+def _sanitize_options(
+    options: list[Any],
+    action: ShortformAction,
+    *,
+    question_field: str | None = None,
+) -> list[ShortformOption]:
     if action == ShortformAction.SUGGEST_SWITCH:
         return _promotion_category_options()
+    if question_field == "promotion_objective":
+        return []
 
     result: list[ShortformOption] = []
     for item in options:

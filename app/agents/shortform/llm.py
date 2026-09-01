@@ -90,6 +90,8 @@ class OpenAIShortformLLM:
                 "If more information is missing, ask only one question and defer remaining questions.",
                 "Use this assistant_message format when action is ASK or any clarification-style action: "
                 "'[one-sentence summary] [one single question]'.",
+                "When asking for promotion_objective, return options=[] and collect the answer "
+                "from free text; never show objective quick-reply choices or a direct-input chip.",
                 "Option ids must be short semantic stable ids such as MENU, sales, within_10m, not_allowed, or a real menu_id.",
             ],
         }
