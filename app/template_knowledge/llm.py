@@ -549,6 +549,7 @@ def _normalize_editing_video_insight_payload(payload: dict[str, Any]) -> dict[st
 
     for field in (
         "hook_patterns",
+        "shot_sequence",
         "caption_patterns",
         "camera_patterns",
         "transition_patterns",
@@ -563,6 +564,22 @@ def _normalize_editing_video_insight_payload(payload: dict[str, Any]) -> dict[st
                 else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
                 for value in values
             ]
+    if isinstance(segments, list):
+        normalized_segments: list[Any] = []
+        for segment in segments:
+            if not isinstance(segment, dict):
+                normalized_segments.append(segment)
+                continue
+            normalized_segment = dict(segment)
+            evidence = normalized_segment.get("evidence")
+            if evidence is not None and not isinstance(evidence, str):
+                normalized_segment["evidence"] = json.dumps(
+                    evidence,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            normalized_segments.append(normalized_segment)
+        normalized["segments"] = normalized_segments
     return normalized
 
 

@@ -430,6 +430,31 @@ def test_gemini_reconstructs_pacing_from_numeric_string_timestamps(monkeypatch):
     assert result.pacing.opening_hook_sec == 1.25
 
 
+def test_gemini_stringifies_structured_segment_evidence(monkeypatch):
+    payload = _single_cut_insight_payload(
+        description="인물이 정면을 바라보며 등장한다.",
+        shot_type="정면 클로즈업",
+    )
+    payload["segments"][0]["evidence"] = {
+        "visual": "인물이 화면 중앙에 등장한다.",
+        "timestamp": "0.0-1.0",
+    }
+    monkeypatch.setattr(llm, "call_gemini_structured", lambda **kwargs: payload)
+    analyzer = GeminiYouTubeVideoAnalyzer()
+    analyzer.api_key = "test-gemini-key"
+    analyzer._resolved_model_name = "gemini-test"
+
+    result = analyzer.analyze(
+        trend_id="trend-1",
+        youtube_url="https://www.youtube.com/watch?v=example",
+        trend_context={},
+    )
+
+    assert result.segments[0].evidence == (
+        '{"visual":"인물이 화면 중앙에 등장한다.","timestamp":"0.0-1.0"}'
+    )
+
+
 def test_gemini_field_validation_failure_raises_after_repair_budget(monkeypatch):
     calls = []
 
