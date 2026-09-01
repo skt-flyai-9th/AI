@@ -103,8 +103,8 @@ def test_scheduled_export_preserves_card_metadata_and_template_reference():
         item = json.loads(path.read_text(encoding="utf-8"))["results"][0]
 
     assert item["category"] == "meme"
-    assert item["format_type"] == "밈"
-    assert item["requires_face"] is False
+    assert item["format_type"] == "해시태그"
+    assert item["requires_face"] is True
     assert item["reference_cut_review"]["expected_cut_count"] == 8
     assert item["editing_template_id"] == "gt_jujutsu_transition"
     assert item["editing_template_version"] == 4

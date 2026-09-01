@@ -44,9 +44,9 @@ _SEED_GUIDE_URL_OVERRIDES = {
 # analysis rows below; type and whether a face is required are classification
 # results that are stable for each analysed guide.
 _GUIDE_CLASSIFICATIONS: dict[str, tuple[str, bool]] = {
-    "jujutsu_transition": ("밈", False),
-    "donggeurio_challenge": ("정보형", False),
-    "otsukare_summer_challenge": ("챌린지", True),
+    "jujutsu_transition": ("해시태그", True),
+    "donggeurio_challenge": ("해시태그", True),
+    "otsukare_summer_challenge": ("해시태그", True),
     "doma_bad_challenge": ("챌린지", True),
 }
 

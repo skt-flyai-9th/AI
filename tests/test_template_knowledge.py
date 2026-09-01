@@ -172,6 +172,17 @@ def test_bootstrap_imports_provided_sources_and_activates_approved_bundles():
             65,
             66,
         ]
+        assert imported_editing.recommendation_metadata["requires_face"] is True
+        assert imported_editing.recommendation_metadata["supported_face_modes"] == ["allowed"]
+        for template_id in ("gt_otsukare_summer", "gt_donggeurio_challenge"):
+            template = db.scalar(
+                select(VideoEditingDBRecord).where(
+                    VideoEditingDBRecord.template_id == template_id
+                )
+            )
+            assert template is not None
+            assert template.recommendation_metadata["requires_face"] is True
+            assert template.recommendation_metadata["supported_face_modes"] == ["allowed"]
         first_task = imported_editing.shooting_guide["tasks"][0]
         assert first_task["display_order"] == 1
         assert first_task["scene_index"] == 0

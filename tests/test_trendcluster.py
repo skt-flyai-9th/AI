@@ -58,9 +58,9 @@ def test_checked_in_trendcluster_matches_provided_video_editing_db():
         )
         for item in checked_in["results"]
     ] == [
-        ("밈", 14, "중", False),
-        ("정보형", 13, "중", False),
-        ("챌린지", 13, "중", True),
+        ("해시태그", 14, "중", True),
+        ("해시태그", 13, "중", True),
+        ("해시태그", 13, "중", True),
         ("챌린지", 11, "중", True),
     ]
     assert not Path("exports/ranking_latest.json").exists()

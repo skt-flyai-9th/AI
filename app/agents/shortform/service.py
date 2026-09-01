@@ -59,6 +59,11 @@ _REQUIRED_FIELDS = (
 _REMOVED_PROMOTION_OBJECTIVE_OPTION_IDS = {
     item.value for item in PromotionObjective
 } | {"direct_input"}
+_PRIMARY_RECOMMENDATION_TEMPLATE_ORDER = (
+    "gt_jujutsu_transition",
+    "gt_otsukare_summer",
+    "gt_donggeurio_challenge",
+)
 _FILMING_ORDER = {
     FilmingTime.WITHIN_5M.value: 1,
     FilmingTime.WITHIN_10M.value: 2,
@@ -686,6 +691,15 @@ class ShortformAgentService:
         candidates: list[VideoEditingDBCandidate],
     ) -> list[tuple[VideoEditingDBSelection, VideoEditingDBCandidate]]:
         """Select up to three distinct candidates in one LLM call, with a stable fallback."""
+
+        candidates_by_id = {item.video_editing_db_id: item for item in candidates}
+        primary_candidates = [
+            candidates_by_id[template_id]
+            for template_id in _PRIMARY_RECOMMENDATION_TEMPLATE_ORDER
+            if template_id in candidates_by_id
+        ]
+        if len(primary_candidates) == len(_PRIMARY_RECOMMENDATION_TEMPLATE_ORDER):
+            return self._fallback_selections(primary_candidates)
 
         if len(candidates) < 3:
             # The selection schema requires exactly three distinct keys, which a

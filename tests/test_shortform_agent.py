@@ -803,6 +803,7 @@ def test_shortform_recommendation_bootstraps_packaged_database(client, auth_head
         for trend_id, title in (
             ("jujutsu_transition", "주술회전 트랜지션"),
             ("otsukare_summer_challenge", "오츠카레 썸머 챌린지"),
+            ("donggeurio_challenge", "동그리오 챌린지"),
         ):
             db.add(
                 Challenge(
@@ -835,11 +836,11 @@ def test_shortform_recommendation_bootstraps_packaged_database(client, auth_head
         assert response.status_code == 200
         assert response.json()["action"] == "RECOMMEND"
         recommendations = response.json()["recommendations"]
-        assert len(recommendations) == 2
-        assert {item["editing_template_id"] for item in recommendations} == {
+        assert [item["editing_template_id"] for item in recommendations] == [
             "gt_jujutsu_transition",
             "gt_otsukare_summer",
-        }
+            "gt_donggeurio_challenge",
+        ]
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)
 
