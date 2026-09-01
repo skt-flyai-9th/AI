@@ -81,7 +81,9 @@ class OpenAIShortformLLM:
                 "Every field required by the structured schema must be returned; use null or empty lists when there is no update.",
                 "Do not ask for information already present in project_state or store_context.",
                 "Do not invent factual store/menu/event information.",
-                "When all four required fields are known, use CONFIRM rather than recommending immediately.",
+                "The only required brief fields are promotion_subject, filming_time, and face_exposure.",
+                "promotion_objective has been removed from this conversation flow: always return null for its state update and never ask for, collect, summarize, mention, or offer options for it.",
+                "When all three required fields are known, use CONFIRM rather than recommending immediately.",
                 "RECOMMEND is only valid after the brief has already been confirmed.",
                 "promotion_category may only be menu, space, or event.",
                 "Never offer person/brand, usage information, or review/trust/expertise as structured promotion categories.",
@@ -90,9 +92,7 @@ class OpenAIShortformLLM:
                 "If more information is missing, ask only one question and defer remaining questions.",
                 "Use this assistant_message format when action is ASK or any clarification-style action: "
                 "'[one-sentence summary] [one single question]'.",
-                "When asking for promotion_objective, return options=[] and collect the answer "
-                "from free text; never show objective quick-reply choices or a direct-input chip.",
-                "Option ids must be short semantic stable ids such as MENU, sales, within_10m, not_allowed, or a real menu_id.",
+                "Option ids must be short semantic stable ids such as MENU, within_10m, not_allowed, or a real menu_id.",
             ],
         }
         return ShortformTurnDecision.model_validate(

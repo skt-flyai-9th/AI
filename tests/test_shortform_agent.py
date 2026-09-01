@@ -106,7 +106,7 @@ class MultiQuestionLLM(FakeShortformLLM):
         )
 
 
-class PromotionObjectiveOptionsLLM(FakeShortformLLM):
+class RemovedPromotionObjectiveLLM(FakeShortformLLM):
     def decide_turn(self, **kwargs) -> ShortformTurnDecision:
         return ShortformTurnDecision(
             action=ShortformAction.ASK,
@@ -119,9 +119,9 @@ class PromotionObjectiveOptionsLLM(FakeShortformLLM):
                     menu_id="menu_001",
                     details=[],
                 ),
-                promotion_objective=None,
-                filming_time="within_10m",
-                face_exposure="not_allowed",
+                promotion_objective="sales",
+                filming_time=None,
+                face_exposure=None,
                 creative_preferences=[],
                 secondary_information=[],
                 facts_from_user=[],
@@ -132,7 +132,7 @@ class PromotionObjectiveOptionsLLM(FakeShortformLLM):
                 DecisionOption(id="visit", label="방문 유도"),
                 DecisionOption(id="direct_input", label="직접 입력"),
             ],
-            missing_required_fields=["promotion_objective"],
+            missing_required_fields=["promotion_objective", "filming_time", "face_exposure"],
             conflicts=[],
             ready_for_confirmation=False,
         )
@@ -260,6 +260,11 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
         session_id = body["session_id"]
         assert body["status"] == "COLLECTING"
         assert len(body["options"]) == 2
+        assert body["project_state"]["missing_required_fields"] == [
+            "promotion_subject",
+            "filming_time",
+            "face_exposure",
+        ]
 
         turn = client.post(
             f"/api/v1/shortform-sessions/{session_id}/turns",
@@ -274,6 +279,8 @@ def test_shortform_agent_one_at_a_time_flow(client, auth_headers):
         assert turn.status_code == 200
         assert turn.json()["action"] == "CONFIRM"
         assert turn.json()["project_state"]["ready_for_confirmation"] is True
+        assert turn.json()["project_state"]["promotion_objective"] is None
+        assert "판매" not in turn.json()["assistant_message"]
         assert turn.json()["recommendations"] == []
 
         recommend = client.post(
@@ -428,7 +435,7 @@ def test_shortform_filters_removed_categories_and_stores_one_question(client, au
         payload = response.json()
         assert payload["assistant_message"].count("?") == 1
         assert payload["project_state"]["current_question"].count("?") == 1
-        assert payload["options"] == [{"id": "trust", "label": "신뢰 높이기"}]
+        assert payload["options"] == []
 
         with SessionLocal() as db:
             session = db.get(ShortformSession, session_id)
@@ -438,8 +445,8 @@ def test_shortform_filters_removed_categories_and_stores_one_question(client, au
         app.dependency_overrides.pop(get_shortform_agent_service, None)
 
 
-def test_shortform_removes_promotion_objective_quick_reply_options(client, auth_headers):
-    fake_service = ShortformAgentService(llm=PromotionObjectiveOptionsLLM())
+def test_shortform_skips_removed_promotion_objective_step(client, auth_headers):
+    fake_service = ShortformAgentService(llm=RemovedPromotionObjectiveLLM())
     app.dependency_overrides[get_shortform_agent_service] = lambda: fake_service
     try:
         created = client.post(
@@ -448,20 +455,40 @@ def test_shortform_removes_promotion_objective_quick_reply_options(client, auth_
             json=_store_context(),
         )
         session_id = created.json()["session_id"]
+        with SessionLocal() as db:
+            session = db.get(ShortformSession, session_id)
+            assert session is not None
+            legacy_state = dict(session.project_state or {})
+            legacy_state["promotion_objective"] = "awareness"
+            legacy_state["current_question"] = "이 영상으로 어떤 결과를 가장 원하세요?"
+            legacy_state["current_question_field"] = "promotion_objective"
+            legacy_state["option_labels"] = {"sales": "판매 늘리기"}
+            session.project_state = legacy_state
+            db.commit()
         response = client.post(
             f"/api/v1/shortform-sessions/{session_id}/turns",
             headers=auth_headers,
-            json={"input": {"type": "TEXT", "text": "딸기 크림 라떼를 홍보하고 싶어요"}},
+            json={"input": {"type": "OPTION", "option_id": "sales"}},
         )
 
         assert response.status_code == 200
         payload = response.json()
-        assert payload["assistant_message"] == "이 영상으로 어떤 결과를 가장 원하세요?"
-        assert payload["options"] == []
+        assert payload["action"] == "ASK"
+        assert payload["assistant_message"] == "촬영에 어느 정도 시간을 쓸 수 있으세요?"
+        assert [item["id"] for item in payload["options"]] == [
+            "within_5m",
+            "within_10m",
+            "within_20m",
+            "30m_plus",
+        ]
+        assert payload["project_state"]["promotion_objective"] is None
+        assert "promotion_objective" not in payload["project_state"][
+            "missing_required_fields"
+        ]
         with SessionLocal() as db:
             session = db.get(ShortformSession, session_id)
             assert session is not None
-            assert session.project_state["current_question_field"] == "promotion_objective"
+            assert session.project_state["current_question_field"] == "filming_time"
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)
 
