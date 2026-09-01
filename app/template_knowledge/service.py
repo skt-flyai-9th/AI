@@ -349,6 +349,11 @@ class TemplateKnowledgeService:
             raise _llm_domain_error(exc) from exc
         payload = proposed.model_dump(mode="json")
         _normalize_filming_time_metadata(payload, insights)
+        _normalize_renderer_capability_ids(
+            payload,
+            effect_ids=self.validator.registry.creative_effect_ids,
+            transition_ids=self.validator.registry.transition_ids | {"CUT"},
+        )
         guide = payload["shooting_guide"]
         if len(guide["tasks"]) == len(guide["scenes"]):
             for index, task in enumerate(guide["tasks"]):
@@ -955,6 +960,30 @@ def _normalize_filming_time_metadata(
     metadata = payload["recommendation_metadata"]
     metadata["minimum_filming_time"] = minimum_bucket
     metadata["supported_filming_times"] = list(_FILMING_TIME_BUCKET_ORDER[minimum_index:])
+
+
+def _normalize_renderer_capability_ids(
+    payload: dict[str, Any],
+    *,
+    effect_ids: set[str] | frozenset[str],
+    transition_ids: set[str] | frozenset[str],
+) -> None:
+    """Discard model-proposed capability IDs that the deployed renderer cannot execute."""
+    rules = payload.get("editing_rules")
+    if not isinstance(rules, dict):
+        return
+    allowed_effects = rules.get("allowed_effect_ids")
+    if isinstance(allowed_effects, list):
+        rules["allowed_effect_ids"] = [
+            item for item in allowed_effects if isinstance(item, str) and item in effect_ids
+        ]
+    allowed_transitions = rules.get("allowed_transition_ids")
+    if isinstance(allowed_transitions, list):
+        rules["allowed_transition_ids"] = [
+            item
+            for item in allowed_transitions
+            if isinstance(item, str) and item in transition_ids
+        ]
 
 
 def _trade_area_read(row: TradeAreaDBRecord) -> TemplateVersionRead:

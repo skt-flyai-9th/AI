@@ -529,6 +529,48 @@ def test_editing_candidate_falls_back_to_representative_when_guide_analysis_fail
     )
 
 
+def test_editing_candidate_discards_unsupported_renderer_capability_ids():
+    class UnsupportedCapabilityGenerator(FakeGenerator):
+        def generate_editing(self, **kwargs) -> VideoEditingDBContent:
+            content = super().generate_editing(**kwargs)
+            payload = content.model_dump(mode="json")
+            payload["editing_rules"]["allowed_effect_ids"].extend(["HARD_CUT", "CUT"])
+            payload["editing_rules"]["allowed_transition_ids"].append("UNKNOWN_TRANSITION")
+            return VideoEditingDBContent.model_validate(payload)
+
+    video = FakeVideoAnalyzer()
+    service = TemplateKnowledgeService(
+        generator=UnsupportedCapabilityGenerator(),
+        video_analyzer=video,
+    )
+    with SessionLocal() as db:
+        db.add(
+            Challenge(
+                id="trend_renderer_capabilities",
+                automatic_name="렌더러 기능 보정",
+                category="dance",
+                automatic_rank=15,
+                automatic_representative_youtube_url=(
+                    "https://www.youtube.com/watch?v=renderer-capabilities"
+                ),
+            )
+        )
+        db.commit()
+
+        candidate = service.create_editing_candidate(
+            db,
+            EditingCandidateCreate(
+                template_id="edit_renderer_capabilities",
+                trend_ids=["trend_renderer_capabilities"],
+            ),
+        )
+
+    assert candidate.status == "VALIDATED"
+    rules = candidate.proposed_payload["editing_rules"]
+    assert rules["allowed_effect_ids"] == ["PUNCH_ZOOM"]
+    assert rules["allowed_transition_ids"] == ["CUT", "HARD_CUT"]
+
+
 def test_video_analysis_schema_version_invalidates_previous_cached_insight():
     service, video = _service()
     trend_id = "trend_legacy_cache"
