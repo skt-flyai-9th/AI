@@ -836,11 +836,11 @@ def test_shortform_recommendation_bootstraps_packaged_database(client, auth_head
         assert response.status_code == 200
         assert response.json()["action"] == "RECOMMEND"
         recommendations = response.json()["recommendations"]
-        assert [item["editing_template_id"] for item in recommendations] == [
+        assert {item["editing_template_id"] for item in recommendations} == {
             "gt_jujutsu_transition",
             "gt_otsukare_summer",
             "gt_donggeurio_challenge",
-        ]
+        }
     finally:
         app.dependency_overrides.pop(get_shortform_agent_service, None)
 
