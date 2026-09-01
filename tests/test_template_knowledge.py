@@ -40,7 +40,7 @@ from app.template_knowledge.service import (
     TemplateKnowledgeService,
     get_template_knowledge_service,
 )
-from app.template_knowledge.llm import _make_strict_schema
+from app.template_knowledge.llm import TemplateKnowledgeLLMError, _make_strict_schema
 from app.template_knowledge.source_library import TemplateSourceService
 from tests.template_payloads import trade_area_payload, video_editing_db_payload
 
@@ -471,6 +471,62 @@ def test_editing_candidate_prefers_guide_video_over_representative_video():
     assert context["reference_video_role"] == "guide"
     assert context["representative_youtube_url"].endswith("?v=guide")
     assert insight["youtube_url"].endswith("?v=guide")
+
+
+def test_editing_candidate_falls_back_to_representative_when_guide_analysis_fails():
+    class GuideFailingAnalyzer(FakeVideoAnalyzer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.urls: list[str] = []
+
+        def analyze(self, *, trend_id, youtube_url, trend_context) -> EditingVideoInsight:
+            self.urls.append(youtube_url)
+            if youtube_url.endswith("?v=guide-fails"):
+                raise TemplateKnowledgeLLMError("guide analysis failed")
+            return super().analyze(
+                trend_id=trend_id,
+                youtube_url=youtube_url,
+                trend_context=trend_context,
+            )
+
+    video = GuideFailingAnalyzer()
+    service = TemplateKnowledgeService(generator=FakeGenerator(), video_analyzer=video)
+    with SessionLocal() as db:
+        db.add(
+            Challenge(
+                id="trend_reference_fallback",
+                automatic_name="대표 영상 폴백",
+                category="dance",
+                automatic_rank=8,
+                automatic_representative_youtube_url=(
+                    "https://www.youtube.com/watch?v=representative-works"
+                ),
+                automatic_guide_youtube_url="https://www.youtube.com/watch?v=guide-fails",
+            )
+        )
+        db.commit()
+
+        candidate = service.create_editing_candidate(
+            db,
+            EditingCandidateCreate(
+                template_id="edit_reference_fallback",
+                trend_ids=["trend_reference_fallback"],
+            ),
+        )
+
+    assert video.urls == [
+        "https://www.youtube.com/watch?v=guide-fails",
+        "https://www.youtube.com/watch?v=representative-works",
+    ]
+    context = candidate.source_evidence["trend_context"][0]
+    assert context["reference_video_role"] == "representative"
+    assert context["representative_youtube_url"].endswith("?v=representative-works")
+    assert candidate.source_evidence["video_insights"][0]["youtube_url"].endswith(
+        "?v=representative-works"
+    )
+    assert candidate.source_evidence["video_analysis_failures"][0]["youtube_url"].endswith(
+        "?v=guide-fails"
+    )
 
 
 def test_video_analysis_schema_version_invalidates_previous_cached_insight():

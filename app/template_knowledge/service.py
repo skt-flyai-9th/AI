@@ -281,19 +281,49 @@ class TemplateKnowledgeService:
         analysis_ids: list[str] = []
         failures: list[dict[str, str]] = []
         for trend, context in zip(trends, trend_context, strict=True):
-            url = str(context["representative_youtube_url"])
-            try:
-                analysis = self.analyze_reference_video(
-                    db,
-                    trend_id=trend.id,
-                    youtube_url=url,
-                    trend_context=context,
-                    force=(request.force_video_analysis or request.rebuild_from_scratch),
+            primary_url = str(context["representative_youtube_url"])
+            fallback_url = context.get("fallback_representative_youtube_url")
+            urls = list(
+                dict.fromkeys(
+                    url
+                    for url in (primary_url, fallback_url)
+                    if isinstance(url, str) and url.strip()
                 )
-                insights.append(EditingVideoInsight.model_validate(analysis.insights))
-                analysis_ids.append(analysis.id)
-            except TemplateKnowledgeDomainError as exc:
-                failures.append({"trend_id": trend.id, "code": exc.code, "message": str(exc)})
+            )
+            for url in urls:
+                analysis_context = dict(context)
+                if url != primary_url:
+                    analysis_context.update(
+                        {
+                            "representative_youtube_url": url,
+                            "reference_video_role": "representative",
+                            "representative_video_metadata": context.get(
+                                "fallback_representative_video_metadata",
+                                {},
+                            ),
+                        }
+                    )
+                try:
+                    analysis = self.analyze_reference_video(
+                        db,
+                        trend_id=trend.id,
+                        youtube_url=url,
+                        trend_context=analysis_context,
+                        force=(request.force_video_analysis or request.rebuild_from_scratch),
+                    )
+                    insights.append(EditingVideoInsight.model_validate(analysis.insights))
+                    analysis_ids.append(analysis.id)
+                    context.update(analysis_context)
+                    break
+                except TemplateKnowledgeDomainError as exc:
+                    failures.append(
+                        {
+                            "trend_id": trend.id,
+                            "youtube_url": url,
+                            "code": exc.code,
+                            "message": str(exc),
+                        }
+                    )
         if not insights:
             raise TemplateKnowledgeDomainError(
                 "VIDEO_ANALYSIS_UNAVAILABLE",
@@ -972,7 +1002,8 @@ def _json_diff(before: Any, after: Any, path: str = "$") -> list[dict[str, Any]]
 
 def _trend_payload(row: Challenge) -> dict[str, Any]:
     guide_url = _guide_youtube_url(row)
-    reference_url = guide_url or _representative_youtube_url(row)
+    representative_url = _representative_youtube_url(row)
+    reference_url = guide_url or representative_url
     return {
         "trend_id": row.id,
         "name": row.override_name if row.name_overridden else row.automatic_name,
@@ -982,11 +1013,15 @@ def _trend_payload(row: Challenge) -> dict[str, Any]:
         "confidence": row.confidence,
         "representative_youtube_url": reference_url,
         "guide_youtube_url": guide_url,
+        "fallback_representative_youtube_url": (
+            representative_url if guide_url and representative_url != guide_url else None
+        ),
         "reference_video_role": "guide" if guide_url else "representative",
         "representative_video_metadata": (
             row.guide_video_metadata if guide_url else row.representative_video_metadata
         )
         or {},
+        "fallback_representative_video_metadata": row.representative_video_metadata or {},
         "raw_details": row.raw_details or {},
     }
 
