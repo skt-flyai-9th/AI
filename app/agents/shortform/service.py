@@ -161,14 +161,22 @@ class ShortformAgentService:
         if entry_response is not None:
             return entry_response
 
+        previous_project_state = dict(session.project_state or {})
         project_state = _apply_deterministic_turn_input(
-            dict(session.project_state or {}),
+            previous_project_state,
+            turn_input,
+            session.store_context or {},
+        )
+        protected_fields = _deterministic_turn_fields(
+            previous_project_state,
+            project_state,
             turn_input,
             session.store_context or {},
         )
         selected_category = _promotion_category_from_option(turn_input)
         if selected_category is not None:
             project_state["promotion_category"] = selected_category.value
+            protected_fields.add("promotion_category")
         session.project_state = project_state
 
         user_input = turn_input.model_dump(mode="json", exclude_none=True)
@@ -193,15 +201,22 @@ class ShortformAgentService:
             correlation_id=session.id,
         )
         decision = ShortformTurnDecision.model_validate(graph_result["decision"])
-        project_state = self._merge_project_state(project_state, decision)
+        project_state = self._merge_project_state(
+            project_state,
+            decision,
+            protected_fields=protected_fields,
+        )
 
         # Code, not the LLM, is authoritative for recommendation readiness.
         missing = _missing_required_fields(project_state)
         project_state["missing_required_fields"] = missing
-        project_state["store_context_conflicts"] = [
-            item.model_dump(mode="json") for item in decision.conflicts
+        effective_conflicts = [
+            item for item in decision.conflicts if item.field not in protected_fields
         ]
-        project_state["ready_for_confirmation"] = not missing and not decision.conflicts
+        project_state["store_context_conflicts"] = [
+            item.model_dump(mode="json") for item in effective_conflicts
+        ]
+        project_state["ready_for_confirmation"] = not missing and not effective_conflicts
 
         action = decision.action
         removed_objective_question = _asks_removed_promotion_objective(decision)
@@ -847,22 +862,25 @@ class ShortformAgentService:
         self,
         current: dict[str, Any],
         decision: ShortformTurnDecision,
+        *,
+        protected_fields: set[str] | None = None,
     ) -> dict[str, Any]:
         state = dict(current or {})
         updates = decision.state_updates
+        protected = protected_fields or set()
 
-        if updates.promotion_category is not None:
+        if updates.promotion_category is not None and "promotion_category" not in protected:
             state["promotion_category"] = updates.promotion_category.value
-        if updates.promotion_subject is not None:
+        if updates.promotion_subject is not None and "promotion_subject" not in protected:
             state["promotion_subject"] = {
                 "type": updates.promotion_subject.type,
                 "name": updates.promotion_subject.name,
                 "menu_id": updates.promotion_subject.menu_id,
                 "details": {item.key: item.value for item in updates.promotion_subject.details},
             }
-        if updates.filming_time is not None:
+        if updates.filming_time is not None and "filming_time" not in protected:
             state["filming_time"] = updates.filming_time.value
-        if updates.face_exposure is not None:
+        if updates.face_exposure is not None and "face_exposure" not in protected:
             state["face_exposure"] = updates.face_exposure.value
 
         for field, values in (
@@ -1142,6 +1160,39 @@ def _apply_deterministic_turn_input(
         if face_exposure:
             result["face_exposure"] = face_exposure
     return result
+
+
+def _deterministic_turn_fields(
+    previous_state: dict[str, Any],
+    updated_state: dict[str, Any],
+    turn_input: ShortformTurnInput,
+    store_context: dict[str, Any],
+) -> set[str]:
+    """Return fields whose current-turn UI/text answer is authoritative over the LLM."""
+
+    if turn_input.type == TurnInputType.OPTION:
+        raw_id = str(turn_input.option_id or "").strip()
+        option_id = raw_id.lower()
+        if option_id in {item.value for item in FilmingTime}:
+            return {"filming_time"}
+        if option_id in {item.value for item in FaceExposure}:
+            return {"face_exposure"}
+        if any(
+            str(menu.get("menu_id") or "") == raw_id
+            for menu in store_context.get("representative_menus") or []
+        ):
+            return {"promotion_subject"}
+        return set()
+
+    if turn_input.type != TurnInputType.TEXT:
+        return set()
+    field = str(previous_state.get("current_question_field") or "")
+    if field not in {"promotion_subject", "filming_time", "face_exposure"}:
+        return set()
+    value = updated_state.get(field)
+    if field == "promotion_subject":
+        return {field} if isinstance(value, dict) and value.get("name") else set()
+    return {field} if value else set()
 
 
 def _filming_time_bucket_from_minutes(minutes: float) -> str:
