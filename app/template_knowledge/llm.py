@@ -497,11 +497,14 @@ def _normalize_editing_video_insight_payload(payload: dict[str, Any]) -> dict[st
                 continue
             start = segment.get("start_sec")
             end = segment.get("end_sec")
-            if not isinstance(start, (int, float)) or isinstance(start, bool):
+            if isinstance(start, bool) or isinstance(end, bool):
                 continue
-            if not isinstance(end, (int, float)) or isinstance(end, bool):
+            try:
+                start_sec = float(start)
+                end_sec = float(end)
+            except (TypeError, ValueError):
                 continue
-            duration = float(end) - float(start)
+            duration = end_sec - start_sec
             if duration > 0:
                 durations.append(duration)
     if durations:

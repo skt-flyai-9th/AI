@@ -406,6 +406,30 @@ def test_gemini_normalizes_invalid_tempo_and_structured_pattern_items(monkeypatc
     assert result.transition_patterns == ['{"type":"HARD_CUT","at_sec":1.0}']
 
 
+def test_gemini_reconstructs_pacing_from_numeric_string_timestamps(monkeypatch):
+    payload = _single_cut_insight_payload(
+        description="인물이 정면을 바라보며 등장한다.",
+        shot_type="정면 클로즈업",
+    )
+    payload["segments"][0]["start_sec"] = "0.0"
+    payload["segments"][0]["end_sec"] = "1.25"
+    payload["pacing"] = "빠른 템포로 전환된다."
+    monkeypatch.setattr(llm, "call_gemini_structured", lambda **kwargs: payload)
+    analyzer = GeminiYouTubeVideoAnalyzer()
+    analyzer.api_key = "test-gemini-key"
+    analyzer._resolved_model_name = "gemini-test"
+
+    result = analyzer.analyze(
+        trend_id="trend-1",
+        youtube_url="https://www.youtube.com/watch?v=example",
+        trend_context={},
+    )
+
+    assert result.pacing.tempo == "FAST"
+    assert result.pacing.median_cut_sec == 1.25
+    assert result.pacing.opening_hook_sec == 1.25
+
+
 def test_gemini_field_validation_failure_raises_after_repair_budget(monkeypatch):
     calls = []
 
