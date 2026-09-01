@@ -433,8 +433,13 @@ class GeminiYouTubeVideoAnalyzer:
                 insight = EditingVideoInsight.model_validate(parsed)
             except ValidationError as exc:
                 if validation_repair_budget <= 0:
+                    details = "; ".join(
+                        f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                        for error in exc.errors()[:8]
+                    )
                     raise TemplateKnowledgeLLMError(
-                        "Gemini video analysis failed schema validation after a repair attempt."
+                        "Gemini video analysis failed schema validation after a repair attempt: "
+                        + details
                     ) from exc
                 validation_repair_budget -= 1
                 prompt_payload["previous_invalid_output"] = parsed

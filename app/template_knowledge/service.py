@@ -792,7 +792,7 @@ class TemplateKnowledgeService:
                     .limit(self.settings.database_max_reference_videos * 3)
                 )
             )
-        return [row for row in ordered if _representative_youtube_url(row)][
+        return [row for row in ordered if _editing_reference_youtube_url(row)][
             : self.settings.database_max_reference_videos
         ]
 
@@ -971,6 +971,8 @@ def _json_diff(before: Any, after: Any, path: str = "$") -> list[dict[str, Any]]
 
 
 def _trend_payload(row: Challenge) -> dict[str, Any]:
+    guide_url = _guide_youtube_url(row)
+    reference_url = guide_url or _representative_youtube_url(row)
     return {
         "trend_id": row.id,
         "name": row.override_name if row.name_overridden else row.automatic_name,
@@ -978,8 +980,13 @@ def _trend_payload(row: Challenge) -> dict[str, Any]:
         "lifecycle": row.lifecycle,
         "korea_relevance": row.kr_affinity,
         "confidence": row.confidence,
-        "representative_youtube_url": _representative_youtube_url(row),
-        "representative_video_metadata": row.representative_video_metadata or {},
+        "representative_youtube_url": reference_url,
+        "guide_youtube_url": guide_url,
+        "reference_video_role": "guide" if guide_url else "representative",
+        "representative_video_metadata": (
+            row.guide_video_metadata if guide_url else row.representative_video_metadata
+        )
+        or {},
         "raw_details": row.raw_details or {},
     }
 
@@ -991,6 +998,19 @@ def _representative_youtube_url(row: Challenge) -> str | None:
         else row.automatic_representative_youtube_url
     )
     return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _guide_youtube_url(row: Challenge) -> str | None:
+    value = (
+        row.override_guide_youtube_url
+        if row.guide_video_overridden
+        else row.automatic_guide_youtube_url
+    )
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _editing_reference_youtube_url(row: Challenge) -> str | None:
+    return _guide_youtube_url(row) or _representative_youtube_url(row)
 
 
 def _validate_youtube_url(value: str) -> None:

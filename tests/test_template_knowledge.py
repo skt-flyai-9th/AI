@@ -441,6 +441,38 @@ def test_trend_video_analysis_generates_editing_candidate_and_uses_cache():
         assert video.calls == 1
 
 
+def test_editing_candidate_prefers_guide_video_over_representative_video():
+    service, _ = _service()
+    with SessionLocal() as db:
+        db.add(
+            Challenge(
+                id="trend_guide_reference",
+                automatic_name="가이드 영상 우선",
+                category="dance",
+                automatic_rank=5,
+                automatic_representative_youtube_url=(
+                    "https://www.youtube.com/watch?v=representative"
+                ),
+                automatic_guide_youtube_url="https://www.youtube.com/watch?v=guide",
+            )
+        )
+        db.commit()
+
+        candidate = service.create_editing_candidate(
+            db,
+            EditingCandidateCreate(
+                template_id="edit_guide_reference",
+                trend_ids=["trend_guide_reference"],
+            ),
+        )
+
+    context = candidate.source_evidence["trend_context"][0]
+    insight = candidate.source_evidence["video_insights"][0]
+    assert context["reference_video_role"] == "guide"
+    assert context["representative_youtube_url"].endswith("?v=guide")
+    assert insight["youtube_url"].endswith("?v=guide")
+
+
 def test_video_analysis_schema_version_invalidates_previous_cached_insight():
     service, video = _service()
     trend_id = "trend_legacy_cache"
