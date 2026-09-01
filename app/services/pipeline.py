@@ -87,8 +87,8 @@ def validate_runtime_keys() -> dict[str, bool]:
     return get_settings().required_api_key_status
 
 
-def create_run(db: Session) -> PipelineRun:
-    if trend_expansion_complete(db):
+def create_run(db: Session, *, replace_expansion: bool = False) -> PipelineRun:
+    if trend_expansion_complete(db) and not replace_expansion:
         raise TrendExpansionAlreadyComplete(
             f"Trend ranks {RESEARCH_TREND_FIRST_RANK}..{RESEARCH_TREND_LAST_RANK} "
             "are already populated."

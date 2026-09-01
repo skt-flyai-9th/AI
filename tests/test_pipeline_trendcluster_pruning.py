@@ -183,3 +183,20 @@ def test_create_run_refuses_to_duplicate_a_completed_expansion() -> None:
 
         with pytest.raises(TrendExpansionAlreadyComplete):
             create_run(db)
+
+
+def test_create_run_allows_explicit_replacement_of_a_completed_expansion() -> None:
+    with SessionLocal() as db:
+        _add_pinned_rows(db)
+        first_run = _add_run(db)
+        ranking = pd.DataFrame(
+            [
+                _ranking_row(f"researched-{index}", index, youtube_url=_youtube_url(index))
+                for index in range(1, 12)
+            ]
+        )
+        persist_result(db, first_run, ranking, pd.DataFrame())
+
+        replacement_run = create_run(db, replace_expansion=True)
+
+        assert replacement_run.status == "QUEUED"

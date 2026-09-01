@@ -47,10 +47,16 @@ def initialize_once_command() -> None:
 
 
 @app.command("run-ranking")
-def run_ranking() -> None:
+def run_ranking(
+    replace_expansion: bool = typer.Option(
+        False,
+        "--replace-expansion",
+        help="Replace the existing researched ranks 5..15 after a complete new batch is ready.",
+    ),
+) -> None:
     init_db()
     with SessionLocal() as db:
-        run = create_run(db)
+        run = create_run(db, replace_expansion=replace_expansion)
         typer.echo(f"run_id={run.id}")
         completed = execute_pipeline(db, run.id)
         typer.echo(f"status={completed.status}")
