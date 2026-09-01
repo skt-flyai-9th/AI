@@ -53,10 +53,12 @@ from app.template_knowledge.seeds import seed_template_library
 
 _REQUIRED_FIELDS = (
     "promotion_subject",
-    "promotion_objective",
     "filming_time",
     "face_exposure",
 )
+_REMOVED_PROMOTION_OBJECTIVE_OPTION_IDS = {
+    item.value for item in PromotionObjective
+} | {"direct_input"}
 _FILMING_ORDER = {
     FilmingTime.WITHIN_5M.value: 1,
     FilmingTime.WITHIN_10M.value: 2,
@@ -202,6 +204,7 @@ class ShortformAgentService:
         project_state["ready_for_confirmation"] = not missing and not decision.conflicts
 
         action = decision.action
+        removed_objective_question = _asks_removed_promotion_objective(decision)
         if action == ShortformAction.RECOMMEND and not project_state.get("brief_confirmed"):
             action = (
                 ShortformAction.CONFIRM
@@ -210,16 +213,29 @@ class ShortformAgentService:
             )
         if action == ShortformAction.CONFIRM and not project_state["ready_for_confirmation"]:
             action = ShortformAction.ASK
+        if removed_objective_question:
+            action = (
+                ShortformAction.CONFIRM
+                if project_state["ready_for_confirmation"]
+                else ShortformAction.ASK
+            )
 
-        assistant_message = _format_assistant_message(decision.assistant_message, action)
         previous_question = str(session.project_state.get("current_question") or "").strip()
         next_question_field = _infer_question_field(decision.options, missing)
-        if action in _QUESTION_ACTIONS and previous_question == _extract_question(
-            assistant_message
-        ):
+        if action == ShortformAction.CONFIRM:
+            assistant_message = _confirmation_message(project_state)
+            decision = decision.model_copy(update={"options": []})
+        elif removed_objective_question:
             assistant_message, fallback_options = _fallback_question(next_question_field)
-            if fallback_options:
-                decision = decision.model_copy(update={"options": fallback_options})
+            decision = decision.model_copy(update={"options": fallback_options})
+        else:
+            assistant_message = _format_assistant_message(decision.assistant_message, action)
+            if action in _QUESTION_ACTIONS and previous_question == _extract_question(
+                assistant_message
+            ):
+                assistant_message, fallback_options = _fallback_question(next_question_field)
+                if fallback_options:
+                    decision = decision.model_copy(update={"options": fallback_options})
         project_state["current_question"] = (
             _extract_question(assistant_message) if action in _QUESTION_ACTIONS else None
         )
@@ -246,11 +262,7 @@ class ShortformAgentService:
         if action == ShortformAction.RECOMMEND and project_state.get("brief_confirmed"):
             return self._recommend(db, session)
 
-        options = _sanitize_options(
-            decision.options,
-            action,
-            question_field=next_question_field,
-        )
+        options = _sanitize_options(decision.options, action)
         project_state["option_labels"] = {item.id: item.label for item in options}
         session.project_state = project_state
         db.commit()
@@ -841,8 +853,6 @@ class ShortformAgentService:
                 "menu_id": updates.promotion_subject.menu_id,
                 "details": {item.key: item.value for item in updates.promotion_subject.details},
             }
-        if updates.promotion_objective is not None:
-            state["promotion_objective"] = updates.promotion_objective.value
         if updates.filming_time is not None:
             state["filming_time"] = updates.filming_time.value
         if updates.face_exposure is not None:
@@ -914,6 +924,11 @@ class ShortformAgentService:
                 status_code=404,
             )
         state = dict(session.project_state or {})
+        state.pop("promotion_objective", None)
+        if state.get("current_question_field") == "promotion_objective":
+            state["current_question"] = None
+            state["current_question_field"] = None
+            state["option_labels"] = {}
         category = state.get("promotion_category")
         if category not in {item.value for item in PromotionCategory}:
             state["promotion_category"] = None
@@ -1050,7 +1065,7 @@ def _missing_required_fields(state: dict[str, Any]) -> list[str]:
     subject = state.get("promotion_subject")
     if not isinstance(subject, dict) or not str(subject.get("name") or "").strip():
         missing.append("promotion_subject")
-    for field in ("promotion_objective", "filming_time", "face_exposure"):
+    for field in ("filming_time", "face_exposure"):
         if not state.get(field):
             missing.append(field)
     return missing
@@ -1083,9 +1098,7 @@ def _apply_deterministic_turn_input(
     if turn_input.type == TurnInputType.OPTION:
         raw_id = str(turn_input.option_id or "").strip()
         option_id = raw_id.lower()
-        if option_id in {item.value for item in PromotionObjective}:
-            result["promotion_objective"] = option_id
-        elif option_id in {item.value for item in FilmingTime}:
+        if option_id in {item.value for item in FilmingTime}:
             result["filming_time"] = option_id
         elif option_id in {item.value for item in FaceExposure}:
             result["face_exposure"] = option_id
@@ -1113,10 +1126,6 @@ def _apply_deterministic_turn_input(
             "menu_id": None,
             "details": {},
         }
-    elif field == "promotion_objective":
-        objective = _objective_from_text(text)
-        if objective:
-            result["promotion_objective"] = objective
     elif field == "filming_time":
         filming_time = _filming_time_from_text(text)
         if filming_time:
@@ -1126,22 +1135,6 @@ def _apply_deterministic_turn_input(
         if face_exposure:
             result["face_exposure"] = face_exposure
     return result
-
-
-def _objective_from_text(text: str) -> str | None:
-    normalized = text.replace(" ", "")
-    for needles, value in (
-        (("매출", "판매"), PromotionObjective.SALES.value),
-        (("신규고객", "새손님"), PromotionObjective.NEW_CUSTOMER.value),
-        (("예약", "문의"), PromotionObjective.RESERVATION_INQUIRY.value),
-        (("재방문", "단골"), PromotionObjective.REVISIT.value),
-        (("방문", "오게"), PromotionObjective.VISIT.value),
-        (("신뢰",), PromotionObjective.TRUST.value),
-        (("인지", "알리"), PromotionObjective.AWARENESS.value),
-    ):
-        if any(needle in normalized for needle in needles):
-            return value
-    return None
 
 
 def _filming_time_bucket_from_minutes(minutes: float) -> str:
@@ -1184,8 +1177,6 @@ def _face_exposure_from_text(text: str) -> str | None:
 
 def _infer_question_field(options: list[Any], missing: list[str]) -> str | None:
     option_ids = {str(item.id).strip().lower() for item in options}
-    if option_ids and option_ids <= {item.value for item in PromotionObjective}:
-        return "promotion_objective"
     if option_ids and option_ids <= {item.value for item in FilmingTime}:
         return "filming_time"
     if option_ids and option_ids <= {item.value for item in FaceExposure}:
@@ -1193,12 +1184,50 @@ def _infer_question_field(options: list[Any], missing: list[str]) -> str | None:
     return missing[0] if missing else None
 
 
-def _fallback_question(field: str | None) -> tuple[str, list[DecisionOption]]:
-    if field == "promotion_objective":
-        return (
-            "이 영상으로 어떤 결과를 가장 원하세요?",
-            [],
+def _asks_removed_promotion_objective(decision: ShortformTurnDecision) -> bool:
+    if decision.action not in _QUESTION_ACTIONS:
+        return False
+    option_ids = {str(item.id).strip().lower() for item in decision.options}
+    objective_ids = {item.value for item in PromotionObjective}
+    if option_ids & objective_ids:
+        return True
+    message = decision.assistant_message.replace(" ", "").lower()
+    return any(
+        marker in message
+        for marker in (
+            "홍보목적",
+            "어떤결과를",
+            "가장원하세요",
+            "판매를늘",
+            "판매늘",
+            "매출",
+            "인지도",
+            "방문유도",
+            "promotionobjective",
         )
+    )
+
+
+def _confirmation_message(state: dict[str, Any]) -> str:
+    subject = state.get("promotion_subject") or {}
+    subject_name = str(subject.get("name") or "선택한 대상").strip()
+    filming_label = {
+        FilmingTime.WITHIN_5M.value: "5분 이내",
+        FilmingTime.WITHIN_10M.value: "10분 이내",
+        FilmingTime.WITHIN_20M.value: "20분 이내",
+        FilmingTime.PLUS_30M.value: "30분 이상",
+    }.get(str(state.get("filming_time") or ""), "입력한 시간")
+    face_label = {
+        FaceExposure.ALLOWED.value: "얼굴 노출 가능",
+        FaceExposure.NOT_ALLOWED.value: "얼굴 노출 없이",
+    }.get(str(state.get("face_exposure") or ""), "입력한 얼굴 노출 방식")
+    return (
+        f"{subject_name} 홍보 영상으로 준비할게요. 촬영 시간은 {filming_label}, "
+        f"{face_label}로 이해했어요. 이대로 추천받을까요?"
+    )
+
+
+def _fallback_question(field: str | None) -> tuple[str, list[DecisionOption]]:
     if field == "filming_time":
         return (
             "촬영에 어느 정도 시간을 쓸 수 있으세요?",
@@ -1245,11 +1274,6 @@ def _passes_hard_constraints(metadata: dict[str, Any], state: dict[str, Any]) ->
 
 
 def _passes_soft_constraints(metadata: dict[str, Any], state: dict[str, Any]) -> bool:
-    objective = state.get("promotion_objective")
-    supported_objectives = metadata.get("supported_objectives") or []
-    if supported_objectives and objective not in supported_objectives:
-        return False
-
     subject = state.get("promotion_subject") or {}
     subject_type = str(subject.get("type") or "").upper()
     supported_subject_types = [
@@ -1302,19 +1326,17 @@ def _promotion_category_from_option(
 def _sanitize_options(
     options: list[Any],
     action: ShortformAction,
-    *,
-    question_field: str | None = None,
 ) -> list[ShortformOption]:
     if action == ShortformAction.SUGGEST_SWITCH:
         return _promotion_category_options()
-    if question_field == "promotion_objective":
-        return []
-
     result: list[ShortformOption] = []
     for item in options:
         option_id = str(item.id).strip()
         label = str(item.label).strip()
-        if label in _REMOVED_CATEGORY_LABELS:
+        if (
+            option_id.lower() in _REMOVED_PROMOTION_OBJECTIVE_OPTION_IDS
+            or label in _REMOVED_CATEGORY_LABELS
+        ):
             continue
         if option_id and label:
             result.append(ShortformOption(id=option_id, label=label))
