@@ -424,6 +424,7 @@ class GeminiYouTubeVideoAnalyzer:
                 )
                 parsed["trend_id"] = trend_id
                 parsed["youtube_url"] = youtube_url
+                parsed = _normalize_editing_video_insight_payload(parsed)
             except TemplateKnowledgeLLMError:
                 raise
             except Exception as exc:
@@ -464,6 +465,61 @@ class GeminiYouTubeVideoAnalyzer:
             f"Gemini did not reproduce the human-reviewed {expected_cut_count}-cut boundary plan.",
             retryable=True,
         )
+
+
+def _normalize_editing_video_insight_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize two common Gemini schema drifts using timestamped evidence.
+
+    Gemini occasionally emits confidence as a percentage and pacing as prose.
+    Confidence has an unambiguous conversion, while pacing can be reconstructed
+    deterministically from the returned segment boundaries.
+    """
+
+    normalized = dict(payload)
+    confidence = normalized.get("confidence")
+    if (
+        isinstance(confidence, (int, float))
+        and not isinstance(confidence, bool)
+        and 1 < float(confidence) <= 100
+    ):
+        normalized["confidence"] = float(confidence) / 100
+
+    if not isinstance(normalized.get("pacing"), dict):
+        segments = normalized.get("segments")
+        durations: list[float] = []
+        if isinstance(segments, list):
+            for segment in segments:
+                if not isinstance(segment, dict):
+                    continue
+                start = segment.get("start_sec")
+                end = segment.get("end_sec")
+                if not isinstance(start, (int, float)) or isinstance(start, bool):
+                    continue
+                if not isinstance(end, (int, float)) or isinstance(end, bool):
+                    continue
+                duration = float(end) - float(start)
+                if duration > 0:
+                    durations.append(duration)
+        if durations:
+            ordered = sorted(durations)
+            middle = len(ordered) // 2
+            median_cut_sec = (
+                ordered[middle]
+                if len(ordered) % 2
+                else (ordered[middle - 1] + ordered[middle]) / 2
+            )
+            if median_cut_sec <= 1.5:
+                tempo = "FAST"
+            elif median_cut_sec <= 3:
+                tempo = "MEDIUM"
+            else:
+                tempo = "SLOW"
+            normalized["pacing"] = {
+                "tempo": tempo,
+                "median_cut_sec": min(30.0, max(0.001, median_cut_sec)),
+                "opening_hook_sec": min(15.0, max(0.001, durations[0])),
+            }
+    return normalized
 
 
 def _human_reviewed_reference_cut_review(

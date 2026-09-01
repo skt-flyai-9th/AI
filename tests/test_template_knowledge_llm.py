@@ -354,6 +354,30 @@ def test_gemini_field_validation_failure_gets_one_repair_attempt(monkeypatch):
     assert "field_validation_errors" in repair_prompt["field_correction"]
 
 
+def test_gemini_normalizes_percent_confidence_and_prose_pacing(monkeypatch):
+    payload = _single_cut_insight_payload(
+        description="인물이 정면을 바라보며 등장한다.",
+        shot_type="정면 클로즈업",
+    )
+    payload["confidence"] = 95
+    payload["pacing"] = ["전체 영상은 빠른 컷으로 진행된다."]
+    monkeypatch.setattr(llm, "call_gemini_structured", lambda **kwargs: payload)
+    analyzer = GeminiYouTubeVideoAnalyzer()
+    analyzer.api_key = "test-gemini-key"
+    analyzer._resolved_model_name = "gemini-test"
+
+    result = analyzer.analyze(
+        trend_id="trend-1",
+        youtube_url="https://www.youtube.com/watch?v=example",
+        trend_context={},
+    )
+
+    assert result.confidence == 0.95
+    assert result.pacing.tempo == "FAST"
+    assert result.pacing.median_cut_sec == 1.0
+    assert result.pacing.opening_hook_sec == 1.0
+
+
 def test_gemini_field_validation_failure_raises_after_repair_budget(monkeypatch):
     calls = []
 
